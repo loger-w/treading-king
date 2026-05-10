@@ -69,10 +69,16 @@ function SystemStatus() {
           lastError={data?.supabase_last_error}
         />
         <StatusRow
-          name="Trading session"
-          desc="continuous (09:00 – 13:25)"
-          status="ok"
-          customLabel="active"
+          name="Trading day"
+          desc="weekday check (real TWSE calendar in Phase 2.5)"
+          status={data?.is_trading_day ? "ok" : "degraded"}
+          customLabel={data?.is_trading_day ? "yes" : "no"}
+        />
+        <StatusRow
+          name="Indicator cache"
+          desc={cacheDesc(data)}
+          status={cacheStatusColor(data?.cache_last_run_status)}
+          customLabel={data?.cache_last_run_status ?? "empty"}
         />
       </div>
 
@@ -82,6 +88,27 @@ function SystemStatus() {
       </p>
     </section>
   );
+}
+
+function cacheDesc(data: HealthResponse | null): string {
+  if (!data) return "checking…";
+  if (!data.cache_last_success_at) return "no successful run yet — go to Screener";
+  const when = new Date(data.cache_last_success_at);
+  return `last success ${when.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
+function cacheStatusColor(
+  s: HealthResponse["cache_last_run_status"] | undefined,
+): "ok" | "degraded" | "error" | undefined {
+  if (s === "done") return "ok";
+  if (s === "running") return "degraded";
+  if (s === "failed") return "error";
+  return undefined;
 }
 
 function StatusRow(props: {

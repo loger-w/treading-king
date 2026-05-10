@@ -33,6 +33,9 @@ export interface HealthResponse {
   fubon_last_error: string | null;
   supabase_status: "ok" | "error";
   supabase_last_error: string | null;
+  is_trading_day: boolean;
+  cache_last_success_at: string | null;
+  cache_last_run_status: "running" | "done" | "failed" | "skipped" | null;
 }
 
 export interface QuoteResponse {
@@ -59,8 +62,62 @@ export interface QuoteResponse {
   isClose?: boolean;
 }
 
+export interface CacheRunRow {
+  run_date: string;
+  is_trading_day: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  symbols_total: number | null;
+  symbols_done: number | null;
+  status: "running" | "done" | "failed" | "skipped";
+  error_text: string | null;
+}
+
+export interface CacheStatusResponse {
+  running: boolean;
+  latest_run: CacheRunRow | null;
+}
+
+export interface CacheRefreshResponse {
+  status: "accepted";
+  limit: number | null;
+  message: string;
+}
+
+export interface RsiOversoldResult {
+  symbol: string;
+  name: string | null;
+  market: string | null;
+  is_etf: boolean | null;
+  close: number | null;
+  change_pct: number | null;
+  volume: number | null;
+  rsi_14: number | null;
+}
+
+export interface RsiOversoldResponse {
+  rule: "rsi-oversold";
+  criteria: string;
+  as_of_date: string;
+  count: number;
+  results: RsiOversoldResult[];
+}
+
 export const api = {
   health: () => fetchJSON<HealthResponse>("/api/health"),
   quote: (symbol: string) =>
     fetchJSON<QuoteResponse>(`/api/quote/${encodeURIComponent(symbol)}`),
+
+  cacheStatus: () => fetchJSON<CacheStatusResponse>("/api/cache/status"),
+  cacheRefresh: (limit?: number) => {
+    const qs = limit ? `?limit=${limit}` : "";
+    return fetchJSON<CacheRefreshResponse>(`/api/cache/refresh${qs}`, {
+      method: "POST",
+    });
+  },
+
+  screenRsiOversold: (limit = 200) =>
+    fetchJSON<RsiOversoldResponse>(
+      `/api/screen/rsi-oversold?limit=${limit}`,
+    ),
 };

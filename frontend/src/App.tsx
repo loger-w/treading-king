@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Health } from "./pages/Health";
+import { Screener } from "./pages/Screener";
+
+type Page = "health" | "screener";
 
 export default function App() {
-  // Simple tab switcher (Plan §Phase 1: useState tab，不引 react-router)
-  const [page] = useState<"health">("health");
+  const [page, setPage] = useState<Page>("health");
 
   // Soft fade-in to mimic editorial reading-rhythm
   useEffect(() => {
@@ -13,8 +15,9 @@ export default function App() {
   return (
     <>
       <Masthead />
-      <Nav active={page} />
+      <Nav active={page} onNavigate={setPage} />
       {page === "health" && <Health />}
+      {page === "screener" && <Screener />}
     </>
   );
 }
@@ -51,10 +54,16 @@ function Meta() {
   );
 }
 
-function Nav({ active }: { active: string }) {
-  const items: Array<{ id: string; label: string; disabled?: boolean }> = [
+function Nav({
+  active,
+  onNavigate,
+}: {
+  active: Page;
+  onNavigate: (p: Page) => void;
+}) {
+  const items: Array<{ id: Page | string; label: string; disabled?: boolean }> = [
     { id: "health", label: "Health" },
-    { id: "screener", label: "Screener", disabled: true },
+    { id: "screener", label: "Screener" },
     { id: "signals", label: "Signals", disabled: true },
     { id: "watchlist", label: "Watchlist", disabled: true },
   ];
@@ -62,19 +71,35 @@ function Nav({ active }: { active: string }) {
   return (
     <nav className="border-y border-line bg-bg-card/40">
       <div className="mx-auto flex max-w-[1200px] gap-0 px-12 max-md:px-6">
-        {items.map((it) => (
-          <span
-            key={it.id}
-            className={`px-4 py-3 text-xs uppercase tracking-[2px] ${
-              active === it.id
-                ? "border-b-2 border-accent text-ink"
-                : "text-ink-dim"
-            } ${it.disabled ? "opacity-40" : "cursor-pointer hover:text-ink"}`}
-            title={it.disabled ? "(Phase 2+)" : undefined}
-          >
-            {it.label}
-          </span>
-        ))}
+        {items.map((it) => {
+          const isActive = active === it.id;
+          const cls = `px-4 py-3 text-xs uppercase tracking-[2px] ${
+            isActive
+              ? "border-b-2 border-accent text-ink"
+              : "text-ink-dim"
+          } ${it.disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:text-ink"}`;
+
+          if (it.disabled) {
+            return (
+              <span key={it.id} className={cls} title="(Phase 3)">
+                {it.label}
+              </span>
+            );
+          }
+
+          return (
+            <button
+              key={it.id}
+              type="button"
+              onClick={() => onNavigate(it.id as Page)}
+              className={`${cls} bg-transparent border-none border-b-2 ${
+                isActive ? "border-accent" : "border-transparent"
+              }`}
+            >
+              {it.label}
+            </button>
+          );
+        })}
       </div>
     </nav>
   );
