@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>D · Retro 80s CRT — treading-king Health</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0d0a;
+    --bg-2: #0a1f0d;
+    --green: #00ff41;
+    --green-dim: #008822;
+    --green-glow: 0 0 4px #00ff41, 0 0 8px rgba(0,255,65,0.5);
+    --cyan: #00d4ff;
+    --amber: #ffaa00;
+    --red: #ff3366;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'VT323', monospace;
+    font-size: 20px;
+    line-height: 1.3;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  /* CRT scanlines + vignette */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0) 0,
+        rgba(0,0,0,0) 2px,
+        rgba(0,0,0,0.18) 3px,
+        rgba(0,0,0,0.18) 3px
+      );
+    pointer-events: none;
+    z-index: 999;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.55) 100%);
+    pointer-events: none;
+    z-index: 998;
+  }
+  /* Subtle CRT flicker */
+  @keyframes flicker {
+    0%, 100% { opacity: 1; }
+    33% { opacity: 0.97; }
+    66% { opacity: 0.99; }
+  }
+  .crt {
+    animation: flicker 4s infinite;
+  }
+
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-shadow: 0 0 6px var(--cyan); }
+
+  .topbar {
+    border-bottom: 2px solid var(--green-dim);
+    padding: 8px 16px;
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    text-shadow: var(--green-glow);
+  }
+  .topbar .blink { animation: blink 1.2s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .topbar .ok { color: var(--green); }
+  .topbar .err { color: var(--red); text-shadow: 0 0 4px var(--red); }
+  .topbar .right { margin-left: auto; }
+
+  .container {
+    padding: 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .ascii-h {
+    font-family: 'VT323', monospace;
+    font-size: 16px;
+    line-height: 1.05;
+    color: var(--green);
+    text-shadow: var(--green-glow);
+    white-space: pre;
+    margin-bottom: 16px;
+  }
+
+  h1.title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 24px;
+    color: var(--cyan);
+    text-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0,212,255,0.5);
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    color: var(--green-dim);
+    font-size: 18px;
+    margin-bottom: 32px;
+  }
+
+  .panel {
+    border: 2px solid var(--green-dim);
+    margin-bottom: 24px;
+    background: rgba(0, 60, 20, 0.15);
+  }
+  .panel-h {
+    border-bottom: 1px solid var(--green-dim);
+    padding: 4px 12px;
+    color: var(--cyan);
+    font-size: 16px;
+    letter-spacing: 2px;
+    text-shadow: 0 0 4px var(--cyan);
+    display: flex;
+    justify-content: space-between;
+  }
+  .panel-h .id { color: var(--amber); }
+  .panel-b { padding: 16px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    gap: 16px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .kv-list { font-size: 18px; }
+  .kv-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px dotted var(--green-dim);
+  }
+  .kv-row .k { color: var(--green-dim); }
+  .kv-row .v { color: var(--green); text-shadow: var(--green-glow); }
+  .kv-row .v.ok { color: var(--green); }
+  .kv-row .v.err { color: var(--red); text-shadow: 0 0 4px var(--red); }
+
+  .input-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+    border: 1px solid var(--green-dim);
+    padding: 0 8px;
+  }
+  .prompt {
+    color: var(--cyan);
+    margin-right: 8px;
+    font-size: 18px;
+    text-shadow: 0 0 4px var(--cyan);
+  }
+  .input-row input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--green);
+    font-family: 'VT323', monospace;
+    font-size: 22px;
+    padding: 6px 0;
+    outline: none;
+    text-shadow: var(--green-glow);
+    caret-color: var(--green);
+  }
+  .input-row input::placeholder { color: var(--green-dim); }
+  .input-row .cursor {
+    color: var(--green);
+    animation: blink 1s steps(1) infinite;
+  }
+  .input-row button {
+    background: transparent;
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    padding: 4px 12px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-shadow: 0 0 4px var(--cyan);
+  }
+  .input-row button:hover {
+    background: var(--cyan);
+    color: var(--bg);
+    text-shadow: none;
+  }
+
+  .quote-pre {
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    line-height: 1.3;
+    white-space: pre;
+    color: var(--green);
+    text-shadow: var(--green-glow);
+    background: rgba(0, 30, 10, 0.3);
+    border: 1px solid var(--green-dim);
+    padding: 12px 16px;
+    overflow-x: auto;
+  }
+  .quote-pre .lbl { color: var(--cyan); }
+  .quote-pre .bull { color: #66ff88; }
+  .quote-pre .bear { color: var(--red); }
+  .quote-pre .name { color: var(--amber); }
+
+  .footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--green-dim);
+    display: flex;
+    gap: 24px;
+    font-size: 16px;
+    color: var(--green-dim);
+  }
+  .footer .right { margin-left: auto; }
+  .back {
+    color: var(--cyan);
+    text-decoration: none;
+    border-bottom: 1px solid var(--cyan);
+  }
+</style>
+</head>
+<body>
+<div class="crt">
+
+<div class="topbar">
+  <span>◆ TREADING-KING ◆</span>
+  <span class="blink">_</span>
+  <span style="color:var(--green-dim)">SESSION</span> <span>continuous</span>
+  <span style="color:var(--green-dim)">·</span>
+  <span style="color:var(--green-dim)">FUBON</span> <span class="ok">[OK]</span>
+  <span style="color:var(--green-dim)">·</span>
+  <span style="color:var(--green-dim)">SUPABASE</span> <span class="err">[ERR]</span>
+  <span class="right">
+    <a href="index.html" class="back">← BACK</a>
+  </span>
+</div>
+
+<div class="container">
+
+<pre class="ascii-h">
+ ▄▄▄█████▓ ██ ▄█▀
+ ▓  ██▒ ▓▒ ██▄█▒
+ ▒ ▓██░ ▒░▓███▄░
+ ░ ▓██▓ ░ ▓██ █▄
+   ▒██▒ ░ ▒██▒ █▄
+   ▒ ░░   ▒ ▒▒ ▓▒
+     ░    ░ ░▒ ▒░
+   ░      ░ ░░ ░
+          ░  ░
+</pre>
+
+<h1 class="title">SYSTEM HEALTH</h1>
+<div class="subtitle">// Phase 1 · DMA mode active · 2026.05.10</div>
+
+<div class="grid">
+
+  <div class="panel">
+    <div class="panel-h"><span>STATUS</span><span class="id">[01]</span></div>
+    <div class="panel-b">
+      <div class="kv-list">
+        <div class="kv-row"><span class="k">FUBON SDK . . .</span><span class="v ok">OK</span></div>
+        <div class="kv-row"><span class="k">SUPABASE . . . </span><span class="v err">ERROR</span></div>
+        <div class="kv-row"><span class="k">SESSION . . . .</span><span class="v">CONTINUOUS</span></div>
+        <div class="kv-row"><span class="k">TRADING DAY . .</span><span class="v ok">YES</span></div>
+        <div class="kv-row"><span class="k">CACHE . . . . .</span><span class="v" style="color:var(--amber)">PHASE 2A</span></div>
+        <div class="kv-row"><span class="k">WS POOL . . . .</span><span class="v" style="color:var(--green-dim)">PHASE 3</span></div>
+        <div class="kv-row"><span class="k">LAG . . . . . .</span><span class="v">12 MS</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h"><span>QUERY</span><span class="id">[02]</span></div>
+    <div class="panel-b">
+      <div class="input-row">
+        <span class="prompt">&gt;</span>
+        <input type="text" value="2330" placeholder="symbol">
+        <span class="cursor">_</span>
+        <button>[ RUN ]</button>
+      </div>
+
+<pre class="quote-pre"><span class="lbl">SYM    </span> 2330  <span class="name">TAIWAN SEMICONDUCTOR</span>
+<span class="lbl">PRICE  </span> <span style="font-size:30px;color:var(--green);text-shadow:0 0 8px var(--green)">2,290</span> <span class="bear">▼ 20 (0.87%)</span>
+
+<span class="lbl">OPEN   </span> 2,300        <span class="lbl">HIGH</span>  <span class="bull">2,310</span>
+<span class="lbl">LOW    </span> <span class="bear">2,265</span>        <span class="lbl">AVG</span>   2,292.96
+<span class="lbl">VOLUME </span> 26,820       <span class="lbl">AMT</span>   61.5B
+
+<span class="lbl">BID 5  </span>            <span class="lbl">ASK 5</span>
+<span class="bull">2,290 / 676</span>          2,295 / 60
+<span class="bull">2,285 / 669</span>          2,300 / 160
+<span class="bull">2,280 / 949</span>          2,305 / 365
+<span class="bull">2,275 / 693</span>          2,310 / 466
+<span class="bull">2,270 / 1254</span>         2,315 / 316</pre>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <span>&gt; API v0.1.0</span>
+  <span>&gt; BUILD 5603d54</span>
+  <span>&gt; MODE DMA</span>
+  <span class="right">2026.05.10  20:42:00<span class="blink" style="color:var(--cyan)">_</span></span>
+</div>
+
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+// Plan §Phase 1：proxy 必須對 relative path 生效
+// 前端 fetch 一律寫 fetch('/api/...') 不要寫 fetch('http://localhost:8000/api/...')
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: "ws://127.0.0.1:8000",
+        ws: true,
+      },
+    },
+  },
+});

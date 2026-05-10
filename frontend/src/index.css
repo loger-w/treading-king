@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Editorial Dark — global atmospheric layer (paper noise + accent glow + vignette) */
+@layer base {
+  html, body {
+    background-color: #14110c;
+    color: #ede4d3;
+    font-family: 'Inter Tight', -apple-system, system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'tnum';
+    min-height: 100vh;
+  }
+
+  body {
+    background-image:
+      radial-gradient(circle at 22% 18%, rgba(232, 90, 79, 0.06) 0%, transparent 35%),
+      radial-gradient(circle at 78% 82%, rgba(232, 90, 79, 0.04) 0%, transparent 40%),
+      radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.4) 100%);
+  }
+
+  /* Subtle paper grain — 提升暗底的觸感 */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.025 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity: 0.5;
+  }
+
+  #root {
+    position: relative;
+    z-index: 2;
+    min-height: 100vh;
+  }
+}
+
+/* Reusable typography classes */
+@layer components {
+  .h-display {
+    @apply font-serif font-bold tracking-editorial leading-[1.05];
+  }
+  .h-italic-em {
+    @apply font-serif italic;
+  }
+  .label-tiny {
+    @apply text-2xs uppercase tracking-[2.5px] text-ink-dim;
+  }
+  .label-small {
+    @apply text-xs uppercase tracking-[1.8px] text-ink-dim font-medium;
+  }
+  .border-section {
+    @apply border-t-2 border-line-strong;
+  }
+}
+
+/* Tabular numerals for prices */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
