@@ -31,7 +31,10 @@ async def refresh_symbols() -> dict:
     rows: list[dict] = []
     errors: list[str] = []
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # verify=False: TWSE/OTC public OpenAPI 抓行情清單，cert 缺 Subject Key Identifier
+    # extension（Python 3.13 嚴格驗證會 fail）。資料是公開股票代碼，無 secret，
+    # 不需 SSL 認證；Supabase / Fubon API 用另一個 client 不受影響
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
         # ----- 上市 TWSE (透過 OpenAPI v1 STOCK_DAY_ALL) -----
         try:
             r = await client.get(
