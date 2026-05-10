@@ -33,9 +33,11 @@ dist-ssr/
 build/
 out/
 
-# Logs
+# Logs (logs/ 是我們的、log/ 是富邦 SDK 自動產生)
 logs/
+log/
 *.log
+*.log.*
 
 # Editor / OS
 .vscode/

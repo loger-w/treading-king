@@ -17,6 +17,14 @@ import time
 import traceback
 from pathlib import Path
 
+# Windows console 預設 cp950 印不出 Unicode (✓✗═)，強制 UTF-8
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # 載入 .env
 try:
     from dotenv import load_dotenv
@@ -69,24 +77,48 @@ def main() -> None:
             e,
         )
 
-    # Step 2: apikey_login
-    step(2, "apikey_login (v2.2.7+ feature)")
+    # Step 2: login (智能路由)
+    step(2, "Login (apikey_dma_login for screener, no cert needed)")
+    # 富邦語境：FUBON_ACCOUNT 通常就是身分證字號，等同 FUBON_PERSONAL_ID
+    personal_id = (
+        os.getenv("FUBON_PERSONAL_ID", "").strip()
+        or os.getenv("FUBON_ACCOUNT", "").strip()
+    )
     api_key = os.getenv("FUBON_API_KEY", "").strip()
+    cert_path = os.getenv("FUBON_CERT_PATH", "").strip()
+    cert_pass = os.getenv("FUBON_CERT_PASS", "").strip() or None
+
+    if not personal_id:
+        fail(
+            "FUBON_PERSONAL_ID (or FUBON_ACCOUNT) missing in .env. "
+            "Fill 身分證字號 and re-run."
+        )
     if not api_key:
         fail("FUBON_API_KEY missing in .env. Fill it and re-run.")
 
     sdk = FubonSDK()
-    if not hasattr(sdk, "apikey_login"):
-        fail(
-            "sdk.apikey_login missing. "
-            "Wheel might be older than v2.2.7 — upgrade it."
-        )
 
-    try:
-        result = sdk.apikey_login(api_key)
-        ok(f"apikey_login returned: {type(result).__name__}")
-    except Exception as e:
-        fail("apikey_login failed.", e)
+    if cert_path:
+        # 有憑證 → 完整 apikey_login（行情 + 下單）
+        print(f"    Using apikey_login (with cert: {cert_path})")
+        try:
+            result = sdk.apikey_login(personal_id, api_key, cert_path, cert_pass)
+            ok(f"apikey_login OK ({type(result).__name__})")
+        except Exception as e:
+            fail("apikey_login failed.", e)
+    else:
+        # 無憑證 → DMA 行情登入（篩股工具足夠）
+        print(f"    Using apikey_dma_login (no cert needed for screener)")
+        try:
+            result = sdk.apikey_dma_login(personal_id, api_key)
+            ok(f"apikey_dma_login OK ({type(result).__name__})")
+        except Exception as e:
+            fail(
+                "apikey_dma_login failed. "
+                "If your account has no DMA permission, fill FUBON_CERT_PATH "
+                "in .env to use full apikey_login.",
+                e,
+            )
 
     # Step 3: init_realtime
     step(3, "init_realtime (must precede marketdata calls)")
@@ -96,81 +128,59 @@ def main() -> None:
     except Exception as e:
         fail("init_realtime failed.", e)
 
-    # Step 4: 5 Technical endpoints
-    step(4, "Technical indicators (RSI / MACD / KDJ / SMA / BBands) for 2330")
+    # Step 4: 5 Technical indicators (real signatures)
+    step(4, "Technical indicators (RSI / SMA / MACD / KDJ / BB) for 2330")
     try:
-        rest = sdk.marketdata.rest_client.stock.intraday  # type: ignore
+        tech = sdk.marketdata.rest_client.stock.technical  # type: ignore
     except AttributeError as e:
-        fail("sdk.marketdata.rest_client.stock.intraday path missing.", e)
+        fail("sdk.marketdata.rest_client.stock.technical path missing.", e)
 
-    technical_methods = [
-        "technical_rsi",
-        "technical_macd",
-        "technical_kdj",
-        "technical_sma",
-        "technical_bbands",
+    indicator_calls = [
+        ("rsi", dict(symbol="2330", period=14), "rsi"),
+        ("sma", dict(symbol="2330", period=20), "sma"),
+        ("macd", dict(symbol="2330", fast=12, slow=26, signal=9), "macd"),
+        ("kdj", dict(symbol="2330", rPeriod=9, kPeriod=3, dPeriod=3), "k"),
+        ("bb",  dict(symbol="2330", period=20, stdDev=2), "upper"),
     ]
-    found_methods: list[str] = []
-    missing_methods: list[str] = []
-
-    # 富邦 SDK 的具體方法名可能不一樣，先列存在的
-    available = [m for m in dir(rest) if "technical" in m.lower() or m.startswith("technical")]
-    print(f"    Available technical methods on rest_client: {available}")
-
-    for method_name in technical_methods:
-        if not hasattr(rest, method_name):
-            missing_methods.append(method_name)
-            continue
+    for name, params, expected_field in indicator_calls:
         try:
-            method = getattr(rest, method_name)
-            result = method(symbol="2330")
-            if result is None:
-                fail(f"{method_name} returned None.")
-            ok(f"{method_name}: returned data ({type(result).__name__})")
-            found_methods.append(method_name)
+            method = getattr(tech, name)
+            r = method(**params)
+            if not isinstance(r, dict):
+                fail(f"{name} returned non-dict: {type(r).__name__}")
+            data = r.get("data")
+            if not isinstance(data, list) or not data:
+                fail(f"{name} returned no data rows. result={r!r}")
+            row = data[0]
+            if expected_field not in row and "date" not in row:
+                fail(
+                    f"{name} response shape unexpected. "
+                    f"Sample row keys={list(row.keys())}"
+                )
+            ok(f"{name}({params}) → {len(data)} rows, sample row keys={list(row.keys())}")
         except Exception as e:
-            fail(f"{method_name} call failed.", e)
+            fail(f"{name} call failed.", e)
 
-    if missing_methods:
-        print(
-            f"{YELLOW}  ⚠ Missing methods (might use different naming): "
-            f"{missing_methods}{RESET}"
-        )
-        print(
-            f"{YELLOW}    Check {available} above to find right method names{RESET}"
-        )
+    # Step 5: WS connect + envelope shape check
+    # Note: DMA login 進入 Speed mode，不支援 aggregates/candles channel
+    # Speed mode 支援：trades / books / ticks / snapshot / tickers — 對篩股工具足夠
+    # (200-symbol cap 延後到 Phase 3 真實 connection pool 驗證)
+    step(5, "WebSocket: connect + subscribe trades(2330) + parse envelope")
+    import json as _json
 
-    # Step 5: WS 200 subscribe limit
-    step(5, "WebSocket subscribe to 200 symbols (verify 200 hard cap)")
     try:
         ws = sdk.marketdata.websocket_client.stock  # type: ignore
     except AttributeError as e:
         fail("sdk.marketdata.websocket_client.stock path missing.", e)
 
-    # 拿前 200 檔上市熱門股做 smoke test。實際 production 從 symbols 表讀。
-    smoke_symbols = [
-        "2330", "2317", "2454", "2308", "2412", "2882", "2881", "1303",
-        "1301", "2002", "2891", "2884", "2885", "2886", "2892", "2880",
-        "2887", "5871", "2890", "2883",
-    ] * 10  # 共 200 個（重複也行，富邦會去重）
-    smoke_symbols = list(dict.fromkeys(smoke_symbols))  # 去重
-    if len(smoke_symbols) < 200:
-        # 補足 200 — 用一些常見代碼，實測會看富邦回的訊息知道哪些不存在
-        extras = [f"2{i:03d}" for i in range(100, 300)]
-        smoke_symbols.extend(extras)
-    smoke_symbols = smoke_symbols[:200]
+    received_messages: list[str] = []
 
-    received_messages: list[dict] = []
-    received_event_types: set[str] = set()
-
-    def on_message(message: dict) -> None:
-        received_messages.append(message)
-        ev = message.get("event")
-        if ev is not None:
-            received_event_types.add(ev)
+    def on_message(message: object) -> None:
+        # Speed mode 訊息是 raw JSON string
+        received_messages.append(message)  # type: ignore[arg-type]
 
     def on_connect() -> None:
-        print(f"    WS connected")
+        print("    WS connected")
 
     def on_disconnect(*args: object) -> None:
         print(f"    WS disconnected: {args}")
@@ -184,35 +194,45 @@ def main() -> None:
         ws.on("error", on_error)
         ws.on("message", on_message)
         ws.connect()
-
-        time.sleep(1)  # 等 connect
+        time.sleep(2)
 
         try:
-            ws.subscribe(channel="aggregates", symbols=smoke_symbols)
-            ok(f"subscribe call accepted for {len(smoke_symbols)} symbols")
+            ws.subscribe({"channel": "trades", "symbols": ["2330"]})
+            ok("subscribe accepted (channel=trades, symbols=['2330'])")
         except Exception as e:
-            fail(f"subscribe failed (expected if >200 hits cap).", e)
+            fail("subscribe failed.", e)
 
-        print("    Listening 5 seconds for messages...")
-        time.sleep(5)
+        print("    Listening 8 seconds for messages...")
+        time.sleep(8)
 
-        ok(f"Received {len(received_messages)} messages")
-        if received_messages:
-            sample = received_messages[0]
-            print(f"    Sample message keys: {list(sample.keys())}")
-            print(f"    Event types observed: {received_event_types or '(none)'}")
-            if "event" in sample and "data" in sample:
-                ok("message envelope matches plan: {event, data, ...}")
+        if not received_messages:
+            session_hint = "（盤外時段沒 trade tick 屬正常；連 + subscribe 已成功）"
+            print(f"{YELLOW}  ⚠ No messages in 8s. {session_hint}{RESET}")
+            ok("WS connected + subscribe accepted (no trade tick outside trading hours)")
+        else:
+            ok(f"Received {len(received_messages)} messages")
+            envelope_ok = False
+            event_types: set[str] = set()
+            for raw in received_messages[:5]:
+                try:
+                    parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                except Exception:
+                    print(f"    raw message (not JSON): {str(raw)[:150]}")
+                    continue
+                if isinstance(parsed, dict):
+                    ev = parsed.get("event")
+                    if ev:
+                        event_types.add(str(ev))
+                    if "event" in parsed and "data" in parsed:
+                        envelope_ok = True
+            print(f"    event types observed: {event_types or '(none)'}")
+            if envelope_ok:
+                ok("envelope matches plan: {event, data, ...}")
             else:
                 print(
-                    f"{YELLOW}  ⚠ message envelope shape unexpected. "
-                    f"Sample: {sample}{RESET}"
+                    f"{YELLOW}  ⚠ Envelope shape may differ from plan. "
+                    f"First message: {str(received_messages[0])[:200]}{RESET}"
                 )
-        else:
-            session_hint = (
-                "（盤外時段沒 tick 屬正常；若是盤中此狀況代表 subscribe 沒生效）"
-            )
-            print(f"{YELLOW}  ⚠ No messages received in 5s. {session_hint}{RESET}")
 
         try:
             ws.disconnect()
