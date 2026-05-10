@@ -26,6 +26,32 @@
 
 ---
 
+## 日常 dev 啟動（已完成 Phase 1 後）
+
+需要兩個 PowerShell 視窗。
+
+**Terminal A — Backend（:8000）**
+```powershell
+cd C:\side-project\neo-api\backend
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+**Terminal B — Frontend（:5173）**
+```powershell
+cd C:\side-project\neo-api\frontend
+npm run dev
+```
+
+開瀏覽器：
+- http://localhost:5173 — 前端 React app（主畫面）
+- http://localhost:8000/docs — Backend 自動產生的 Swagger UI（測 API 用）
+- http://localhost:8000/api/health — JSON health check
+
+關掉服務直接 Ctrl+C 該視窗即可。
+
+---
+
 ## Phase 0 — 倉庫起手式（已完成）
 
 - [x] 建立目錄結構（`backend/`, `frontend/`, `supabase/`, `logs/`）
@@ -33,8 +59,8 @@
 - [x] `README.md`
 - [x] `backend/.env.example`
 - [x] `backend/scripts/sdk_smoke.py`
-- [ ] **你需要做**：從富邦官網下載 SDK wheel 放到 `backend/wheels/`
-- [ ] git init + remote + 第一個 commit（接下來自動）
+- [x] git init + remote + 第一個 commit
+- [x] 從富邦官網下載 SDK wheel `backend/wheels/fubon_neo-2.2.8-cp37-abi3-win_amd64.whl`
 
 ## Phase 0.5 — SDK Sanity Check（**Day 1 必跑**）
 
