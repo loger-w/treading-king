@@ -1,4 +1,5 @@
 """POST /api/symbols/refresh — 從 TWSE/OTC 公開檔抓全市場 symbol 主表 → upsert supabase.
+GET  /api/symbols?search=&limit= — Phase 2b：給 watchlist / 條件編輯器搜 symbol 用。
 
 資料源（公開、免登入）：
 - TWSE 上市：https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL
@@ -11,12 +12,37 @@ from __future__ import annotations
 import logging
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.get("/api/symbols")
+async def search_symbols(
+    search: str = Query("", description="Prefix match on symbol, contains match on name"),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict:
+    """搜 symbol（給 watchlist / 條件編輯器選股用）。"""
+    sb = get_supabase()
+    if sb.status.value != "ok" or sb.client is None:
+        raise HTTPException(
+            503, detail={"error": "supabase_unavailable", "last_error": sb.last_error}
+        )
+
+    q = (
+        sb.client.table("symbols")
+        .select("symbol, name, market, is_etf")
+        .eq("is_active", True)
+    )
+    s = search.strip()
+    if s:
+        # symbol 前綴 OR name 模糊
+        q = q.or_(f"symbol.ilike.{s}%,name.ilike.%{s}%")
+    res = q.order("symbol").limit(limit).execute()
+    return {"results": res.data or []}
 
 
 @router.post("/api/symbols/refresh")

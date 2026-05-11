@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
-from routes import cache, health, quote, screen, symbols  # noqa: E402
+from routes import cache, health, quote, screen, strategies, symbols  # noqa: E402
 from services.fubon_client import get_fubon  # noqa: E402
 from services.logging_config import configure_logging  # noqa: E402
 from services.supabase_client import get_supabase  # noqa: E402
@@ -83,6 +83,7 @@ app.include_router(quote.router)
 app.include_router(symbols.router)
 app.include_router(cache.router)
 app.include_router(screen.router)
+app.include_router(strategies.router)
 
 
 @app.get("/")

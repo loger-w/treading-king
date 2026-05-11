@@ -1,5 +1,4 @@
 // Plan §Phase 1: 一律用 relative path（vite.config.ts proxy 會接到 :8000）
-// 不要寫 absolute URL，否則繞過 proxy → CORS
 
 const BFF_API_KEY = import.meta.env.VITE_BFF_API_KEY ?? "";
 
@@ -20,6 +19,8 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, detail);
   }
+  // 204 No Content 沒 body
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -28,6 +29,10 @@ export class ApiError extends Error {
     super(`API ${status}: ${JSON.stringify(detail)}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
 
 export interface HealthResponse {
   status: "ok" | "degraded" | "error";
@@ -39,6 +44,10 @@ export interface HealthResponse {
   cache_last_success_at: string | null;
   cache_last_run_status: "running" | "done" | "failed" | "skipped" | null;
 }
+
+// ---------------------------------------------------------------------------
+// Quote
+// ---------------------------------------------------------------------------
 
 export interface QuoteResponse {
   date?: string;
@@ -64,6 +73,10 @@ export interface QuoteResponse {
   isClose?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Cache
+// ---------------------------------------------------------------------------
+
 export interface CacheRunRow {
   run_date: string;
   is_trading_day: boolean;
@@ -86,7 +99,39 @@ export interface CacheRefreshResponse {
   message: string;
 }
 
-export interface RsiOversoldResult {
+// ---------------------------------------------------------------------------
+// Screener DSL — 對應 backend models/condition.py
+// ---------------------------------------------------------------------------
+
+export const ALL_FIELDS = [
+  "close", "change_pct", "volume", "amount",
+  "rsi_14", "macd", "macd_signal",
+  "kdj_k", "kdj_d", "kdj_j",
+  "sma_5", "sma_20", "sma_60",
+  "bbands_upper", "bbands_middle", "bbands_lower",
+] as const;
+export type ConditionField = typeof ALL_FIELDS[number];
+
+export const ALL_OPERATORS = ["gt", "gte", "lt", "lte", "eq"] as const;
+export type ConditionOperator = typeof ALL_OPERATORS[number];
+
+export interface Condition {
+  field: ConditionField;
+  operator: ConditionOperator;
+  value: number | ConditionField;
+  days_ago?: number;
+}
+
+export interface Filter {
+  schema_version?: number;
+  market: Array<"TWSE" | "OTC">;
+  exclude_etf: boolean;
+  conditions: Condition[];
+  logic: "AND" | "OR";
+  limit?: number;
+}
+
+export interface ScreenResultRow {
   symbol: string;
   name: string | null;
   market: string | null;
@@ -94,16 +139,66 @@ export interface RsiOversoldResult {
   close: number | null;
   change_pct: number | null;
   volume: number | null;
+  amount: number | null;
   rsi_14: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  kdj_k: number | null;
+  kdj_d: number | null;
+  kdj_j: number | null;
+  sma_5: number | null;
+  sma_20: number | null;
+  sma_60: number | null;
+  bbands_upper: number | null;
+  bbands_middle: number | null;
+  bbands_lower: number | null;
 }
 
-export interface RsiOversoldResponse {
-  rule: "rsi-oversold";
-  criteria: string;
+export interface ScreenResponse {
   as_of_date: string;
+  total_scanned: number;
   count: number;
-  results: RsiOversoldResult[];
+  results: ScreenResultRow[];
+  filter: Filter;
+  // Legacy phase 2a wrapper 才有：
+  rule?: string;
+  criteria?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Strategies
+// ---------------------------------------------------------------------------
+
+export interface Strategy {
+  id: string;
+  name: string;
+  description: string | null;
+  filter_json: Filter;
+  created_at: string;
+}
+
+export interface StrategiesResponse {
+  strategies: Strategy[];
+}
+
+// ---------------------------------------------------------------------------
+// Symbol search
+// ---------------------------------------------------------------------------
+
+export interface SymbolSearchRow {
+  symbol: string;
+  name: string;
+  market: "TWSE" | "OTC";
+  is_etf: boolean;
+}
+
+export interface SymbolSearchResponse {
+  results: SymbolSearchRow[];
+}
+
+// ---------------------------------------------------------------------------
+// API surface
+// ---------------------------------------------------------------------------
 
 export const api = {
   health: () => fetchJSON<HealthResponse>("/api/health"),
@@ -118,8 +213,32 @@ export const api = {
     });
   },
 
+  // 新版（Phase 2b）
+  screen: (filter: Filter) =>
+    fetchJSON<ScreenResponse>("/api/screen", {
+      method: "POST",
+      body: JSON.stringify(filter),
+    }),
+
+  // 舊版（Phase 2a 兼容）
   screenRsiOversold: (limit = 200) =>
-    fetchJSON<RsiOversoldResponse>(
-      `/api/screen/rsi-oversold?limit=${limit}`,
+    fetchJSON<ScreenResponse>(`/api/screen/rsi-oversold?limit=${limit}`),
+
+  strategies: {
+    list: () => fetchJSON<StrategiesResponse>("/api/strategies"),
+    create: (s: { name: string; description?: string | null; filter_json: Filter }) =>
+      fetchJSON<Strategy>("/api/strategies", {
+        method: "POST",
+        body: JSON.stringify(s),
+      }),
+    delete: (id: string) =>
+      fetchJSON<void>(`/api/strategies/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+  },
+
+  symbols: (search = "", limit = 20) =>
+    fetchJSON<SymbolSearchResponse>(
+      `/api/symbols?search=${encodeURIComponent(search)}&limit=${limit}`,
     ),
 };
