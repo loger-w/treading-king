@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
@@ -306,17 +307,53 @@ def _fetch_symbol(sdk: Any, symbol: str, today: date) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# 只跑 4 位純數字個股（1101 台泥 ~ 9962 太電）
+# 排除：ETF（00xxx/006xxx/009xxx）、ETN（020xxx）、REITs（0xxxxT/R）、
+# TDR（91xxxx）、特別股（1101B / 2887Z1 等 4位數+字母）
+_INDIVIDUAL_STOCK_PATTERN = re.compile(r"^[0-9]{4}$")
+
+
+_PAGE_SIZE = 1000  # PostgREST 預設 hard cap，每頁最多 1000
+
+
 def _fetch_active_symbols(client: Any, limit: int | None) -> list[str]:
-    q = (
-        client.table("symbols")
-        .select("symbol")
-        .eq("is_active", True)
-        .order("symbol")
+    """讀 active 個股 symbol，用 .range() 分頁繞過 PostgREST 1000 列硬上限。
+
+    client side 用 regex `^[0-9]{4}$` 只留 4 位純數字（個股），
+    把 ETF/ETN/REITs/TDR/特別股全切掉。
+    """
+    all_syms: list[str] = []
+    page = 0
+    while True:
+        start = page * _PAGE_SIZE
+        end = start + _PAGE_SIZE - 1
+        res = (
+            client.table("symbols")
+            .select("symbol")
+            .eq("is_active", True)
+            .eq("is_etf", False)
+            .order("symbol")
+            .range(start, end)
+            .execute()
+        )
+        rows = res.data or []
+        all_syms.extend(r["symbol"] for r in rows)
+        if len(rows) < _PAGE_SIZE:
+            break
+        page += 1
+
+    syms = [s for s in all_syms if _INDIVIDUAL_STOCK_PATTERN.fullmatch(s)]
+    logger.info(
+        "fetched %d active symbols across %d page(s); kept %d individual stocks (filtered %d)",
+        len(all_syms),
+        page + 1,
+        len(syms),
+        len(all_syms) - len(syms),
     )
+
     if limit is not None:
-        q = q.limit(limit)
-    res = q.execute()
-    return [r["symbol"] for r in (res.data or [])]
+        syms = syms[:limit]
+    return syms
 
 
 def _upsert_run_row(

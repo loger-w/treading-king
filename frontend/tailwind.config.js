@@ -27,8 +27,9 @@ export default {
           DEFAULT: "#e85a4f",  // 深紅 — masthead top border, accent dots
           hover: "#f06b5f",
         },
-        bull: "#7fc99a",       // 暖綠
-        bear: "#e85a4f",       // 同 accent
+        // 台股慣例：上漲紅、下跌綠（與美股相反）
+        bull: "#e85a4f",       // 上漲紅（跟 accent 同色）
+        bear: "#7fc99a",       // 下跌綠
       },
       fontFamily: {
         serif: ['"Source Serif 4"', 'Georgia', 'serif'],

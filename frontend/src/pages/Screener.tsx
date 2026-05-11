@@ -73,20 +73,19 @@ function CachePanel() {
 
   return (
     <section>
-      <div className="label-small text-accent mb-2.5">SECTION ONE</div>
-      <h2 className="h-display text-[36px] mb-6">Cache</h2>
+      <div className="label-small text-accent mb-2.5">壹</div>
+      <h2 className="h-display text-[36px] mb-6">指標快取</h2>
 
       <p className="font-serif text-[19px] leading-[1.5] text-ink mb-6">
-        The screener reads a daily{" "}
-        <em className="font-serif italic text-accent">indicator cache</em> —
-        every active symbol's price plus five technicals (RSI, MACD, KDJ, SMA,
-        Bollinger). A full run pulls ~2,300 symbols × 8 calls under a 5 req/s
-        rate limit; expect roughly an hour.
+        篩股引擎讀取每日的{" "}
+        <em className="font-serif italic text-accent">指標快取</em>{" "}
+        — 每檔活躍股票的價量加上五個 technical（RSI、MACD、KDJ、SMA、Bollinger）。全量約
+        2,300 檔 × 8 次 API call，受 5 req/s rate limit，預期 60 分鐘完成。
       </p>
 
       {error && (
         <div className="border border-accent/40 bg-accent/10 px-4 py-3 mb-4 text-sm text-ink">
-          <span className="font-medium text-accent">Cache request failed.</span>{" "}
+          <span className="font-medium text-accent">快取請求失敗。</span>{" "}
           <span className="text-ink-muted">{error}</span>
         </div>
       )}
@@ -102,7 +101,7 @@ function CachePanel() {
           disabled={submitting || isRunning}
           className="border-2 border-accent bg-transparent px-5 py-2 text-sm uppercase tracking-[2px] text-accent hover:bg-accent/10 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Run full cache
+          跑全市場 cache
         </button>
         <button
           type="button"
@@ -110,13 +109,13 @@ function CachePanel() {
           disabled={submitting || isRunning}
           className="border border-line-strong bg-transparent px-5 py-2 text-sm uppercase tracking-[2px] text-ink-dim hover:text-ink hover:border-ink-muted disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Dev: limit 10
+          Dev：限 10 檔
         </button>
       </div>
 
       <p className="mt-4 text-xs text-ink-dim italic font-serif">
-        Status polled every {isRunning ? "3" : "15"} seconds. Backend at{" "}
-        <code className="font-sans not-italic">/api/cache/status</code>.
+        每 {isRunning ? "3" : "15"} 秒輪詢一次狀態。後端{" "}
+        <code className="font-sans not-italic">/api/cache/status</code>。
       </p>
     </section>
   );
@@ -133,13 +132,13 @@ function CacheStatusRow({
     return (
       <div className="flex items-baseline justify-between border-b border-line py-3.5">
         <div>
-          <div className="text-base font-medium text-ink">No cache yet</div>
+          <div className="text-base font-medium text-ink">尚未建立 cache</div>
           <div className="mt-0.5 text-xs text-ink-dim">
-            Run cache job to populate <code>indicator_cache</code>.
+            點下方按鈕觸發 cache job 寫入 <code>indicator_cache</code>。
           </div>
         </div>
         <div className="font-serif italic font-semibold text-lg text-ink-dim">
-          empty
+          空
         </div>
       </div>
     );
@@ -163,6 +162,18 @@ function CacheStatusRow({
       ? minutesBetween(run.started_at, run.finished_at)
       : null;
 
+  const statusLabel = running
+    ? `執行中 ${pct}%`
+    : run.status === "done"
+    ? "完成"
+    : run.status === "failed"
+    ? "失敗"
+    : run.status === "running"
+    ? `執行中 ${pct}%`
+    : run.status === "skipped"
+    ? "略過"
+    : run.status;
+
   return (
     <div className="border-b border-line py-3.5">
       <div className="flex items-baseline justify-between">
@@ -171,16 +182,16 @@ function CacheStatusRow({
             {run.run_date}{" "}
             {!run.is_trading_day && (
               <span className="text-xs text-ink-dim ml-2">
-                (non-trading day)
+                （非交易日）
               </span>
             )}
           </div>
           <div className="mt-0.5 text-xs text-ink-dim">
-            {done.toLocaleString()} / {total.toLocaleString()} symbols
+            {done.toLocaleString()} / {total.toLocaleString()} 檔
             {elapsed !== null && (
               <>
                 {" — "}
-                {elapsed} min
+                {elapsed} 分鐘
               </>
             )}
             {run.error_text && (
@@ -192,7 +203,7 @@ function CacheStatusRow({
           </div>
         </div>
         <div className={`font-serif italic font-semibold text-lg ${statusColor}`}>
-          {running ? `running ${pct}%` : run.status}
+          {statusLabel}
         </div>
       </div>
       {(running || run.status === "running") && (
@@ -232,23 +243,23 @@ function RsiOversoldPanel() {
 
   return (
     <section>
-      <div className="label-small text-accent mb-2.5">SECTION TWO</div>
-      <h2 className="h-display text-[36px] mb-6">Find oversold</h2>
+      <div className="label-small text-accent mb-2.5">貳</div>
+      <h2 className="h-display text-[36px] mb-6">找超賣股</h2>
 
       <p className="font-serif text-[19px] leading-[1.5] text-ink mb-6">
-        A first hard-coded rule:{" "}
+        第一條寫死的規則：
         <em className="font-serif italic text-accent">
-          RSI(14) below 30 with a flat-or-up day
+          RSI(14) 低於 30 且當日收紅或平盤
         </em>
-        . Reads from the latest successful cache run; nothing live.
+        。從最近一次成功的 cache 讀，非即時。
       </p>
 
       <div className="bg-bg-card border border-line p-8 max-md:p-6 mb-4">
         <div className="flex items-center justify-between border-b-2 border-line-strong pb-4 mb-4">
           <div>
-            <div className="label-tiny mb-1">Rule</div>
+            <div className="label-tiny mb-1">規則</div>
             <div className="font-serif text-base text-ink">
-              rsi_14 &lt; 30 <span className="text-ink-dim">AND</span>{" "}
+              rsi_14 &lt; 30 <span className="text-ink-dim">且</span>{" "}
               change_pct ≥ 0
             </div>
           </div>
@@ -258,13 +269,13 @@ function RsiOversoldPanel() {
             disabled={loading}
             className="border-2 border-accent bg-transparent px-5 py-2 text-sm uppercase tracking-[2px] text-accent hover:bg-accent/10 disabled:opacity-40"
           >
-            {loading ? "…" : "Find →"}
+            {loading ? "…" : "搜尋 →"}
           </button>
         </div>
 
         {error && (
           <div className="border border-accent/40 bg-accent/10 px-4 py-3 text-sm">
-            <div className="font-medium text-accent mb-1">Screen failed</div>
+            <div className="font-medium text-accent mb-1">篩股失敗</div>
             <div className="text-ink-muted text-xs font-mono break-all">
               {error}
             </div>
@@ -275,8 +286,7 @@ function RsiOversoldPanel() {
       </div>
 
       <p className="text-xs text-ink-dim italic font-serif">
-        Phase 2b will replace this with a free-form condition DSL and saved
-        strategies.
+        Phase 2b 會升級成自由組合條件 + 儲存策略。
       </p>
     </section>
   );
@@ -286,8 +296,9 @@ function ResultTable({ data }: { data: RsiOversoldResponse }) {
   if (data.count === 0) {
     return (
       <div className="text-center py-8 text-ink-dim font-serif italic">
-        No symbols matched <code className="font-sans not-italic">{data.criteria}</code>{" "}
-        as of {data.as_of_date}.
+        沒有股票符合{" "}
+        <code className="font-sans not-italic">{data.criteria}</code>
+        （cache 截止日 {data.as_of_date}）。
       </div>
     );
   }
@@ -296,17 +307,17 @@ function ResultTable({ data }: { data: RsiOversoldResponse }) {
     <>
       <div className="flex items-baseline justify-between mb-3">
         <div className="text-xs text-ink-dim">
-          As of <span className="text-ink">{data.as_of_date}</span> ·{" "}
-          <span className="text-ink">{data.count}</span> matches
+          截止 <span className="text-ink">{data.as_of_date}</span> ·{" "}
+          <span className="text-ink">{data.count}</span> 檔符合
         </div>
       </div>
       <table className="w-full">
         <thead>
           <tr className="border-b border-line-strong">
-            <th className="text-left label-tiny py-2">Symbol</th>
-            <th className="text-left label-tiny py-2">Name</th>
-            <th className="text-right label-tiny py-2">Close</th>
-            <th className="text-right label-tiny py-2">Δ%</th>
+            <th className="text-left label-tiny py-2">代號</th>
+            <th className="text-left label-tiny py-2">名稱</th>
+            <th className="text-right label-tiny py-2">收盤</th>
+            <th className="text-right label-tiny py-2">漲跌幅</th>
             <th className="text-right label-tiny py-2">RSI</th>
           </tr>
         </thead>

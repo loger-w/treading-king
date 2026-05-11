@@ -38,18 +38,18 @@ function Masthead() {
 }
 
 function Meta() {
-  const today = new Date().toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
+  const today = new Date().toLocaleDateString("zh-TW", {
     year: "numeric",
-  }).toUpperCase();
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  });
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 text-xs text-ink-dim tracking-[0.3px]">
       <span>{today}</span>
       <span className="opacity-40">·</span>
-      <span>SESSION CONTINUOUS</span>
+      <span>盤中連續競價</span>
     </div>
   );
 }
@@ -62,10 +62,10 @@ function Nav({
   onNavigate: (p: Page) => void;
 }) {
   const items: Array<{ id: Page | string; label: string; disabled?: boolean }> = [
-    { id: "health", label: "Health" },
-    { id: "screener", label: "Screener" },
-    { id: "signals", label: "Signals", disabled: true },
-    { id: "watchlist", label: "Watchlist", disabled: true },
+    { id: "health", label: "系統狀態" },
+    { id: "screener", label: "篩股" },
+    { id: "signals", label: "即時訊號", disabled: true },
+    { id: "watchlist", label: "自選", disabled: true },
   ];
 
   return (
@@ -81,7 +81,7 @@ function Nav({
 
           if (it.disabled) {
             return (
-              <span key={it.id} className={cls} title="(Phase 3)">
+              <span key={it.id} className={cls} title="（Phase 3 開放）">
                 {it.label}
               </span>
             );

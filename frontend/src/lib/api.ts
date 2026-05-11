@@ -10,11 +10,13 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
-    let detail: unknown = null;
+    // Body 只能 consume 一次：先讀 text，再 try parse JSON
+    const text = await res.text();
+    let detail: unknown = text;
     try {
-      detail = await res.json();
+      detail = JSON.parse(text);
     } catch {
-      detail = await res.text();
+      /* keep as raw text */
     }
     throw new ApiError(res.status, detail);
   }
