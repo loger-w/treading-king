@@ -1,12 +1,7 @@
-"""FastAPI app entry — Phase 1.
-
-Run:
-    cd backend
-    .venv\\Scripts\\Activate.ps1   # Windows
-    uvicorn main:app --reload --port 8000
-"""
+"""FastAPI app entry."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -16,14 +11,21 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Load .env BEFORE importing services that read env at module load
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
-from routes import cache, health, quote, screen, strategies, symbols  # noqa: E402
+from routes import (
+    active_signals, cache, candles, cdp as cdp_route, health,
+    quote, screen, signals_history, strategies, symbols,
+    watchlist, ws,
+)  # noqa: E402
 from services.fubon_client import get_fubon  # noqa: E402
+from services.fubon_ws import get_ws_pool  # noqa: E402
 from services.logging_config import configure_logging  # noqa: E402
+from services.overnight import overnight_loop  # noqa: E402
+from services.signal_engine import get_signal_engine  # noqa: E402
 from services.supabase_client import get_supabase  # noqa: E402
+from services.supabase_writer import get_supabase_writer  # noqa: E402
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -31,39 +33,57 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init fubon SDK + supabase. Shutdown: cleanup."""
     logger.info("=" * 60)
     logger.info("treading-king BFF starting up")
     logger.info("=" * 60)
 
     fubon = get_fubon()
     await fubon.init()
-
     supabase = get_supabase()
     supabase.init()
 
-    logger.info("Startup complete — fubon=%s, supabase=%s",
-                fubon.status.value, supabase.status.value)
+    pool = get_ws_pool()
+    await pool.start()
 
+    writer = get_supabase_writer()
+    await writer.start()
+
+    engine = get_signal_engine()
+    await engine.start()
+
+    # 訂閱 watchlist 內所有 symbols（用 watchlist owner）
+    if supabase.client is not None:
+        try:
+            res = await asyncio.to_thread(
+                lambda: supabase.client.table("watchlist").select("symbol").execute()
+            )
+            for r in (res.data or []):
+                try:
+                    await pool.subscribe(r["symbol"], owner_id="watchlist")
+                except RuntimeError as e:
+                    logger.warning("startup ws sub %s failed: %s", r["symbol"], e)
+        except Exception as e:
+            logger.error("startup watchlist sub failed: %s", e)
+
+    # 啟動 overnight 8:25 cron
+    overnight_task = asyncio.create_task(overnight_loop())
+
+    logger.info("Startup done — fubon=%s, supabase=%s, ws_pool=%s",
+                fubon.status.value, supabase.status.value, pool.status.value)
     yield
 
-    logger.info("Shutting down...")
+    logger.info("Shutting down…")
+    overnight_task.cancel()
+    await engine.shutdown()
+    await writer.shutdown()
+    await pool.shutdown()
     await fubon.shutdown()
     logger.info("Shutdown complete")
 
 
-app = FastAPI(
-    title="treading-king BFF",
-    version="0.1.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="treading-king BFF", version="0.3.0", lifespan=lifespan)
 
-# CORS — allow Vite dev server (proxy is the primary path, but keep CORS
-# open for direct access during dev with explicit origins)
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 extra_origin = os.getenv("FRONTEND_ORIGIN", "").strip()
 if extra_origin:
     allowed_origins.append(extra_origin)
@@ -84,13 +104,19 @@ app.include_router(symbols.router)
 app.include_router(cache.router)
 app.include_router(screen.router)
 app.include_router(strategies.router)
+app.include_router(watchlist.router)
+app.include_router(active_signals.router)
+app.include_router(signals_history.router)
+app.include_router(candles.router)
+app.include_router(cdp_route.router)
+app.include_router(ws.router)
 
 
 @app.get("/")
 async def root() -> dict:
     return {
         "name": "treading-king",
-        "version": "0.1.0",
+        "version": "0.3.0",
         "docs": "/docs",
         "health": "/api/health",
     }

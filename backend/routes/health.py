@@ -12,8 +12,11 @@ from datetime import date
 from fastapi import APIRouter
 
 from services.fubon_client import get_fubon
+from services.fubon_ws import get_ws_pool, WS_PER_CONN_CAP, MAX_CONNS
 from services.indicator_cache_job import get_latest_done_run, get_latest_run
+from services.signal_engine import get_signal_engine
 from services.supabase_client import get_supabase
+from services.supabase_writer import get_supabase_writer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +53,10 @@ async def health() -> dict:
         except Exception as e:
             logger.warning("health: cache_runs lookup failed: %s", e)
 
+    ws_pool = get_ws_pool()
+    engine = get_signal_engine()
+    writer = get_supabase_writer()
+
     return {
         "status": overall,
         "fubon_status": fubon.status.value,
@@ -59,4 +66,12 @@ async def health() -> dict:
         "is_trading_day": is_trading_day,
         "cache_last_success_at": cache_last_success_at,
         "cache_last_run_status": cache_last_run_status,
+        # Phase 3 新增
+        "ws_connections": {
+            "active": ws_pool.conn_count(),
+            "subscribed_symbols": ws_pool.total_subscribed(),
+            "max_capacity": MAX_CONNS * WS_PER_CONN_CAP,
+            "status": ws_pool.status.value,
+        },
+        "signal_engine": engine.health() | {"writer_buffer": writer.metrics()["buffer_size"]},
     }
