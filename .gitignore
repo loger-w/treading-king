@@ -53,3 +53,6 @@ desktop.ini
 
 # Plan working files (kept in user's ~/.claude/plans/)
 *.plan.md
+
+# Superpowers brainstorm sessions (visual companion mockups, server state)
+.superpowers/
