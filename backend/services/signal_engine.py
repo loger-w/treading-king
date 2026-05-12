@@ -181,12 +181,17 @@ class SignalEngine:
 
     def _scope_includes(self, active: ActiveSignalOut, symbol: str) -> bool:
         s = active.scope
+        # scope 可以是 dict（從 DB JSON 讀）或 Pydantic model（直接構建）
         if isinstance(s, dict):
             t = s.get("type")
-            if t == "watchlist":
-                return symbol in self._field_cache  # watchlist refill 過就在
-            if t == "symbols":
-                return symbol in s.get("symbols", [])
+            syms = s.get("symbols", [])
+        else:
+            t = getattr(s, "type", None)
+            syms = getattr(s, "symbols", [])
+        if t == "watchlist":
+            return symbol in self._field_cache  # watchlist refill 過就在
+        if t == "symbols":
+            return symbol in syms
         return False
 
     def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
