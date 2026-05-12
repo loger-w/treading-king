@@ -67,7 +67,7 @@ function Nav({
 }) {
   const items: Array<{ id: Page; label: string }> = [
     { id: "health", label: "系統狀態" },
-    { id: "screener", label: "篩股" },
+    // { id: "screener", label: "篩股" },  // 暫時隱藏，待 cache job 自動化後啟用
     { id: "signals", label: "即時訊號" },
     { id: "watchlist", label: "自選" },
   ];
