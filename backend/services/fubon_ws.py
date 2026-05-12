@@ -207,13 +207,15 @@ class WSPool:
         for delay in RECONNECT_DELAYS:
             await asyncio.sleep(delay)
             try:
-                # discard old handle, ensure 重新建
-                self._ws_handles.pop(conn_idx, None)
+                # snapshot subscribed symbols + discard old handle under lock
+                async with self._lock:
+                    self._ws_handles.pop(conn_idx, None)
+                    syms = list(self._conn_subs.get(conn_idx, set()))
+
                 ws = await self._ensure_handle(conn_idx)
                 if ws is None:
                     raise RuntimeError("ensure_handle returned None")
                 # 重訂閱 conn_subs[conn_idx]
-                syms = list(self._conn_subs.get(conn_idx, set()))
                 if syms:
                     await asyncio.to_thread(
                         ws.subscribe, {"channel": "trades", "symbols": syms}
