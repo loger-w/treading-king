@@ -94,6 +94,74 @@ class CdpService:
     def has(self, symbol: str) -> bool:
         return symbol in self._cache
 
+    async def backfill_from_fubon(self, symbol: str) -> bool:
+        """打富邦 historical.candles 拉昨日 OHLC → INSERT daily_ohlc → refresh cache。
+
+        Return True if successful, False if no data / fubon error。
+        """
+        from services.fubon_client import FubonStatus, get_fubon
+        from services.supabase_client import get_supabase
+
+        fubon = get_fubon()
+        sb = get_supabase()
+        if fubon.status != FubonStatus.OK or fubon.sdk is None:
+            logger.warning("cdp.backfill: fubon not OK")
+            return False
+        if sb.client is None:
+            logger.warning("cdp.backfill: supabase not OK")
+            return False
+
+        today = date.today()
+        last_week = today - timedelta(days=10)  # 抓 10 天範圍，確保至少抓到上個交易日
+
+        try:
+            r = await asyncio.to_thread(
+                fubon.sdk.marketdata.rest_client.stock.historical.candles,
+                symbol=symbol,
+                from_=last_week.isoformat(),
+                to=today.isoformat(),
+            )
+        except Exception as e:
+            logger.warning("cdp.backfill %s: fubon error %s", symbol, e)
+            return False
+
+        rows = (r or {}).get("data") or []
+        if not rows:
+            logger.info("cdp.backfill %s: no historical data", symbol)
+            return False
+
+        # 富邦 historical.candles 預設 desc by date，最新在 index 0；
+        # 過濾掉「今日」（不能用今天的 H/L/C 算今天的 CDP）
+        upserts = []
+        for row in rows:
+            d = row.get("date")
+            if not d or d == today.isoformat():
+                continue
+            upserts.append({
+                "symbol": symbol, "date": d,
+                "open": row.get("open"), "high": row.get("high"),
+                "low": row.get("low"), "close": row.get("close"),
+            })
+
+        if not upserts:
+            logger.info("cdp.backfill %s: only today data (no past)", symbol)
+            return False
+
+        # upsert 進 daily_ohlc
+        try:
+            await asyncio.to_thread(
+                lambda: sb.client.table("daily_ohlc")
+                .upsert(upserts, on_conflict="symbol,date")
+                .execute()
+            )
+        except Exception as e:
+            logger.error("cdp.backfill %s: supabase upsert failed: %s", symbol, e)
+            return False
+
+        await self.refresh(symbol)
+        logger.info("cdp.backfill %s: %d days OHLC stored", symbol, len(upserts))
+        return True
+
 
 _service: CdpService | None = None
 
