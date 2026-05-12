@@ -10,9 +10,21 @@ GET  /api/symbols?search=&limit= — Phase 2b：給 watchlist / 條件編輯器�
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
+
+# 非普通股判斷：ETF (00xx) / ETN (020x) / 特別股 (4位數字+字母)
+_PREFERRED_RE = re.compile(r"^\d{4}[A-Z]$")
+
+
+def _is_non_stock(code: str) -> bool:
+    return (
+        code.startswith("00")
+        or code.startswith("020")
+        or bool(_PREFERRED_RE.match(code))
+    )
 
 from services.supabase_client import get_supabase
 
@@ -79,7 +91,7 @@ async def refresh_symbols() -> dict:
                         "name": name,
                         "market": "TWSE",
                         "industry": None,
-                        "is_etf": code.startswith("00"),
+                        "is_etf": _is_non_stock(code),
                         "is_active": True,
                     }
                 )
@@ -107,7 +119,7 @@ async def refresh_symbols() -> dict:
                         "name": name,
                         "market": "OTC",
                         "industry": None,
-                        "is_etf": code.startswith("00"),
+                        "is_etf": _is_non_stock(code),
                         "is_active": True,
                     }
                 )

@@ -44,7 +44,7 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   const [scope, setScope] = useState<Scope>(initial?.scope ?? { type: "watchlist" });
   const [cooldown, setCooldown] = useState(initial?.cooldown_seconds ?? 1800);
   const [ignoreAuctions, setIgnoreAuctions] = useState(initial?.ignore_auctions ?? true);
-  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [enabled] = useState(initial?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

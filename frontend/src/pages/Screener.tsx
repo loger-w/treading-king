@@ -35,6 +35,11 @@ const FIELD_LABEL: Record<ConditionField, string> = {
   bbands_upper: "BB 上軌",
   bbands_middle: "BB 中軌",
   bbands_lower: "BB 下軌",
+  cdp_ah: "CDP AH",
+  cdp_nh: "CDP NH",
+  cdp: "CDP",
+  cdp_nl: "CDP NL",
+  cdp_al: "CDP AL",
 };
 
 const OP_LABEL: Record<ConditionOperator, string> = {

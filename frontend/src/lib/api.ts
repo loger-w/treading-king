@@ -169,6 +169,12 @@ export interface ScreenResultRow {
   bbands_upper: number | null;
   bbands_middle: number | null;
   bbands_lower: number | null;
+  // Phase 3 CDP fields — Screener 目前不回，留 optional 給未來/UI 顯示「—」
+  cdp_ah?: number | null;
+  cdp_nh?: number | null;
+  cdp?: number | null;
+  cdp_nl?: number | null;
+  cdp_al?: number | null;
 }
 
 export interface ScreenResponse {
