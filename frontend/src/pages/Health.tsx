@@ -82,6 +82,26 @@ function SystemStatus() {
           status={cacheStatusColor(data?.cache_last_run_status)}
           customLabel={cacheLabel(data?.cache_last_run_status)}
         />
+        {data?.ws_connections && (
+          <StatusRow
+            name="WebSocket 訂閱"
+            desc={`${data.ws_connections.active} 條連線、訂閱 ${data.ws_connections.subscribed_symbols} 檔`}
+            status={
+              data.ws_connections.status === "ok" ? "ok"
+              : data.ws_connections.status === "circuit_open" ? "error"
+              : "degraded"
+            }
+            customLabel={`${data.ws_connections.subscribed_symbols} / ${data.ws_connections.max_capacity}`}
+          />
+        )}
+        {data?.signal_engine && (
+          <StatusRow
+            name="訊號引擎"
+            desc={`queue ${data.signal_engine.queue_depth}/5000 · lag ${data.signal_engine.lag_ms}ms · 今日 dropped ${data.signal_engine.dropped_today} · writer buf ${data.signal_engine.writer_buffer}`}
+            status={data.signal_engine.degraded ? "error" : "ok"}
+            customLabel={data.signal_engine.degraded ? "降級" : `${data.signal_engine.active_count} 規則`}
+          />
+        )}
       </div>
 
       <p className="mt-6 text-xs text-ink-dim italic font-serif">

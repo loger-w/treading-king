@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Health } from "./pages/Health";
 import { Screener } from "./pages/Screener";
+import { Signals } from "./pages/Signals";
+import { Watchlist } from "./pages/Watchlist";
 
-type Page = "health" | "screener";
+type Page = "health" | "screener" | "signals" | "watchlist";
 
 export default function App() {
   const [page, setPage] = useState<Page>("health");
@@ -18,6 +20,8 @@ export default function App() {
       <Nav active={page} onNavigate={setPage} />
       {page === "health" && <Health />}
       {page === "screener" && <Screener />}
+      {page === "signals" && <Signals />}
+      {page === "watchlist" && <Watchlist />}
     </>
   );
 }
@@ -61,11 +65,11 @@ function Nav({
   active: Page;
   onNavigate: (p: Page) => void;
 }) {
-  const items: Array<{ id: Page | string; label: string; disabled?: boolean }> = [
+  const items: Array<{ id: Page; label: string }> = [
     { id: "health", label: "系統狀態" },
     { id: "screener", label: "篩股" },
-    { id: "signals", label: "即時訊號", disabled: true },
-    { id: "watchlist", label: "自選", disabled: true },
+    { id: "signals", label: "即時訊號" },
+    { id: "watchlist", label: "自選" },
   ];
 
   return (
@@ -73,27 +77,13 @@ function Nav({
       <div className="mx-auto flex max-w-[1200px] gap-0 px-12 max-md:px-6">
         {items.map((it) => {
           const isActive = active === it.id;
-          const cls = `px-4 py-3 text-xs uppercase tracking-[2px] ${
-            isActive
-              ? "border-b-2 border-accent text-ink"
-              : "text-ink-dim"
-          } ${it.disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:text-ink"}`;
-
-          if (it.disabled) {
-            return (
-              <span key={it.id} className={cls} title="（Phase 3 開放）">
-                {it.label}
-              </span>
-            );
-          }
-
           return (
             <button
               key={it.id}
               type="button"
-              onClick={() => onNavigate(it.id as Page)}
-              className={`${cls} bg-transparent border-none border-b-2 ${
-                isActive ? "border-accent" : "border-transparent"
+              onClick={() => onNavigate(it.id)}
+              className={`px-4 py-3 text-xs uppercase tracking-[2px] cursor-pointer hover:text-ink bg-transparent border-b-2 ${
+                isActive ? "border-accent text-ink" : "text-ink-dim border-transparent"
               }`}
             >
               {it.label}

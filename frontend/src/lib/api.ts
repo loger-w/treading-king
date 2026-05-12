@@ -43,6 +43,21 @@ export interface HealthResponse {
   is_trading_day: boolean;
   cache_last_success_at: string | null;
   cache_last_run_status: "running" | "done" | "failed" | "skipped" | null;
+  // Phase 3 (optional — present if signal engine started)
+  ws_connections?: {
+    active: number;
+    subscribed_symbols: number;
+    max_capacity: number;
+    status: string;
+  };
+  signal_engine?: {
+    queue_depth: number;
+    lag_ms: number;
+    dropped_today: number;
+    degraded: boolean;
+    active_count: number;
+    writer_buffer: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
