@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # 篩股可用的 21 個欄位（16 個 indicator_cache + Phase 3 新增 5 個 CDP 線）
 ConditionField = Literal[
@@ -102,12 +102,11 @@ class Filter(BaseModel):
             raise ValueError("market 至少要有一個（TWSE 或 OTC）")
         return v
 
-    @field_validator("conditions")
-    @classmethod
-    def conditions_non_empty(cls, v: list[Condition]) -> list[Condition]:
-        if not v:
+    @model_validator(mode="after")
+    def conditions_non_empty(self):
+        if not self.conditions:
             raise ValueError("至少要有一個 condition")
-        return v
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +133,19 @@ class WindowCondition(BaseModel):
 
 
 class ActiveFilter(Filter):
-    """即時訊號專用 Filter — 在 Filter 之上加時窗條件。"""
+    """即時訊號專用 Filter — 在 Filter 之上加時窗條件。
+
+    跟 Filter 的差異：允許 conditions=[] 當 window_conditions 非空（即時訊號可單獨用時窗條件）。
+    """
 
     window_conditions: list[WindowCondition] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def conditions_non_empty(self):
+        # 覆蓋 Filter.conditions_non_empty：允許 conditions=[] 當 window_conditions 非空
+        if not self.conditions and not self.window_conditions:
+            raise ValueError("至少要有一個 condition 或 window_condition")
+        return self
 
 
 class WatchlistScope(BaseModel):
