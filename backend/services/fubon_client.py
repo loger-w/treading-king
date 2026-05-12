@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any
 
 from services import alerts
+from services.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,7 @@ class FubonClient:
     async def intraday_quote(self, symbol: str) -> dict[str, Any]:
         if self._status != FubonStatus.OK or self._sdk is None:
             raise RuntimeError("Fubon SDK not available (degraded mode)")
+        await asyncio.to_thread(get_rate_limiter().acquire)
         return await asyncio.to_thread(
             self._sdk.marketdata.rest_client.stock.intraday.quote,
             symbol=symbol,
@@ -150,6 +152,7 @@ class FubonClient:
     async def intraday_ticker(self, symbol: str) -> dict[str, Any]:
         if self._status != FubonStatus.OK or self._sdk is None:
             raise RuntimeError("Fubon SDK not available")
+        await asyncio.to_thread(get_rate_limiter().acquire)
         return await asyncio.to_thread(
             self._sdk.marketdata.rest_client.stock.intraday.ticker,
             symbol=symbol,
@@ -158,6 +161,7 @@ class FubonClient:
     async def technical_rsi(self, symbol: str, period: int = 14) -> dict[str, Any]:
         if self._status != FubonStatus.OK or self._sdk is None:
             raise RuntimeError("Fubon SDK not available")
+        await asyncio.to_thread(get_rate_limiter().acquire)
         return await asyncio.to_thread(
             self._sdk.marketdata.rest_client.stock.technical.rsi,
             symbol=symbol,

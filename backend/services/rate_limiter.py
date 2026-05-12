@@ -86,16 +86,32 @@ class TokenBucket:
 
 
 _default_bucket: TokenBucket | None = None
+_historical_bucket: TokenBucket | None = None
 
 
 def get_rate_limiter() -> TokenBucket:
-    """Lazy singleton — uses FUBON_RATE_LIMIT_PER_SEC env (default 5.0)."""
+    """Intraday/Snapshot/Technical 用 — 富邦官方 300/min = 5 req/s。
+    Env FUBON_RATE_LIMIT_PER_SEC 可覆寫 (default 5.0)。
+    """
     global _default_bucket
     if _default_bucket is None:
         rate = float(os.getenv("FUBON_RATE_LIMIT_PER_SEC", "5"))
         _default_bucket = TokenBucket(rate=rate)
-        logger.info("Rate limiter initialized: %.1f req/s", rate)
+        logger.info("Rate limiter initialized: %.1f req/s (Intraday/Snapshot/Technical)", rate)
     return _default_bucket
+
+
+def get_historical_rate_limiter() -> TokenBucket:
+    """Historical API 專用 — 富邦官方 60/min = 1 req/s。
+    比 default limiter 嚴 5 倍，避免 cdp.backfill 在尖峰超限被 429。
+    Env FUBON_HISTORICAL_RATE_LIMIT_PER_SEC 可覆寫 (default 1.0)。
+    """
+    global _historical_bucket
+    if _historical_bucket is None:
+        rate = float(os.getenv("FUBON_HISTORICAL_RATE_LIMIT_PER_SEC", "1"))
+        _historical_bucket = TokenBucket(rate=rate)
+        logger.info("Historical rate limiter initialized: %.1f req/s (60/min)", rate)
+    return _historical_bucket
 
 
 # ---------------------------------------------------------------------------

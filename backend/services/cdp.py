@@ -98,8 +98,10 @@ class CdpService:
         """打富邦 historical.candles 拉昨日 OHLC → INSERT daily_ohlc → refresh cache。
 
         Return True if successful, False if no data / fubon error。
+        Historical API 富邦官方限 60 req/min，用獨立的 historical limiter (1 req/s)。
         """
         from services.fubon_client import FubonStatus, get_fubon
+        from services.rate_limiter import get_historical_rate_limiter
         from services.supabase_client import get_supabase
 
         fubon = get_fubon()
@@ -115,6 +117,8 @@ class CdpService:
         last_week = today - timedelta(days=10)  # 抓 10 天範圍，確保至少抓到上個交易日
 
         try:
+            # Historical 限速 60/min，block 等 token 才打富邦
+            await asyncio.to_thread(get_historical_rate_limiter().acquire)
             r = await asyncio.to_thread(
                 fubon.sdk.marketdata.rest_client.stock.historical.candles,
                 symbol=symbol,

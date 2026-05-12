@@ -20,9 +20,17 @@ from services.ring_buffer import Tick, get_ring_buffer
 
 logger = logging.getLogger(__name__)
 
-# Plan §Phase 3：每條 WS 200 sub 上限、最多 3 連線（容量 600 cover ≤500 + buffer）
+# 富邦官方規格 (https://www.fbs.com.tw/TradeAPI/en/docs/market-data/rate-limit/):
+#   - WebSocket 每連線最多 200 subscriptions
+#   - WebSocket 每帳號最多 5 connections
+# 但 SDK 的 websocket_client.stock 是 process-level singleton (probe_ws_singleton
+# commit c156070 已驗，三次 id() 相同)。同 process 內取多次回同一個 ws instance。
+# 要拿到富邦允許的 5 connections 必須 multi-process 架構 (5 個獨立 SDK login)。
+# 目前單 process 真實容量 = 1 × 200 = 200。
+# MAX_CONNS=1 反映 SDK 真實限制 — 避免 _pick_conn_with_capacity 誤判把 sub 分到
+# 不同 idx 但實際同一條 ws，造成 server silent reject (error 1001) SDK 又 drop。
 WS_PER_CONN_CAP = 200
-MAX_CONNS = 3
+MAX_CONNS = 1
 RECONNECT_DELAYS = (1, 2, 4, 8, 16, 30, 60)  # exponential backoff，cap 60
 CIRCUIT_OPEN_THRESHOLD = 5  # 連續失敗次數
 

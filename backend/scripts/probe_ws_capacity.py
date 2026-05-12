@@ -42,24 +42,34 @@ WAIT_FOR_ACKS = 20
 
 
 async def fetch_symbols(n: int) -> list[str]:
+    """用 .range() 分頁拉，避開 PostgREST 1000 cap（同 indicator_cache_job 做法）。"""
     sb = get_supabase()
     sb.init()
     if sb.status.value != "ok":
         raise RuntimeError(f"supabase init failed: {sb.last_error}")
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("symbols")
-        .select("symbol")
-        .eq("is_active", True)
-        .eq("is_etf", False)
-        .order("symbol")
-        .limit(n * 2)
-        .execute()
-    )
-    syms = [
-        r["symbol"]
-        for r in (res.data or [])
-        if r["symbol"].isdigit() and len(r["symbol"]) == 4
-    ]
+
+    PAGE_SIZE = 1000
+    all_syms: list[str] = []
+    page = 0
+    while True:
+        start = page * PAGE_SIZE
+        end = start + PAGE_SIZE - 1
+        res = await asyncio.to_thread(
+            lambda s=start, e=end: sb.client.table("symbols")
+            .select("symbol")
+            .eq("is_active", True)
+            .eq("is_etf", False)
+            .order("symbol")
+            .range(s, e)
+            .execute()
+        )
+        rows = res.data or []
+        all_syms.extend(r["symbol"] for r in rows)
+        if len(rows) < PAGE_SIZE:
+            break
+        page += 1
+
+    syms = [s for s in all_syms if s.isdigit() and len(s) == 4]
     return syms[:n]
 
 
