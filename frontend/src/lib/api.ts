@@ -109,6 +109,8 @@ export const ALL_FIELDS = [
   "kdj_k", "kdj_d", "kdj_j",
   "sma_5", "sma_20", "sma_60",
   "bbands_upper", "bbands_middle", "bbands_lower",
+  // Phase 3
+  "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
 ] as const;
 export type ConditionField = typeof ALL_FIELDS[number];
 
@@ -197,6 +199,110 @@ export interface SymbolSearchResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3: WindowCondition / ActiveSignal / Watchlist / Candles / CDP
+// ---------------------------------------------------------------------------
+
+export type WindowConditionType = "price_change_pct" | "volume_burst" | "trade_count";
+export type WindowSeconds = 60 | 180 | 300 | 600 | 1800;
+
+export interface WindowCondition {
+  type: WindowConditionType;
+  window_seconds: WindowSeconds;
+  operator: "gt" | "gte" | "lt" | "lte";
+  value: number;
+}
+
+export interface ActiveFilter extends Filter {
+  window_conditions?: WindowCondition[];
+}
+
+export type Scope =
+  | { type: "watchlist" }
+  | { type: "symbols"; symbols: string[] };
+
+export interface ActiveSignal {
+  id: string;
+  name: string;
+  filter_json: ActiveFilter;
+  scope: Scope;
+  cooldown_seconds: number;
+  ignore_auctions: boolean;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface ActiveSignalsResponse {
+  active_signals: ActiveSignal[];
+}
+
+export interface WatchlistRow {
+  symbol: string;
+  name: string | null;
+  market: string | null;
+  is_etf: boolean | null;
+  added_at: string | null;
+  note: string | null;
+}
+
+export interface WatchlistResponse {
+  watchlist: WatchlistRow[];
+  count: number;
+}
+
+export interface IntradayCandle {
+  date: string;       // ISO with offset, e.g. "2026-05-12T09:00:00.000+08:00"
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  average: number;    // 富邦給的 minute VWAP
+}
+
+export interface IntradayCandlesResponse {
+  date: string;
+  symbol: string;
+  data: IntradayCandle[];
+}
+
+export interface CdpLevels {
+  ah: number;
+  nh: number;
+  cdp: number;
+  nl: number;
+  al: number;
+  as_of_date: string;
+}
+
+export interface SignalLogRow {
+  id: number;
+  active_signal_id: string | null;
+  symbol: string;
+  triggered_at: string;
+  trigger_price: number | null;
+  trigger_volume: number | null;
+  context_json: Record<string, unknown> | null;
+}
+
+export interface SignalsHistoryResponse {
+  signals: SignalLogRow[];
+  count: number;
+}
+
+// Realtime WS payload
+export interface SignalEvent {
+  event: "signal";
+  data: {
+    active_signal_id: string;
+    active_signal_name: string;
+    symbol: string;
+    triggered_at: string;
+    trigger_price: number;
+    trigger_volume: number;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // API surface
 // ---------------------------------------------------------------------------
 
@@ -241,4 +347,55 @@ export const api = {
     fetchJSON<SymbolSearchResponse>(
       `/api/symbols?search=${encodeURIComponent(search)}&limit=${limit}`,
     ),
+
+  watchlist: {
+    list: () => fetchJSON<WatchlistResponse>("/api/watchlist"),
+    add: (symbol: string, note?: string) =>
+      fetchJSON<{symbol: string; status: string}>("/api/watchlist", {
+        method: "POST",
+        body: JSON.stringify({ symbol, note: note ?? null }),
+      }),
+    remove: (symbol: string) =>
+      fetchJSON<void>(`/api/watchlist/${encodeURIComponent(symbol)}`, {
+        method: "DELETE",
+      }),
+  },
+
+  activeSignals: {
+    list: () => fetchJSON<ActiveSignalsResponse>("/api/active_signals"),
+    create: (payload: Omit<ActiveSignal, "id" | "created_at">) =>
+      fetchJSON<ActiveSignal>("/api/active_signals", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    update: (id: string, payload: Omit<ActiveSignal, "id" | "created_at">) =>
+      fetchJSON<ActiveSignal>(`/api/active_signals/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    delete: (id: string) =>
+      fetchJSON<void>(`/api/active_signals/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+  },
+
+  signalsHistory: (params: {
+    symbol?: string; active_signal_id?: string;
+    since?: string; limit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.symbol) qs.set("symbol", params.symbol);
+    if (params.active_signal_id) qs.set("active_signal_id", params.active_signal_id);
+    if (params.since) qs.set("since", params.since);
+    if (params.limit) qs.set("limit", String(params.limit));
+    return fetchJSON<SignalsHistoryResponse>(`/api/signals/history?${qs.toString()}`);
+  },
+
+  candlesIntraday: (symbol: string) =>
+    fetchJSON<IntradayCandlesResponse>(
+      `/api/candles/${encodeURIComponent(symbol)}/intraday`,
+    ),
+
+  cdp: (symbol: string) =>
+    fetchJSON<CdpLevels>(`/api/cdp/${encodeURIComponent(symbol)}`),
 };
