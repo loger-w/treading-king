@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-# 篩股可用的 16 個欄位（對應 indicator_cache 的 numeric 欄位）
+# 篩股可用的 21 個欄位（16 個 indicator_cache + Phase 3 新增 5 個 CDP 線）
 ConditionField = Literal[
     "close",
     "change_pct",
@@ -34,6 +34,12 @@ ConditionField = Literal[
     "bbands_upper",
     "bbands_middle",
     "bbands_lower",
+    # Phase 3 新增（從 daily_ohlc 算出的 5 線）
+    "cdp_ah",
+    "cdp_nh",
+    "cdp",
+    "cdp_nl",
+    "cdp_al",
 ]
 
 # v1 不含 cross_above/cross_below
@@ -45,6 +51,7 @@ ALL_FIELDS: tuple[ConditionField, ...] = (
     "kdj_k", "kdj_d", "kdj_j",
     "sma_5", "sma_20", "sma_60",
     "bbands_upper", "bbands_middle", "bbands_lower",
+    "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
 )
 
 
@@ -101,3 +108,58 @@ class Filter(BaseModel):
         if not v:
             raise ValueError("至少要有一個 condition")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 擴充 — 即時訊號 DSL
+# ---------------------------------------------------------------------------
+
+WindowConditionType = Literal["price_change_pct", "volume_burst", "trade_count"]
+WindowSeconds = Literal[60, 180, 300, 600, 1800]
+
+
+class WindowCondition(BaseModel):
+    """即時時窗條件 — 從 ring_buffer 算 N 秒內的數值。
+
+    type:
+      - price_change_pct: (latest_price / window_start_price - 1) * 100
+      - volume_burst: 窗口累積成交量 / 過去 N 個窗口平均成交量
+      - trade_count: 窗口內成交筆數
+    """
+
+    type: WindowConditionType
+    window_seconds: WindowSeconds
+    operator: Literal["gt", "gte", "lt", "lte"]
+    value: float
+
+
+class ActiveFilter(Filter):
+    """即時訊號專用 Filter — 在 Filter 之上加時窗條件。"""
+
+    window_conditions: list[WindowCondition] = Field(default_factory=list)
+
+
+class WatchlistScope(BaseModel):
+    type: Literal["watchlist"]
+
+
+class SymbolsScope(BaseModel):
+    type: Literal["symbols"]
+    symbols: list[str] = Field(min_length=1, max_length=500)
+
+
+Scope = WatchlistScope | SymbolsScope
+
+
+class ActiveSignalCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    filter_json: ActiveFilter
+    scope: Scope
+    cooldown_seconds: int = Field(default=1800, ge=60, le=86400)
+    ignore_auctions: bool = True
+    enabled: bool = True
+
+
+class ActiveSignalOut(ActiveSignalCreate):
+    id: str
+    created_at: str
