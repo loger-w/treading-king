@@ -1,0 +1,328 @@
+"""訊號 evaluator — 消費 tick → 跑 WindowCondition + Filter.conditions → 達成 fan-out。
+
+Plan §Phase 3 §4.3 / §5.1。
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from models.condition import (
+    ActiveSignalOut, Condition, Filter, WindowCondition,
+)
+from services import alerts
+from services.cdp import get_cdp_service
+from services.ring_buffer import Tick, get_ring_buffer
+from services.supabase_client import get_supabase
+from ws_broadcaster import get_broadcaster
+
+logger = logging.getLogger(__name__)
+
+QUEUE_MAXSIZE = 5000
+BACKPRESSURE_LAG_MS = 5000
+BACKPRESSURE_DURATION_S = 30
+
+
+class SignalEngine:
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[tuple[str, Tick]] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+        self._consumer: asyncio.Task | None = None
+        self._monitor: asyncio.Task | None = None
+        self._active: list[ActiveSignalOut] = []
+        # cooldown: (active_signal_id, symbol) → last_triggered_at (epoch s)
+        self._cooldown: dict[tuple[str, str], float] = {}
+        # in-memory cache: symbol → field → value (indicator + cdp 共用)
+        self._field_cache: dict[str, dict[str, float]] = {}
+        # metrics
+        self._dropped_today = 0
+        self._last_lag_ms = 0.0
+        self._lag_violation_started: float | None = None
+        self._degraded = False
+
+    # ---------- 公開 API ----------
+
+    async def start(self) -> None:
+        from services.fubon_ws import get_ws_pool
+        get_ws_pool().set_tick_callback(self.enqueue)
+        self._consumer = asyncio.create_task(self._consume_loop())
+        self._monitor = asyncio.create_task(self._monitor_loop())
+        await self.refresh_active_signals()
+        logger.info("SignalEngine started")
+
+    async def shutdown(self) -> None:
+        for t in (self._consumer, self._monitor):
+            if t and not t.done():
+                t.cancel()
+
+    async def enqueue(self, symbol: str, tick: Tick) -> None:
+        try:
+            self._queue.put_nowait((symbol, tick))
+        except asyncio.QueueFull:
+            self._dropped_today += 1
+
+    async def refresh_active_signals(self) -> None:
+        """從 supabase 讀 enabled active_signals，刷新 in-memory list 跟 field cache。"""
+        sb = get_supabase()
+        if sb.client is None:
+            self._active = []
+            return
+        res = await asyncio.to_thread(
+            lambda: sb.client.table("active_signals")
+            .select("id, name, filter_json, scope, cooldown_seconds, ignore_auctions, enabled, created_at")
+            .eq("enabled", True)
+            .execute()
+        )
+        rows = res.data or []
+        self._active = [self._row_to_active(r) for r in rows]
+        await self._refill_field_cache()
+        logger.info("active_signals reloaded: %d enabled", len(self._active))
+
+    def health(self) -> dict[str, Any]:
+        return {
+            "queue_depth": self._queue.qsize(),
+            "lag_ms": int(self._last_lag_ms),
+            "dropped_today": self._dropped_today,
+            "degraded": self._degraded,
+            "active_count": len(self._active),
+        }
+
+    # ---------- internal ----------
+
+    def _row_to_active(self, r: dict) -> ActiveSignalOut:
+        return ActiveSignalOut(
+            id=r["id"], name=r["name"],
+            filter_json=r["filter_json"], scope=r["scope"],
+            cooldown_seconds=r.get("cooldown_seconds", 1800),
+            ignore_auctions=r.get("ignore_auctions", True),
+            enabled=r.get("enabled", True),
+            created_at=str(r.get("created_at", "")),
+        )
+
+    async def _refill_field_cache(self) -> None:
+        """為每個 active 涉及的 (symbol, field) 載入最新值進 cache。
+        - indicator 欄位 → 從 indicator_cache 讀最後成功 date 的 row
+        - cdp_* 欄位 → 從 cdp service 讀
+        """
+        from services.indicator_cache_job import get_latest_done_run
+        sb = get_supabase()
+        if sb.client is None:
+            return
+
+        # 蒐集所有 active 涉及的 symbol 跟 fields
+        symbols_needed: set[str] = set()
+        for a in self._active:
+            scope = a.scope
+            if isinstance(scope, dict):
+                if scope.get("type") == "symbols":
+                    symbols_needed.update(scope.get("symbols", []))
+                elif scope.get("type") == "watchlist":
+                    # watchlist 全部
+                    res = await asyncio.to_thread(
+                        lambda: sb.client.table("watchlist").select("symbol").execute()
+                    )
+                    for row in (res.data or []):
+                        symbols_needed.add(row["symbol"])
+
+        # indicator_cache 最後 done date
+        latest = await asyncio.to_thread(get_latest_done_run, sb.client)
+        if latest:
+            target_date = latest["run_date"]
+            ic_res = await asyncio.to_thread(
+                lambda: sb.client.table("indicator_cache")
+                .select("symbol, close, change_pct, volume, amount, rsi_14, macd, macd_signal, kdj_k, kdj_d, kdj_j, sma_5, sma_20, sma_60, bbands_upper, bbands_middle, bbands_lower")
+                .eq("date", target_date)
+                .in_("symbol", list(symbols_needed))
+                .execute()
+            )
+            for row in (ic_res.data or []):
+                sym = row.pop("symbol")
+                self._field_cache[sym] = {k: v for k, v in row.items() if v is not None}
+
+        # cdp 5 值
+        cdp = get_cdp_service()
+        for sym in symbols_needed:
+            levels = await cdp.get(sym)
+            if levels:
+                d = self._field_cache.setdefault(sym, {})
+                d["cdp_ah"] = levels["ah"]
+                d["cdp_nh"] = levels["nh"]
+                d["cdp"] = levels["cdp"]
+                d["cdp_nl"] = levels["nl"]
+                d["cdp_al"] = levels["al"]
+
+    async def _consume_loop(self) -> None:
+        """主消費迴圈 — 從 queue 拉 tick → evaluate → fan-out。"""
+        while True:
+            try:
+                symbol, tick = await self._queue.get()
+            except asyncio.CancelledError:
+                return
+            self._last_lag_ms = (time.time() - tick.time) * 1000.0
+            await self._evaluate(symbol, tick)
+
+    async def _evaluate(self, symbol: str, tick: Tick) -> None:
+        """對每個涉及這 symbol 的 active_signal 跑條件。"""
+        for active in self._active:
+            if not self._scope_includes(active, symbol):
+                continue
+            if not self._eval_conditions(active, symbol, tick):
+                continue
+            # cooldown 檢查
+            key = (active.id, symbol)
+            now = time.time()
+            last_ts = self._cooldown.get(key, 0)
+            if now - last_ts < active.cooldown_seconds:
+                continue
+            self._cooldown[key] = now
+            await self._fanout(active, symbol, tick)
+
+    def _scope_includes(self, active: ActiveSignalOut, symbol: str) -> bool:
+        s = active.scope
+        if isinstance(s, dict):
+            t = s.get("type")
+            if t == "watchlist":
+                return symbol in self._field_cache  # watchlist refill 過就在
+            if t == "symbols":
+                return symbol in s.get("symbols", [])
+        return False
+
+    def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
+        # WindowCondition + Filter.conditions
+        f = active.filter_json
+        results: list[bool] = []
+        for wc in (f.get("window_conditions") if isinstance(f, dict) else getattr(f, "window_conditions", [])):
+            results.append(self._eval_window(symbol, tick, wc))
+        for c in (f.get("conditions") if isinstance(f, dict) else getattr(f, "conditions", [])):
+            results.append(self._eval_filter_cond(symbol, tick, c))
+        if not results:
+            return False
+        logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
+        return all(results) if logic == "AND" else any(results)
+
+    def _eval_window(self, symbol: str, tick: Tick, wc) -> bool:
+        wc_type = wc.get("type") if isinstance(wc, dict) else wc.type
+        wc_secs = wc.get("window_seconds") if isinstance(wc, dict) else wc.window_seconds
+        op = wc.get("operator") if isinstance(wc, dict) else wc.operator
+        val = wc.get("value") if isinstance(wc, dict) else wc.value
+
+        ticks = get_ring_buffer().window(symbol, seconds=wc_secs)
+        if not ticks:
+            return False
+
+        if wc_type == "price_change_pct":
+            start = ticks[0].price
+            if start == 0:
+                return False
+            actual = (tick.price - start) / start * 100
+            return _cmp(actual, op, val)
+        if wc_type == "volume_burst":
+            current_vol = sum(t.size for t in ticks)
+            return _cmp(current_vol, op, val)  # 簡化：跟絕對 value 比，未來可加歷史平均
+        if wc_type == "trade_count":
+            return _cmp(len(ticks), op, val)
+        return False
+
+    def _eval_filter_cond(self, symbol: str, tick: Tick, c) -> bool:
+        field = c.get("field") if isinstance(c, dict) else c.field
+        op = c.get("operator") if isinstance(c, dict) else c.operator
+        value = c.get("value") if isinstance(c, dict) else c.value
+
+        # field 'close' 用即時 tick.price，其他從 cache
+        if field == "close":
+            lhs = tick.price
+        else:
+            lhs = self._field_cache.get(symbol, {}).get(field)
+        if lhs is None:
+            return False
+
+        if isinstance(value, str):
+            # 跨欄位（含 cdp_*）
+            if value == "close":
+                rhs = tick.price
+            else:
+                rhs = self._field_cache.get(symbol, {}).get(value)
+            if rhs is None:
+                return False
+        else:
+            rhs = float(value)
+
+        return _cmp(lhs, op, rhs)
+
+    async def _fanout(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> None:
+        from services.supabase_writer import get_supabase_writer
+        payload = {
+            "event": "signal",
+            "data": {
+                "active_signal_id": active.id,
+                "active_signal_name": active.name,
+                "symbol": symbol,
+                "triggered_at": datetime.now(timezone.utc).isoformat(),
+                "trigger_price": tick.price,
+                "trigger_volume": tick.size,
+            },
+        }
+        # 1. 前端 WS broadcast
+        await get_broadcaster().broadcast(payload)
+        # 2. supabase writer
+        get_supabase_writer().append({
+            "active_signal_id": active.id,
+            "symbol": symbol,
+            "trigger_price": tick.price,
+            "trigger_volume": tick.size,
+            "context_json": {"latest_tick_time": tick.time},
+        })
+
+    async def _monitor_loop(self) -> None:
+        """監控 lag — 超過 5s 連續 30s → 自動 disable + alerts。"""
+        while True:
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                return
+            if self._last_lag_ms > BACKPRESSURE_LAG_MS:
+                if self._lag_violation_started is None:
+                    self._lag_violation_started = time.time()
+                elif time.time() - self._lag_violation_started > BACKPRESSURE_DURATION_S:
+                    if not self._degraded:
+                        await self._auto_disable_all()
+            else:
+                self._lag_violation_started = None
+
+    async def _auto_disable_all(self) -> None:
+        sb = get_supabase()
+        if sb.client is None:
+            return
+        try:
+            await asyncio.to_thread(
+                lambda: sb.client.table("active_signals").update({"enabled": False}).eq("enabled", True).execute()
+            )
+        except Exception as e:
+            logger.error("auto disable failed: %s", e)
+        self._active = []
+        self._degraded = True
+        await alerts.notify_critical(
+            "evaluator overload — all active_signals auto-disabled",
+            lag_ms=str(self._last_lag_ms),
+        )
+
+
+def _cmp(lhs: float, op: str, rhs: float) -> bool:
+    if op == "gt": return lhs > rhs
+    if op == "gte": return lhs >= rhs
+    if op == "lt": return lhs < rhs
+    if op == "lte": return lhs <= rhs
+    if op == "eq": return lhs == rhs
+    return False
+
+
+_engine: SignalEngine | None = None
+
+
+def get_signal_engine() -> SignalEngine:
+    global _engine
+    if _engine is None:
+        _engine = SignalEngine()
+    return _engine
