@@ -684,3 +684,20 @@ class ActiveSignalOut(ActiveSignalCreate):
 - Phase 2b state: `C:\Users\USER\.claude\projects\C--side-project-trading-king\memory\project_phase_2b_state.md`
 - Predecessor commits: 1f06cc6 (phase 2a), 20a552f (polish), b694f31 (phase 2b)
 - 富邦 SDK probes: `backend/scripts/probe_technical_fields.py`, `probe_sdk_paths.py`, `probe_candles.py`
+
+---
+
+## 15. UAT Checklist (盤中跑)
+
+依 plan §11.3 — 端到端 manual verification（需在交易時段 09:00-13:30 TWST）：
+
+- [ ] Watchlist 頁加 2330 → 看到列表 + 即時報價更新
+- [ ] 點 2330 → 右側分時走勢圖出現 (260+ 點 / 整日)
+- [ ] toggle CDP → 5 條水平線疊上去 (有 label AH/NH/CDP/NL/AL)
+- [ ] toggle VWAP → 灰虛線消失/出現
+- [ ] Signals 頁建一個「3% / 5 分鐘」watchlist 規則 → 30 分內收到至少 1 筆推播
+- [ ] 雙分頁同時開 Signals → 兩邊都收到同一筆訊號
+- [ ] 啟用兩條 active_signal 都監控 2330 → 取消其中一條 → 另一條仍正常觸發
+- [ ] 手動 disconnect 網路 30 秒 → 自動重連 + 訂閱還原
+- [ ] Health 頁 ws_connections + signal_engine 數字會動
+- [ ] 跑 `backend/scripts/probe_e2e_signal.py` 盤中 10 分鐘內 signals_log 至少 1 筆 + 自動 cleanup
