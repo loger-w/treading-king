@@ -36,8 +36,8 @@ from services.fubon_client import get_fubon  # noqa: E402
 from services.supabase_client import get_supabase  # noqa: E402
 
 
-PROBE_LIMIT = 300
-DELAY_MS = 30
+PROBE_LIMIT = 1962  # 全市場個股 (4位純數字, 非 ETF/ETN/特別股)
+DELAY_MS = 20  # 1962 × 20ms ≈ 40s
 WAIT_FOR_ACKS = 20
 
 
