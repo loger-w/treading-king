@@ -8,16 +8,18 @@ interface Props {
   name: string | null;
   candles: IntradayCandle[];
   prevClose: number | null;  // 昨日收盤，給漲跌% / Y 軸 ±10% 用
+  inWatchlist: boolean;
+  onAddToWatchlist: () => void;
 }
 
-const CHART_W = 720;
-const CHART_H = 360;
+const CHART_W = 820;
+const CHART_H = 460;
 const PAD_L = 56;
 const PAD_R = 56;  // 寬一點，把 CDP label 擠到外面去（不被即時走勢價線蓋）
 const PAD_T = 12;
 const PAD_B = 28;
 
-export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
+export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, onAddToWatchlist }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
@@ -123,21 +125,37 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
 
   return (
     <div>
-      {/* 股票資訊 header — 名稱 · 代號 + 大字股價 + 漲跌百分比 */}
-      <div className="mb-4">
-        <div className="font-serif text-[22px] tracking-tight text-ink leading-tight">
-          {name ?? "—"} · {symbol}
-        </div>
-        <div className="flex items-baseline gap-4 mt-1">
-          <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
-            {latest ? latest.close.toFixed(2) : "—"}
-          </span>
-          {latest && (
-            <span className={`text-[18px] tabular-nums ${dirCls}`}>
-              {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change).toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+      {/* 股票資訊 header — 名稱 · 代號 + 大字股價 + 漲跌百分比 + 加入自選按鈕 */}
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <div className="font-serif text-[22px] tracking-tight text-ink leading-tight">
+            {name ?? "—"} · {symbol}
+          </div>
+          <div className="flex items-baseline gap-4 mt-1">
+            <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
+              {latest ? latest.close.toFixed(2) : "—"}
             </span>
-          )}
+            {latest && (
+              <span className={`text-[18px] tabular-nums ${dirCls}`}>
+                {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change).toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+              </span>
+            )}
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={onAddToWatchlist}
+          disabled={inWatchlist}
+          className={[
+            "shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 text-2xs uppercase tracking-[1.5px] transition-all duration-150",
+            inWatchlist
+              ? "border border-line text-ink-dim cursor-default"
+              : "border border-ink-dim text-ink-muted hover:border-accent hover:text-accent cursor-pointer",
+          ].join(" ")}
+          aria-label={inWatchlist ? "已在自選清單" : "加入自選清單"}
+        >
+          {inWatchlist ? "已在自選 ✓" : "+ 加入自選"}
+        </button>
       </div>
 
       {candles.length === 0 ? (
