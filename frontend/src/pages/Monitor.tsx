@@ -8,6 +8,7 @@ import { TriggerList } from "../components/TriggerList";
 import { WatchlistWithChips } from "../components/WatchlistWithChips";
 import { useActiveSignals } from "../hooks/useActiveSignals";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
+import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
 import { useWatchlist } from "../hooks/useWatchlist";
@@ -77,6 +78,14 @@ export function Monitor() {
     () => selected !== null && watchlistItems.some((w) => w.symbol === selected),
     [watchlistItems, selected]
   );
+
+  const watchlistSymbols = useMemo(
+    () => watchlistItems.map((w) => w.symbol),
+    [watchlistItems]
+  );
+
+  // 預覽訂閱：selected 不在 watchlist 時通知 backend 用 owner='preview' 訂閱該 symbol
+  usePreviewSubscribe(selected, watchlistSymbols);
 
   function handleSelect(sym: string) {
     setSelected(sym);
@@ -194,9 +203,6 @@ export function Monitor() {
                 <h2 className="font-serif font-bold text-2xl tracking-[-0.5px] leading-[1.05]">
                   明細
                 </h2>
-                <span className="font-sans font-normal text-sm text-ink-dim">
-                  {selected ? `(${selected})` : ""}
-                </span>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto pr-1.5">
                 <TradeTape symbol={selected} />

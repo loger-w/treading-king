@@ -344,6 +344,12 @@ export const api = {
   quote: (symbol: string) =>
     fetchJSON<QuoteResponse>(`/api/quote/${encodeURIComponent(symbol)}`),
 
+  preview: (symbol: string | null) =>
+    fetchJSON<{ ok: boolean; current: string | null }>("/api/preview", {
+      method: "POST",
+      body: JSON.stringify({ symbol }),
+    }),
+
   cacheStatus: () => fetchJSON<CacheStatusResponse>("/api/cache/status"),
   cacheRefresh: (limit?: number) => {
     const qs = limit ? `?limit=${limit}` : "";
