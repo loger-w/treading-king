@@ -86,6 +86,13 @@ async def add_watchlist(payload: WatchlistAdd) -> dict:
     # CDP backfill 背景跑（不 block response）
     asyncio.create_task(get_cdp_service().backfill_from_fubon(payload.symbol))
 
+    # refresh signal_engine field_cache so scope=watchlist signals start evaluating this symbol
+    try:
+        from services.signal_engine import get_signal_engine
+        await get_signal_engine().refresh_active_signals()
+    except Exception as e:
+        logger.warning("watchlist add: refresh signal_engine failed: %s", e)
+
     return {"symbol": payload.symbol, "status": "added"}
 
 
@@ -102,4 +109,12 @@ async def remove_watchlist(symbol: str) -> None:
         logger.warning("watchlist remove: ws unsubscribe failed: %s", e)
     # cdp cache 也清
     get_cdp_service().discard(symbol)
+
+    # refresh signal_engine: remove this symbol from any cached scope
+    try:
+        from services.signal_engine import get_signal_engine
+        await get_signal_engine().refresh_active_signals()
+    except Exception as e:
+        logger.warning("watchlist remove: refresh signal_engine failed: %s", e)
+
     return None
