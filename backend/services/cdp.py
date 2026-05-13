@@ -44,7 +44,7 @@ def round_to_tick_tw(price: float, direction: Literal["up", "down", "nearest"]) 
     direction:
       - "up":      向上取（ceil） — 阻力位（AH/NH）
       - "down":    向下取（floor） — 支撐位（NL/AL）
-      - "nearest": 四捨五入 — 中線（CDP）
+      - "nearest": 取最近（Python round，半值偶數捨入） — 中線（CDP）
     """
     tick = _tick_size(price)
     units = price / tick
