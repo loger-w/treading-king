@@ -15,6 +15,7 @@ from models.condition import ActiveSignalCreate
 from services.fubon_ws import get_ws_pool
 from services.signal_engine import get_signal_engine
 from services.supabase_client import SupabaseStatus, get_supabase
+from services.user_context import get_user_label
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,7 +35,10 @@ async def _scope_symbols(scope: dict) -> list[str]:
         return list(scope.get("symbols", []))
     if scope.get("type") == "watchlist":
         res = await asyncio.to_thread(
-            lambda: sb.client.table("watchlist").select("symbol").execute()
+            lambda: sb.client.table("watchlist")
+            .select("symbol")
+            .eq("user_label", get_user_label())
+            .execute()
         )
         return [r["symbol"] for r in (res.data or [])]
     return []
@@ -46,6 +50,7 @@ async def list_active() -> dict:
     res = await asyncio.to_thread(
         lambda: sb.client.table("active_signals")
         .select("id, name, filter_json, scope, cooldown_seconds, ignore_auctions, enabled, created_at")
+        .eq("user_label", get_user_label())
         .order("created_at", desc=True).execute()
     )
     return {"active_signals": res.data or []}
@@ -62,6 +67,7 @@ async def create_active(payload: ActiveSignalCreate) -> dict:
             "cooldown_seconds": payload.cooldown_seconds,
             "ignore_auctions": payload.ignore_auctions,
             "enabled": payload.enabled,
+            "user_label": get_user_label(),
         }).execute()
     )
     if not res.data:
@@ -84,7 +90,12 @@ async def update_active(sid: str, payload: ActiveSignalCreate) -> dict:
     sb = _ensure_supabase()
     # 拿舊的 scope 算 diff（簡化：先全 unsub 再全 sub）
     old = await asyncio.to_thread(
-        lambda: sb.client.table("active_signals").select("scope, enabled").eq("id", sid).single().execute()
+        lambda: sb.client.table("active_signals")
+        .select("scope, enabled")
+        .eq("user_label", get_user_label())
+        .eq("id", sid)
+        .single()
+        .execute()
     )
     if not old.data:
         raise HTTPException(404, detail={"error": "not_found"})
@@ -101,7 +112,10 @@ async def update_active(sid: str, payload: ActiveSignalCreate) -> dict:
             "cooldown_seconds": payload.cooldown_seconds,
             "ignore_auctions": payload.ignore_auctions,
             "enabled": payload.enabled,
-        }).eq("id", sid).execute()
+        })
+        .eq("user_label", get_user_label())
+        .eq("id", sid)
+        .execute()
     )
 
     if payload.enabled:
@@ -119,14 +133,23 @@ async def update_active(sid: str, payload: ActiveSignalCreate) -> dict:
 async def delete_active(sid: str) -> None:
     sb = _ensure_supabase()
     old = await asyncio.to_thread(
-        lambda: sb.client.table("active_signals").select("scope, enabled").eq("id", sid).single().execute()
+        lambda: sb.client.table("active_signals")
+        .select("scope, enabled")
+        .eq("user_label", get_user_label())
+        .eq("id", sid)
+        .single()
+        .execute()
     )
     if old.data and old.data.get("enabled"):
         for sym in await _scope_symbols(old.data.get("scope", {})):
             await get_ws_pool().unsubscribe(sym, owner_id=sid)
 
     await asyncio.to_thread(
-        lambda: sb.client.table("active_signals").delete().eq("id", sid).execute()
+        lambda: sb.client.table("active_signals")
+        .delete()
+        .eq("user_label", get_user_label())
+        .eq("id", sid)
+        .execute()
     )
     await get_signal_engine().refresh_active_signals()
     return None
