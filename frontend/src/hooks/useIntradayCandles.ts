@@ -5,6 +5,7 @@ const REFRESH_MS = 30_000;
 
 export function useIntradayCandles(symbol: string | null) {
   const [candles, setCandles] = useState<IntradayCandle[]>([]);
+  const [prevClose, setPrevClose] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -13,14 +14,16 @@ export function useIntradayCandles(symbol: string | null) {
     try {
       const r = await api.candlesIntraday(s);
       setCandles(r.data ?? []);
+      setPrevClose(r.prev_close);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
   useEffect(() => {
-    if (!symbol) { setCandles([]); return; }
+    if (!symbol) { setCandles([]); setPrevClose(null); return; }
     setCandles([]);  // 先清空 — 避免新 symbol 載入過程中舊資料殘留視覺奇怪
+    setPrevClose(null);
     fetchOnce(symbol);
     timerRef.current = setInterval(() => fetchOnce(symbol), REFRESH_MS);
     return () => {
@@ -41,5 +44,5 @@ export function useIntradayCandles(symbol: string | null) {
     });
   }, [symbol]);
 
-  return { candles, error, onTick, refetch: () => symbol && fetchOnce(symbol) };
+  return { candles, prevClose, error, onTick, refetch: () => symbol && fetchOnce(symbol) };
 }

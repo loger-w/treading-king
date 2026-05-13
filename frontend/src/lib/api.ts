@@ -284,6 +284,7 @@ export interface IntradayCandlesResponse {
   date: string;
   symbol: string;
   data: IntradayCandle[];
+  prev_close: number | null;  // 昨日收盤，給前端算漲跌% / Y 軸 ±10% 用
 }
 
 export interface CdpLevels {
