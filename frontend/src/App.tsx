@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react";
 import { Health } from "./pages/Health";
+import { Monitor } from "./pages/Monitor";
 import { Screener } from "./pages/Screener";
-import { Signals } from "./pages/Signals";
-import { Watchlist } from "./pages/Watchlist";
 
-type Page = "health" | "screener" | "signals" | "watchlist";
+type Page = "health" | "screener" | "monitor";
 
 export default function App() {
   const [page, setPage] = useState<Page>("health");
 
-  // Soft fade-in to mimic editorial reading-rhythm
   useEffect(() => {
     document.body.classList.add("opacity-100");
   }, []);
@@ -20,8 +18,7 @@ export default function App() {
       <Nav active={page} onNavigate={setPage} />
       {page === "health" && <Health />}
       {page === "screener" && <Screener />}
-      {page === "signals" && <Signals />}
-      {page === "watchlist" && <Watchlist />}
+      {page === "monitor" && <Monitor />}
     </>
   );
 }
@@ -29,7 +26,7 @@ export default function App() {
 function Masthead() {
   return (
     <header className="border-t-4 border-accent bg-bg-card">
-      <div className="mx-auto flex max-w-[1200px] flex-wrap items-baseline justify-between gap-4 px-12 pb-4 pt-6 max-md:px-6">
+      <div className="mx-auto flex max-w-[1600px] flex-wrap items-baseline justify-between gap-4 px-[60px] pb-4 pt-6 max-md:px-6">
         <h1 className="font-serif text-3xl font-bold tracking-editorial text-ink">
           treading{" "}
           <span className="font-light text-ink-muted">·</span>{" "}
@@ -68,13 +65,12 @@ function Nav({
   const items: Array<{ id: Page; label: string }> = [
     { id: "health", label: "系統狀態" },
     // { id: "screener", label: "篩股" },  // 暫時隱藏，待 cache job 自動化後啟用
-    { id: "signals", label: "即時訊號" },
-    { id: "watchlist", label: "自選" },
+    { id: "monitor", label: "即時監控" },
   ];
 
   return (
     <nav className="border-y border-line bg-bg-card/40">
-      <div className="mx-auto flex max-w-[1200px] gap-0 px-12 max-md:px-6">
+      <div className="mx-auto flex max-w-[1600px] gap-0 px-[60px] max-md:px-6">
         {items.map((it) => {
           const isActive = active === it.id;
           return (
