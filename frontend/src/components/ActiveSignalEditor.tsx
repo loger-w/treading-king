@@ -6,7 +6,7 @@ import {
 } from "../lib/api";
 
 const FIELD_LABEL: Record<ConditionField, string> = {
-  close: "收盤價", change_pct: "漲跌幅 %", volume: "成交量", amount: "成交金額",
+  close: "即時價", change_pct: "漲跌幅 %", volume: "成交量", amount: "成交金額",
   rsi_14: "RSI(14)", macd: "MACD", macd_signal: "MACD signal",
   kdj_k: "KDJ K", kdj_d: "KDJ D", kdj_j: "KDJ J",
   sma_5: "5 日均線", sma_20: "20 日均線", sma_60: "60 日均線",
@@ -139,6 +139,9 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
         {/* Filter.conditions 區塊 */}
         <div className="border-t border-line pt-3 mb-4">
           <div className="label-tiny mb-2">跨指標條件 (從快取)</div>
+          <p className="text-2xs text-ink-dim mb-3 leading-relaxed">
+            「即時價」= 最新一筆成交價；盤後 / 未開盤時為前一日收盤。其他指標來自每日快取。
+          </p>
           {filter.conditions.map((c, i) => {
             const valIsField = typeof c.value === "string";
             return (
