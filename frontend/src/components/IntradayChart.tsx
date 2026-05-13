@@ -34,14 +34,14 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
   }, [symbol, showCdp]);
 
   const {
-    yMin, yMax, scaleX, scaleY, inverseY,
+    yMin, yMax, scaleX, scaleY,
     polyClose, polyVwap, visibleCdpKeys,
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
   } = useMemo(() => {
     if (candles.length === 0) {
       return {
         yMin: 0, yMax: 0,
-        scaleX: () => 0, scaleY: () => 0, inverseY: () => 0,
+        scaleX: () => 0, scaleY: () => 0,
         polyClose: "", polyVwap: "",
         visibleCdpKeys: [] as Array<"ah" | "nh" | "cdp" | "nl" | "al">,
         todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
@@ -81,18 +81,17 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
     const yRange = CHART_H - PAD_T - PAD_B;
     const scaleX = (i: number) => PAD_L + (i / Math.max(candles.length - 1, 1)) * xRange;
     const scaleY = (v: number) => PAD_T + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
-    const inverseY = (y: number) => yMin + (1 - (y - PAD_T) / yRange) * (yMax - yMin);
     const polyClose = candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`).join(" ");
     const polyVwap = candles.map((c, i) => `${scaleX(i)},${scaleY(c.average)}`).join(" ");
     return {
-      yMin, yMax, scaleX, scaleY, inverseY,
+      yMin, yMax, scaleX, scaleY,
       polyClose, polyVwap, visibleCdpKeys,
       todayHigh, todayHighIdx, todayLow, todayLowIdx,
     };
   }, [candles, cdp, showCdp, prevClose]);
 
-  // hover crosshair state — null = 沒 hover
-  const [hover, setHover] = useState<{ idx: number; svgY: number } | null>(null);
+  // hover crosshair state — 只跟 candle idx 走（價位由 candle.close 決定）
+  const [hover, setHover] = useState<{ idx: number } | null>(null);
 
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     if (candles.length === 0) return;
@@ -106,7 +105,7 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
     }
     const ratio = (svgX - PAD_L) / (CHART_W - PAD_L - PAD_R);
     const idx = Math.max(0, Math.min(candles.length - 1, Math.round(ratio * (candles.length - 1))));
-    setHover({ idx, svgY });
+    setHover({ idx });
   }
 
   function handleMouseLeave() {
@@ -254,11 +253,11 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
             );
           })}
 
-          {/* Hover crosshair — 滑鼠位置的虛線十字 + 時間 + 價位 */}
+          {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）*/}
           {hover && (() => {
             const candle = candles[hover.idx];
-            const cursorPrice = roundToNearestTick(inverseY(hover.svgY));
             const lineX = scaleX(hover.idx);
+            const lineY = scaleY(candle.close);
             const t = new Date(candle.date);
             const hh = String(t.getHours()).padStart(2, "0");
             const mm = String(t.getMinutes()).padStart(2, "0");
@@ -268,22 +267,22 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
                 <line x1={lineX} y1={PAD_T} x2={lineX} y2={CHART_H - PAD_B}
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5"
                   strokeDasharray="3 3" opacity="0.7" />
-                {/* 水平虛線（cursor y） */}
-                <line x1={PAD_L} y1={hover.svgY} x2={CHART_W - PAD_R} y2={hover.svgY}
+                {/* 水平虛線（snap 到 candle close 的 y） */}
+                <line x1={PAD_L} y1={lineY} x2={CHART_W - PAD_R} y2={lineY}
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5"
                   strokeDasharray="3 3" opacity="0.7" />
-                {/* candle close 點 (snap 到價線上) */}
-                <circle cx={lineX} cy={scaleY(candle.close)} r="2"
+                {/* candle close 上的 marker */}
+                <circle cx={lineX} cy={lineY} r="2.5"
                   className="fill-ink" />
-                {/* 左側 Y 軸：cursor 價位（小色塊高亮） */}
-                <rect x={2} y={hover.svgY - 7} width={PAD_L - 6} height="14" rx="1.5"
+                {/* 左側 Y 軸：該 candle 的 close 價位（小色塊高亮） */}
+                <rect x={2} y={lineY - 7} width={PAD_L - 6} height="14" rx="1.5"
                   fill="var(--color-line, #2e2a22)"
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5" />
-                <text x={PAD_L - 4} y={hover.svgY + 3} textAnchor="end"
+                <text x={PAD_L - 4} y={lineY + 3} textAnchor="end"
                   className="fill-ink text-[10px] tabular-nums font-medium">
-                  {formatTickPrice(cursorPrice)}
+                  {formatTickPrice(candle.close)}
                 </text>
-                {/* 底部 X 軸：cursor 時間（小色塊高亮） */}
+                {/* 底部 X 軸：該 candle 的時間（小色塊高亮） */}
                 <rect x={lineX - 18} y={CHART_H - PAD_B + 2} width="36" height="14" rx="1.5"
                   fill="var(--color-line, #2e2a22)"
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5" />
