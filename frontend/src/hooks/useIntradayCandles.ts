@@ -5,20 +5,16 @@ const REFRESH_MS = 30_000;
 
 export function useIntradayCandles(symbol: string | null) {
   const [candles, setCandles] = useState<IntradayCandle[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchOnce = useCallback(async (s: string) => {
-    setLoading(true);
     setError(null);
     try {
       const r = await api.candlesIntraday(s);
       setCandles(r.data ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -45,5 +41,5 @@ export function useIntradayCandles(symbol: string | null) {
     });
   }, [symbol]);
 
-  return { candles, loading, error, onTick, refetch: () => symbol && fetchOnce(symbol) };
+  return { candles, error, onTick, refetch: () => symbol && fetchOnce(symbol) };
 }
