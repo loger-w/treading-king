@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Monitor v12 — Layout Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;0,700;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #14110c;
+    --bg-card: #1d1812;
+    --bg-deep: #0d0a07;
+    --line: #2e2a22;
+    --line-strong: #4a4234;
+    --ink: #ede4d3;
+    --ink-muted: #d4c8b0;
+    --ink-dim: #8a8273;
+    --accent: #e85a4f;
+    --bull: #e85a4f;
+    --bear: #7fc99a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter Tight', -apple-system, system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'tnum';
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-image:
+      radial-gradient(circle at 22% 18%, rgba(232,90,79,.06) 0%, transparent 35%),
+      radial-gradient(circle at 78% 82%, rgba(232,90,79,.04) 0%, transparent 40%),
+      radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.4) 100%);
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: .5;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.025 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  .root { position: relative; z-index: 2; min-height: 100vh; }
+
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* Nav */
+  .nav-strip { border-top: 4px solid var(--accent); }
+  .nav-row {
+    max-width: 1960px; margin: 0 auto; padding: 18px 36px 14px;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 32px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 26px; letter-spacing: -.5px; }
+  .brand em { font-style: italic; font-weight: 500; color: var(--ink-dim); }
+  .nav-links { display: flex; gap: 28px; }
+  .nav-link { font-size: 11px; text-transform: uppercase; letter-spacing: 1.8px; color: var(--ink-dim); text-decoration: none; padding-bottom: 4px; }
+  .nav-link.active { color: var(--ink); border-bottom: 2px solid var(--accent); }
+
+  .toolbar {
+    max-width: 1960px; margin: 0 auto; padding: 22px 36px 10px;
+    display: grid;
+    grid-template-columns: 300px 340px 1fr 300px;  /* ★ 對齊 main grid 4 欄 */
+    align-items: center; gap: 24px;
+  }
+  .toolbar-left { justify-self: start; grid-column: 1 / 3; }   /* ws-pill 跨左 2 欄 */
+  .toolbar-search-cell { grid-column: 3 / 4; }                 /* 搜尋對齊分時走勢欄 */
+  .toolbar-right { justify-self: end; grid-column: 4 / 5; }    /* 訊號規則對齊明細欄 */
+  .ws-pill { display: inline-flex; align-items: baseline; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--ink-dim); }
+  .ws-pill .dot { color: var(--bear); font-size: 14px; line-height: 1; }
+  .rules-btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 8px 18px; border: 1px solid var(--accent); color: var(--accent);
+    background: transparent; font-size: 12px; text-transform: uppercase; letter-spacing: 1.8px; font-weight: 500; cursor: pointer;
+  }
+  .rules-btn .badge { background: var(--accent); color: var(--bg); padding: 1px 6px; font-size: 11px; font-weight: 600; }
+  .toolbar-search {
+    display: flex; align-items: center;
+    border: 1px solid var(--line-strong); background: var(--bg-card);
+    transition: border-color .15s;
+  }
+  .toolbar-search:focus-within { border-color: var(--accent); }
+  .toolbar-search input {
+    flex: 1; background: transparent; border: 0; color: var(--ink);
+    padding: 9px 14px; font: inherit; font-size: 14px; outline: none; letter-spacing: .2px;
+  }
+  .toolbar-search input::placeholder { color: var(--ink-dim); }
+  .toolbar-search .search-icon { padding: 0 14px; display: flex; align-items: center; color: var(--ink-dim); font-size: 15px; }
+  .toolbar-search .kbd { font-size: 10px; color: var(--ink-dim); border: 1px solid var(--line); padding: 2px 6px; margin-right: 8px; font-family: 'Inter Tight', sans-serif; letter-spacing: .5px; }
+
+  /* 4-col grid — 等高 (中央列高度驅動其他 3 欄) */
+  main { max-width: 1960px; margin: 0 auto; padding: 12px 36px 48px; }
+  .grid-4 {
+    display: grid;
+    grid-template-columns: 300px 340px 1fr 300px;
+    gap: 24px;
+    align-items: stretch;   /* ★ 等高 */
+  }
+  .col-section {
+    display: flex; flex-direction: column; min-width: 0;
+    min-height: 0;            /* ★ 讓內部 flex child 能 overflow */
+  }
+  .col-header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; flex-shrink: 0; }
+  .col-title { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 24px; letter-spacing: -.5px; line-height: 1.05; }
+  .col-count { font-size: 13px; color: var(--ink-dim); }
+
+  /* 可滾動 — 撐滿剩餘空間 */
+  .scroll-panel {
+    flex: 1;                  /* ★ 撐滿 column 剩餘高度 */
+    min-height: 0;
+    overflow-y: auto; overflow-x: hidden; padding-right: 6px;
+  }
+  .scroll-panel::-webkit-scrollbar { width: 6px; }
+  .scroll-panel::-webkit-scrollbar-thumb { background: var(--line-strong); }
+
+  /* 觸發歷史 row */
+  .trig-row {
+    border-bottom: 1px solid var(--line); padding: 12px 4px;
+    display: grid; grid-template-columns: 1fr; gap: 4px;
+    cursor: pointer; transition: background .15s;
+  }
+  .trig-row:hover { background: var(--bg-card); }
+  .trig-row.active { background: var(--bg-card); border-left: 2px solid var(--accent); padding-left: 10px; }
+  .trig-line1 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .trig-symbol { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 16px; letter-spacing: -.2px; }
+  .trig-symbol .name { font-family: 'Source Serif 4', serif; font-style: italic; font-weight: 400; font-size: 12px; color: var(--ink-muted); margin-left: 6px; }
+  .trig-time { font-size: 11px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  .trig-line2 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .trig-rule { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .8px; }
+  .trig-price { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--bull); font-weight: 500; }
+  .trig-price.down { color: var(--bear); }
+
+  /* 自選 */
+  .search-row {
+    display: flex; gap: 0; margin-bottom: 14px;
+    border: 1px solid var(--line); background: var(--bg-card);
+  }
+  .search-row input { flex: 1; background: transparent; border: 0; color: var(--ink); padding: 10px 12px; font: inherit; font-size: 13px; outline: none; }
+  .search-row input::placeholder { color: var(--ink-dim); }
+  .search-row .search-icon { padding: 0 12px; display: flex; align-items: center; color: var(--ink-dim); font-size: 14px; }
+
+  .watch-row {
+    border-bottom: 1px solid var(--line); padding: 12px 4px;
+    display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline;
+    cursor: pointer; transition: background .15s;
+  }
+  .watch-row:hover { background: var(--bg-card); }
+  .watch-row.active { background: var(--bg-card); border-left: 2px solid var(--accent); padding-left: 10px; }
+  .watch-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .watch-symbol-line { display: flex; align-items: baseline; gap: 8px; }
+  .watch-symbol { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 17px; letter-spacing: -.2px; }
+  .watch-name { font-family: 'Source Serif 4', serif; font-style: italic; font-size: 12px; color: var(--ink-muted); }
+  .watch-price { font-size: 14px; font-variant-numeric: tabular-nums; color: var(--bull); font-weight: 500; text-align: right; }
+  .watch-price.down { color: var(--bear); }
+  .watch-pct { font-size: 10px; color: var(--ink-dim); display: block; }
+  .watch-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { font-size: 10px; padding: 1px 6px; border: 1px solid var(--line-strong); color: var(--ink-dim); text-transform: uppercase; letter-spacing: .5px; }
+  .chip.hit { color: var(--accent); border-color: var(--accent); }
+
+  /* 中央：chart + 五檔 stacked — 自然高度驅動 row 高 */
+  .center-col { display: flex; flex-direction: column; gap: 24px; }
+  .center-col > div:first-child { flex-shrink: 0; }
+  .chart-frame { border: 1px solid var(--line); background: rgba(29,24,18,.5); padding: 22px; }
+  .chart-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 20px;
+    padding-bottom: 14px; margin-bottom: 16px; border-bottom: 1px solid var(--line);
+  }
+  .chart-symbol-block { display: flex; align-items: baseline; gap: 14px; }
+  .chart-symbol { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 30px; letter-spacing: -.5px; }
+  .chart-name { font-family: 'Source Serif 4', serif; font-style: italic; font-size: 16px; color: var(--ink-muted); }
+  .chart-price-block { display: flex; align-items: baseline; gap: 12px; }
+  .chart-price { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 34px; letter-spacing: -.5px; font-variant-numeric: tabular-nums; color: var(--bull); }
+  .chart-delta { font-size: 13px; color: var(--bull); font-variant-numeric: tabular-nums; }
+  .add-watch-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border: 1px solid var(--ink-dim); color: var(--ink-muted);
+    background: transparent; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; cursor: pointer; transition: all .15s;
+  }
+  .add-watch-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .add-watch-btn.in-list { border-color: var(--line); color: var(--ink-dim); cursor: default; }
+  .chart-canvas { height: 520px; position: relative; overflow: hidden; }
+  .chart-canvas svg { width: 100%; height: 100%; display: block; }
+
+  /* 五檔 — 中欄下方 */
+  .book-frame { border: 1px solid var(--line); background: rgba(29,24,18,.5); padding: 22px; }
+  .book-head { display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 10px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .book-title { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 18px; letter-spacing: -.3px; }
+  .book-refresh { font-size: 10px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 1px; }
+  .book-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+  .book-col h4 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--ink-dim); margin-bottom: 8px; }
+  .book-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 6px 8px; font-size: 13px; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line); position: relative; }
+  .book-row.bid .num { color: var(--bull); }
+  .book-row.ask .num { color: var(--bear); }
+  .book-row .qty { color: var(--ink-muted); text-align: right; position: relative; z-index: 1; }
+  .book-row .num { position: relative; z-index: 1; font-weight: 500; }
+  .book-bar { position: absolute; top: 0; bottom: 0; right: 0; background: rgba(232,90,79,.10); pointer-events: none; }
+  .book-row.ask .book-bar { background: rgba(127,201,154,.10); right: auto; left: 0; }
+
+  /* 明細 (右欄) */
+  .tape-list { display: grid; grid-template-columns: 1fr; gap: 0; font-size: 12px; }
+  .tape-head { display: grid; grid-template-columns: 64px 1fr 50px 36px; gap: 6px; padding: 8px 4px; border-bottom: 1px solid var(--line-strong); color: var(--ink-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; }
+  .tape-row { display: grid; grid-template-columns: 64px 1fr 50px 36px; gap: 6px; padding: 6px 4px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .tape-price.up { color: var(--bull); font-weight: 500; }
+  .tape-price.down { color: var(--bear); font-weight: 500; }
+  .tape-qty { text-align: right; color: var(--ink-muted); }
+  .tape-side { text-align: center; font-size: 11px; }
+  .tape-side.buy { color: var(--bull); }
+  .tape-side.sell { color: var(--bear); }
+
+  /* responsive */
+  @media (max-width: 1500px) {
+    .grid-4 { grid-template-columns: 260px 300px 1fr 260px; gap: 16px; }
+    .chart-symbol { font-size: 26px; }
+    .chart-price { font-size: 28px; }
+  }
+  @media (max-width: 1200px) {
+    .grid-4 { grid-template-columns: 1fr 1fr; }
+    .grid-4 > section:nth-child(3) { grid-column: 1 / -1; }
+    .scroll-panel { max-height: 480px; }
+  }
+</style>
+</head>
+<body>
+<div class="root">
+
+  <div class="nav-strip"></div>
+  <div class="nav-row">
+    <div class="brand">Trading <em>King</em></div>
+    <nav class="nav-links">
+      <a class="nav-link active" href="#">即時監控</a>
+      <a class="nav-link" href="#">策略</a>
+      <a class="nav-link" href="#">系統狀態</a>
+    </nav>
+  </div>
+
+  <div class="toolbar">
+    <span class="ws-pill toolbar-left"><span class="dot">●</span> 連線中</span>
+    <div class="toolbar-search-cell">
+      <div class="toolbar-search">
+        <span class="search-icon">⌕</span>
+        <input type="text" placeholder="搜尋股票代號或名稱…（按 / 聚焦）" />
+        <span class="kbd">/</span>
+      </div>
+    </div>
+    <button class="rules-btn toolbar-right">⚙ 訊號規則 <span class="badge">3</span></button>
+  </div>
+
+  <main>
+    <div class="grid-4">
+
+      <!-- COL 1: 觸發歷史 -->
+      <section class="col-section">
+        <div class="col-header">
+          <h2 class="col-title">觸發歷史</h2>
+          <span class="col-count">(12)</span>
+        </div>
+        <div class="scroll-panel">
+          <div class="trig-row active">
+            <div class="trig-line1">
+              <span class="trig-symbol">2330<span class="name">台積電</span></span>
+              <span class="trig-time">14:23:55</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">RSI 過高警示</span>
+              <span class="trig-price">1,085</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2317<span class="name">鴻海</span></span>
+              <span class="trig-time">14:21:08</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">5 分鐘 +2%</span>
+              <span class="trig-price">198.5</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2454<span class="name">聯發科</span></span>
+              <span class="trig-time">14:18:42</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">突破 5 日均線</span>
+              <span class="trig-price down">1,420</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">3008<span class="name">大立光</span></span>
+              <span class="trig-time">14:15:31</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">爆量 burst</span>
+              <span class="trig-price">2,855</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2412<span class="name">中華電</span></span>
+              <span class="trig-time">14:12:09</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">回測 CDP NL</span>
+              <span class="trig-price down">128.5</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2603<span class="name">長榮</span></span>
+              <span class="trig-time">14:08:17</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">10 分鐘 +3%</span>
+              <span class="trig-price">186.0</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2308<span class="name">台達電</span></span>
+              <span class="trig-time">14:03:55</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">KDJ 黃金交叉</span>
+              <span class="trig-price">388</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2891<span class="name">中信金</span></span>
+              <span class="trig-time">13:58:22</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">RSI 過高警示</span>
+              <span class="trig-price">38.45</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2880<span class="name">華南金</span></span>
+              <span class="trig-time">13:52:01</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">突破 20 日均線</span>
+              <span class="trig-price">25.30</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2382<span class="name">廣達</span></span>
+              <span class="trig-time">13:47:18</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">爆量 burst</span>
+              <span class="trig-price down">298</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">1301<span class="name">台塑</span></span>
+              <span class="trig-time">13:41:39</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">回測 CDP NH</span>
+              <span class="trig-price">68.5</span>
+            </div>
+          </div>
+          <div class="trig-row">
+            <div class="trig-line1">
+              <span class="trig-symbol">2002<span class="name">中鋼</span></span>
+              <span class="trig-time">13:34:50</span>
+            </div>
+            <div class="trig-line2">
+              <span class="trig-rule">5 分鐘 -2%</span>
+              <span class="trig-price down">23.85</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COL 2: 自選清單 -->
+      <section class="col-section">
+        <div class="col-header">
+          <h2 class="col-title">自選清單</h2>
+          <span class="col-count">(8)</span>
+        </div>
+        <div class="scroll-panel">
+          <div class="watch-row active">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2330</span>
+                <span class="watch-name">台積電</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip hit">命中 3</span>
+                <span class="chip">RSI</span>
+                <span class="chip">+5min</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price">1,085</div>
+              <span class="watch-pct">+1.40%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2317</span>
+                <span class="watch-name">鴻海</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip hit">命中 1</span>
+                <span class="chip">+5min</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price">198.5</div>
+              <span class="watch-pct">+1.02%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2454</span>
+                <span class="watch-name">聯發科</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip">SMA5</span>
+                <span class="chip">BB upper</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price down">1,420</div>
+              <span class="watch-pct">-0.35%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">3008</span>
+                <span class="watch-name">大立光</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip">爆量</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price">2,855</div>
+              <span class="watch-pct">+0.71%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2412</span>
+                <span class="watch-name">中華電</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip">CDP NL</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price down">128.5</div>
+              <span class="watch-pct">-0.39%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2603</span>
+                <span class="watch-name">長榮</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip">+10min</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price">186.0</div>
+              <span class="watch-pct">+2.20%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2308</span>
+                <span class="watch-name">台達電</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip">KDJ</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price">388</div>
+              <span class="watch-pct">+0.78%</span>
+            </div>
+          </div>
+          <div class="watch-row">
+            <div class="watch-meta">
+              <div class="watch-symbol-line">
+                <span class="watch-symbol">2891</span>
+                <span class="watch-name">中信金</span>
+              </div>
+              <div class="watch-chips">
+                <span class="chip">RSI</span>
+              </div>
+            </div>
+            <div>
+              <div class="watch-price">38.45</div>
+              <span class="watch-pct">+0.92%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COL 3: 分時走勢 + 五檔 stacked -->
+      <section class="col-section center-col">
+        <div>
+          <div class="col-header">
+            <h2 class="col-title">分時走勢</h2>
+          </div>
+          <div class="chart-frame">
+            <div class="chart-head">
+              <div class="chart-symbol-block">
+                <span class="chart-symbol">2330</span>
+                <span class="chart-name">台積電</span>
+              </div>
+              <div class="chart-price-block">
+                <span class="chart-price">1,085</span>
+                <span class="chart-delta">+15 (+1.40%)</span>
+                <button class="add-watch-btn in-list">已在自選 ✓</button>
+              </div>
+            </div>
+            <div class="chart-canvas">
+              <svg viewBox="0 0 1000 520" preserveAspectRatio="none">
+                <g font-family="Inter Tight" font-size="11" fill="#8a8273" text-anchor="end">
+                  <text x="990" y="50">+2% 1,091.4</text>
+                  <text x="990" y="160">+1% 1,080.7</text>
+                  <text x="990" y="265">  0% 1,070.0</text>
+                  <text x="990" y="370">-1% 1,059.3</text>
+                  <text x="990" y="480">-2% 1,048.6</text>
+                </g>
+                <line x1="0" y1="260" x2="1000" y2="260" stroke="#4a4234" stroke-width="1" stroke-dasharray="3 3"/>
+                <path d="M 30 305 L 80 290 L 130 300 L 180 280 L 230 255 L 280 230 L 330 235 L 380 205 L 430 180 L 480 195 L 530 160 L 580 145 L 630 130 L 680 150 L 730 125 L 780 110 L 830 130 L 880 145"
+                  fill="none" stroke="#e85a4f" stroke-width="2"/>
+                <path d="M 30 305 L 80 290 L 130 300 L 180 280 L 230 255 L 280 230 L 330 235 L 380 205 L 430 180 L 480 195 L 530 160 L 580 145 L 630 130 L 680 150 L 730 125 L 780 110 L 830 130 L 880 145 L 880 500 L 30 500 Z"
+                  fill="url(#g1)" opacity="0.18"/>
+                <defs>
+                  <linearGradient id="g1" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stop-color="#e85a4f"/>
+                    <stop offset="100%" stop-color="#e85a4f" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <circle cx="780" cy="110" r="3.5" fill="#e85a4f"/>
+                <text x="788" y="105" font-family="Inter Tight" font-size="11" fill="#e85a4f">H 1,088</text>
+                <circle cx="30" cy="305" r="3.5" fill="#7fc99a"/>
+                <text x="38" y="320" font-family="Inter Tight" font-size="11" fill="#7fc99a">L 1,062</text>
+                <g font-family="Inter Tight" font-size="10" fill="#8a8273" text-anchor="middle">
+                  <text x="30" y="515">09:00</text>
+                  <text x="230" y="515">10:00</text>
+                  <text x="430" y="515">11:00</text>
+                  <text x="630" y="515">12:00</text>
+                  <text x="830" y="515">13:00</text>
+                  <text x="970" y="515">13:30</text>
+                </g>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- 五檔 -->
+        <div>
+          <div class="book-frame">
+            <div class="book-head">
+              <h3 class="book-title">委買賣 五檔</h3>
+              <span class="book-refresh">每 2 秒 refresh · 14:23:54</span>
+            </div>
+            <div class="book-grid">
+              <div class="book-col">
+                <h4>委買 BID</h4>
+                <div class="book-row bid">
+                  <span class="num">1,085</span><span class="qty">328 張</span>
+                  <span class="book-bar" style="width: 92%;"></span>
+                </div>
+                <div class="book-row bid">
+                  <span class="num">1,084</span><span class="qty">214 張</span>
+                  <span class="book-bar" style="width: 60%;"></span>
+                </div>
+                <div class="book-row bid">
+                  <span class="num">1,083</span><span class="qty">186 張</span>
+                  <span class="book-bar" style="width: 52%;"></span>
+                </div>
+                <div class="book-row bid">
+                  <span class="num">1,082</span><span class="qty">125 張</span>
+                  <span class="book-bar" style="width: 35%;"></span>
+                </div>
+                <div class="book-row bid">
+                  <span class="num">1,081</span><span class="qty">98 張</span>
+                  <span class="book-bar" style="width: 28%;"></span>
+                </div>
+              </div>
+              <div class="book-col">
+                <h4>委賣 ASK</h4>
+                <div class="book-row ask">
+                  <span class="num">1,086</span><span class="qty">412 張</span>
+                  <span class="book-bar" style="width: 100%;"></span>
+                </div>
+                <div class="book-row ask">
+                  <span class="num">1,087</span><span class="qty">256 張</span>
+                  <span class="book-bar" style="width: 62%;"></span>
+                </div>
+                <div class="book-row ask">
+                  <span class="num">1,088</span><span class="qty">198 張</span>
+                  <span class="book-bar" style="width: 48%;"></span>
+                </div>
+                <div class="book-row ask">
+                  <span class="num">1,089</span><span class="qty">142 張</span>
+                  <span class="book-bar" style="width: 34%;"></span>
+                </div>
+                <div class="book-row ask">
+                  <span class="num">1,090</span><span class="qty">110 張</span>
+                  <span class="book-bar" style="width: 27%;"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COL 4: 明細 -->
+      <section class="col-section">
+        <div class="col-header">
+          <h2 class="col-title">明細</h2>
+          <span class="col-count">(2330)</span>
+        </div>
+        <div class="scroll-panel">
+          <div class="tape-head">
+            <div>時間</div><div>價格</div><div>量</div><div>向</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:55</div>
+            <div class="tape-price up">1,085</div>
+            <div class="tape-qty">12</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:53</div>
+            <div class="tape-price up">1,085</div>
+            <div class="tape-qty">3</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:51</div>
+            <div class="tape-price">1,084</div>
+            <div class="tape-qty">8</div>
+            <div class="tape-side sell">內</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:48</div>
+            <div class="tape-price up">1,085</div>
+            <div class="tape-qty">21</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:45</div>
+            <div class="tape-price">1,084</div>
+            <div class="tape-qty">5</div>
+            <div class="tape-side sell">內</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:42</div>
+            <div class="tape-price">1,084</div>
+            <div class="tape-qty">2</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:39</div>
+            <div class="tape-price down">1,083</div>
+            <div class="tape-qty">14</div>
+            <div class="tape-side sell">內</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:35</div>
+            <div class="tape-price up">1,084</div>
+            <div class="tape-qty">6</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:32</div>
+            <div class="tape-price">1,083</div>
+            <div class="tape-qty">4</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:28</div>
+            <div class="tape-price down">1,082</div>
+            <div class="tape-qty">9</div>
+            <div class="tape-side sell">內</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:25</div>
+            <div class="tape-price">1,083</div>
+            <div class="tape-qty">15</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:21</div>
+            <div class="tape-price">1,083</div>
+            <div class="tape-qty">7</div>
+            <div class="tape-side buy">外</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:18</div>
+            <div class="tape-price">1,083</div>
+            <div class="tape-qty">3</div>
+            <div class="tape-side sell">內</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:14</div>
+            <div class="tape-price down">1,082</div>
+            <div class="tape-qty">22</div>
+            <div class="tape-side sell">內</div>
+          </div>
+          <div class="tape-row">
+            <div class="tabular">14:23:11</div>
+            <div class="tape-price up">1,083</div>
+            <div class="tape-qty">8</div>
+            <div class="tape-side buy">外</div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+</div>
+</body>
+</html>
