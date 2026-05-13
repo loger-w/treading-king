@@ -1,131 +1,97 @@
-# treading-king
+# trading-king — 個人台股即時監控
 
-個人自用台股篩股工具，整合 [富邦 Neo API](https://www.fbs.com.tw/TradeAPI/docs/welcome) 的量化資料 + 即時行情。
+整合富邦 Neo API 的本地版股票篩股 + 即時訊號工具。所有人在自己 Windows 電腦本機跑、共用同一個 Supabase 資料庫，靠 `.env` 的 `USER_LABEL` 隔離各自的自選清單 / 策略 / 訊號紀錄。
 
-> ⚠️ 這個資料夾目前實體名稱是 `neo-api`（Claude Code session lock 住改不了名）。
-> Session 結束後請手動改名：
-> ```powershell
-> Set-Location C:\side-project
-> Move-Item neo-api treading-king
-> ```
+## 你需要先準備
 
-## 技術棧
+- **作業系統**：Windows 10/11 x64（富邦 SDK 是 win_amd64 wheel）
+- **富邦證券帳戶 + TradeAPI key**：到 https://www.fbs.com.tw/TradeAPI/docs/key-management 申請
+- **Python 3.12**：到 https://www.python.org/downloads/ 下載，安裝時勾「Add Python to PATH」
+- **Node.js 20+**：https://nodejs.org/
+- **Git**：https://git-scm.com/download/win
+- **Supabase service_role key**：私訊 `loger` 索取（**勿外流**，等同 admin 權限）
+- **你自己選的 USER_LABEL**：2~20 字、`[a-z0-9_-]`。先在群裡喊一聲避免撞名（例如 `frank`、`bobo`）
 
-- **前端**：Vite + React + TypeScript + Tailwind
-- **後端**：FastAPI (Python 3.12)
-- **資料庫**：Supabase (Postgres)
-- **資料源**：富邦 Neo API（Python SDK，從官網下載 wheel）
+## 安裝
 
-## MVP 三大功能
-
-1. **量化篩股**：條件式 + 策略式，全市場 1700+ 檔 cache 後 on-demand 篩
-2. **即時篩股**：watchlist + Phase 2 候選股（≤500 檔）的條件觸發訊號
-3. **通知**：前端 WebSocket + Discord Webhook
-
-詳細設計見：`C:\Users\USER\.claude\plans\neo-api-https-github-com-phenomenoner-n-modular-newt.md`
-
----
-
-## 日常 dev 啟動（已完成 Phase 1 後）
-
-需要兩個 PowerShell 視窗。
-
-**Terminal A — Backend（:8000）**
-```powershell
-cd C:\side-project\neo-api\backend
-$env:PYTHONIOENCODING = "utf-8"
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-**Terminal B — Frontend（:5173）**
-```powershell
-cd C:\side-project\neo-api\frontend
-npm run dev
-```
-
-開瀏覽器：
-- http://localhost:5173 — 前端 React app（主畫面）
-- http://localhost:8000/docs — Backend 自動產生的 Swagger UI（測 API 用）
-- http://localhost:8000/api/health — JSON health check
-
-關掉服務直接 Ctrl+C 該視窗即可。
-
----
-
-## Phase 0 — 倉庫起手式（已完成）
-
-- [x] 建立目錄結構（`backend/`, `frontend/`, `supabase/`, `logs/`）
-- [x] `.gitignore`
-- [x] `README.md`
-- [x] `backend/.env.example`
-- [x] `backend/scripts/sdk_smoke.py`
-- [x] git init + remote + 第一個 commit
-- [x] 從富邦官網下載 SDK wheel `backend/wheels/fubon_neo-2.2.8-cp37-abi3-win_amd64.whl`
-
-## Phase 0.5 — SDK Sanity Check（**Day 1 必跑**）
-
-驗證 4 個 plan 假設：wheel 安裝、apikey_login 存在、Technical 5 個 endpoint、WS 200 上限。
-
-### 0.5.1 — 你需要先做這兩件事
-
-1. **下載富邦 SDK wheel**
-   - 到富邦 TradeAPI 官網下載最新 v2.x wheel（注意是 cp312 或 cp313 對應 Python 版本）
-   - 放到 `backend/wheels/fubon_neo-x.y.z-cpXX-XXX.whl`
-
-2. **填 `backend/.env`**
-   ```powershell
-   Copy-Item backend\.env.example backend\.env
-   notepad backend\.env  # 填入 FUBON_API_KEY
-   ```
-   `.env` 不會進 git（已在 `.gitignore`）。
-
-### 0.5.2 — 跑 sanity check（之後我會自動做）
+1. clone 專案
 
 ```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install ./wheels/fubon_neo-*.whl python-dotenv
-python scripts/sdk_smoke.py
+git clone https://github.com/<your-user>/trading-king.git C:\trading-king
+cd C:\trading-king
 ```
 
-**通過標準**：5 步全部 PASS → 進 Phase 1。任何一步失敗 → 找文件 / 換 wheel 版本 / 連絡富邦。
+2. 下載富邦 SDK wheel
 
----
+到 https://www.fbs.com.tw/TradeAPI/docs/welcome 登入後找「下載 SDK」，下載最新 Windows x64 wheel（檔名類似 `fubon_neo-2.2.8-cp37-abi3-win_amd64.whl`），放到 `backend\wheels\` 目錄。
 
-## 後續 Phase
+3. 設定 backend 環境變數
 
-- **Phase 1**：基礎建設（FastAPI + Vite + Supabase 連通 + 單檔 quote）
-- **Phase 2a**：盤後 indicator cache job + 端到端煙霧（hard-code RSI 篩股）
-- **Phase 2b**：條件 DSL + 策略範本 + UI
-- **Phase 2.5** *(optional)*：每日 16:30 自動跑量化篩股
-- **Phase 3**：即時篩股（WS pool + ring buffer + signal engine + Discord）
-
-每階段詳細設計見 plan 檔。
-
----
-
-## 目錄結構
-
-```
-treading-king/
-├── backend/
-│   ├── wheels/             ← 富邦 wheel（不進 git）
-│   ├── scripts/            ← 一次性工具（sdk_smoke.py）
-│   ├── routes/             ← FastAPI endpoints
-│   ├── services/           ← 業務邏輯
-│   ├── models/             ← Pydantic schemas
-│   ├── middleware/         ← X-API-Key auth 等
-│   └── jobs/               ← 排程 job (Phase 2.5)
-├── frontend/               ← Vite + React + TS
-├── supabase/migrations/    ← SQL migrations
-├── logs/                   ← rotating log files（不進 git）
-├── .gitignore
-└── README.md
+```powershell
+Copy-Item backend\.env.example backend\.env
+notepad backend\.env
 ```
 
-## 安全性提醒
+至少要填：
+- `FUBON_PERSONAL_ID` / `FUBON_API_KEY`（你的富邦帳號）
+- `SUPABASE_URL` / `SUPABASE_KEY`（loger 給你的 URL + service_role key）
+- `BFF_API_KEY`：隨便填一個秘密字串（前後端共用，例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 生一個）
+- `USER_LABEL`：你的 label（例如 `frank`）
+- `CACHE_JOB_OWNER`：**留空**（只有 loger 會跑 cache job）
 
-- 富邦 API Key 永遠在 `backend/.env`，不進 git、不進前端 build
-- 前端 `VITE_*` 變數會打包進 JS bundle（公開），不能放任何 secret
-- 部署到雲端前，把 X-API-Key middleware 換成 supabase auth 或 basic auth（plan §部署）
+4. 設定 frontend 環境變數
+
+```powershell
+Copy-Item frontend\.env.example frontend\.env
+notepad frontend\.env
+```
+
+填 `VITE_BFF_API_KEY=<跟 backend\.env 一樣那個>`。
+
+5. 一鍵安裝
+
+```powershell
+.\install.ps1
+```
+
+預計跑 5~10 分鐘（pip install + npm install）。
+
+## 啟動
+
+```powershell
+.\start.ps1
+```
+
+會開兩個 PowerShell 視窗（backend + frontend）。等 backend log 出現 `Startup done` + frontend 出現 `Local: http://localhost:5173`，瀏覽器打開 http://localhost:5173。
+
+Masthead 右上角應該顯示 `You are: <你的 label>`，看到代表 `.env` 設對了。
+
+## 常見問題
+
+**Q. 我看得到別人的 watchlist 嗎？**
+不會。watchlist / strategies / active_signals / signals_log 全部按 `USER_LABEL` 隔離。市場資料（symbols / 技術指標 / OHLC）才是共用。
+
+**Q. 8:25 盤後的 indicator cache 是誰跑？**
+只有 `CACHE_JOB_OWNER` 跟 `USER_LABEL` 相符的那台 backend 會跑——這台一律是 loger 的電腦。如果 loger 那天沒開機，當天 indicator 不會更新，最壞影響是隔天條件式篩股用的是前一交易日資料。
+
+**Q. 我的富邦帳號會被別人用到嗎？**
+不會。`.env` 只在你電腦上，富邦 SDK 在你本機 process 內跑。
+
+**Q. 撞名怎辦？**
+backend startup 會驗 label 格式，但**不**擋重複——同一個 label 兩個朋友跑會互相覆寫資料。在群組裡先講好。
+
+**Q. 我是 Mac / Linux 怎辦？**
+目前不支援。富邦只提供 Windows wheel。
+
+**Q. service_role key 外洩會怎樣？**
+拿到 key 的人可以讀寫整個 Supabase（所有人的資料）。請當作密碼保管：不要 commit、不要貼 Discord、不要存在公開雲端硬碟。
+
+## 開發者文件
+
+- `docs/superpowers/specs/2026-05-13-local-userlabel-design.md` — 本地版設計
+- `docs/superpowers/plans/2026-05-13-local-userlabel.md` — 實作計劃
+- `docs/decisions/` — 重要決策紀錄
+
+## 授權
+
+Personal use only. No warranty. 富邦 SDK 屬富邦證券所有，請依其授權條款使用。
