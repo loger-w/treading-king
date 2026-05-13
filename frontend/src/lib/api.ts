@@ -61,6 +61,15 @@ export interface HealthResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Me
+// ---------------------------------------------------------------------------
+
+export interface MeResponse {
+  user_label: string;
+  is_cache_owner: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Quote
 // ---------------------------------------------------------------------------
 
@@ -341,6 +350,7 @@ export interface SignalEvent {
 
 export const api = {
   health: () => fetchJSON<HealthResponse>("/api/health"),
+  me: () => fetchJSON<MeResponse>("/api/me"),
   quote: (symbol: string) =>
     fetchJSON<QuoteResponse>(`/api/quote/${encodeURIComponent(symbol)}`),
 

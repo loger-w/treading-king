@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useMe } from "./hooks/useMe";
 import { Health } from "./pages/Health";
 import { Monitor } from "./pages/Monitor";
 import { Screener } from "./pages/Screener";
@@ -39,6 +40,7 @@ function Masthead() {
 }
 
 function Meta() {
+  const me = useMe();
   const today = new Date().toLocaleDateString("zh-TW", {
     year: "numeric",
     month: "long",
@@ -48,6 +50,19 @@ function Meta() {
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 text-xs text-ink-dim tracking-[0.3px]">
+      {me && (
+        <>
+          <span className="text-ink">
+            You are: <strong className="font-semibold">{me.user_label}</strong>
+            {me.is_cache_owner && (
+              <span className="ml-2 rounded border border-accent px-1.5 py-0.5 text-[10px] uppercase tracking-[1px] text-accent">
+                cache owner
+              </span>
+            )}
+          </span>
+          <span className="opacity-40">·</span>
+        </>
+      )}
       <span>{today}</span>
       <span className="opacity-40">·</span>
       <span>盤中連續競價</span>
