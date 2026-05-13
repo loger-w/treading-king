@@ -21,8 +21,10 @@ export function IntradayChart({ symbol, candles, loading }: Props) {
   const [cdpError, setCdpError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!showCdp) return;
+    // 切 symbol 時先清舊 CDP — 避免新圖上殘留舊 CDP 線
+    setCdp(null);
     setCdpError(null);
+    if (!showCdp) return;
     api.cdp(symbol).then(setCdp).catch((e) =>
       setCdpError(e instanceof Error ? e.message : String(e))
     );
@@ -74,9 +76,9 @@ export function IntradayChart({ symbol, candles, loading }: Props) {
 
   return (
     <div>
-      {loading && candles.length === 0 ? (
+      {candles.length === 0 ? (
         <div className="h-[360px] flex items-center justify-center text-ink-dim font-serif italic">
-          分時資料載入中…
+          載入中…
         </div>
       ) : (
         <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} className="w-full h-auto">
