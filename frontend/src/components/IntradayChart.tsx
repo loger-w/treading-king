@@ -13,7 +13,7 @@ interface Props {
 const CHART_W = 720;
 const CHART_H = 360;
 const PAD_L = 56;
-const PAD_R = 12;
+const PAD_R = 56;  // 寬一點，把 CDP label 擠到外面去（不被即時走勢價線蓋）
 const PAD_T = 12;
 const PAD_B = 28;
 
@@ -141,7 +141,8 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
                   <line x1={PAD_L} y1={scaleY(cdp[k])} x2={CHART_W - PAD_R} y2={scaleY(cdp[k])}
                     stroke="var(--color-accent, #e85a4f)" strokeWidth="0.6"
                     strokeDasharray="4 3" opacity="0.6" />
-                  <text x={CHART_W - PAD_R - 2} y={scaleY(cdp[k]) - 2} textAnchor="end"
+                  {/* label 放在 chart 右側 margin 外，避免被即時價線遮住 */}
+                  <text x={CHART_W - PAD_R + 4} y={scaleY(cdp[k]) + 3} textAnchor="start"
                     className="fill-accent text-[10px] uppercase">
                     {k.toUpperCase()} {formatTickPrice(cdp[k])}
                   </text>

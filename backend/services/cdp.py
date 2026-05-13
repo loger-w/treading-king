@@ -91,17 +91,37 @@ def compute_cdp(o: float, h: float, l: float, c: float) -> dict[str, float]:
 
 
 class CdpService:
-    """In-memory cache + 從 daily_ohlc 抓昨日 OHLC 算 5 線。"""
+    """In-memory cache + 從 daily_ohlc 抓昨日 OHLC 算 5 線。
+
+    daily_ohlc 寫入是「lazy backfill」式（watchlist add / CDP route fallback），
+    沒有自動每日批次更新。為避免「同一個 symbol 加入後就再也不更新」造成的
+    stale state（觀察到 6531 缺 2026-05-12 ⇒ CDP 永遠在算前天 OHLC），
+    get() 在每天首次呼叫時自動觸發一次 backfill_from_fubon。
+    """
 
     def __init__(self) -> None:
         self._cache: dict[str, CdpLevels] = {}
         self._lock = asyncio.Lock()
+        # 每個 symbol 上次嘗試 backfill 的日期（本地日，per process）
+        # 用來確保每天最多 backfill 1 次，避免重複打富邦 historical API
+        self._last_backfill_attempt: dict[str, date] = {}
 
     async def get(self, symbol: str) -> CdpLevels | None:
-        """回 cache 中的 5 值，沒有就 lazy load 一次。"""
-        if symbol in self._cache:
-            return self._cache[symbol]
-        await self.refresh(symbol)
+        """每天首次呼叫自動 backfill 一次，確保 daily_ohlc 最新。
+
+        backfill_from_fubon 是 idempotent upsert + refresh cache，安全重複
+        呼叫。如果富邦暫不可用 (network / quota)，fallback 讀既有 daily_ohlc
+        (可能是 stale 但有總比沒有好)。
+        """
+        today = date.today()  # 本地時區（台股 UTC+8，後端在 Taiwan 跑無誤）
+        if self._last_backfill_attempt.get(symbol) != today:
+            self._last_backfill_attempt[symbol] = today
+            await self.backfill_from_fubon(symbol)
+
+        if symbol not in self._cache:
+            # 富邦 backfill 失敗 fallback 讀既有 daily_ohlc
+            await self.refresh(symbol)
+
         return self._cache.get(symbol)
 
     async def refresh(self, symbol: str) -> None:
