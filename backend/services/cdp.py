@@ -68,19 +68,25 @@ class CdpLevels(TypedDict):
 
 
 def compute_cdp(o: float, h: float, l: float, c: float) -> dict[str, float]:
-    """純函式 — 給 OHLC 算 5 線值，並對齊台股 tick：
-       AH/NH 向上、AL/NL 向下、CDP 中線取最近。"""
+    """純函式 — 給 OHLC 算 5 線值，5 條全部對齊到最近的台股 tick。
+
+    每個價位的 tick 不同（< 10 / 10-50 / 50-100 / 100-500 / 500-1000 / >=1000
+    分別是 0.01 / 0.05 / 0.10 / 0.50 / 1 / 5），round_to_tick_tw 內部用
+    _tick_size(price) 取當下價位的 tick 再 round。
+
+    語意：chart 上看到的 CDP 線數字 = 會 eq 觸發的成交價，1:1 對應。
+    """
     cdp_raw = (h + l + 2 * c) / 4
     ah_raw = cdp_raw + (h - l)
     nh_raw = 2 * cdp_raw - l
     nl_raw = 2 * cdp_raw - h
     al_raw = cdp_raw - (h - l)
     return {
-        "ah":  round_to_tick_tw(ah_raw,  "up"),
-        "nh":  round_to_tick_tw(nh_raw,  "up"),
+        "ah":  round_to_tick_tw(ah_raw,  "nearest"),
+        "nh":  round_to_tick_tw(nh_raw,  "nearest"),
         "cdp": round_to_tick_tw(cdp_raw, "nearest"),
-        "nl":  round_to_tick_tw(nl_raw,  "down"),
-        "al":  round_to_tick_tw(al_raw,  "down"),
+        "nl":  round_to_tick_tw(nl_raw,  "nearest"),
+        "al":  round_to_tick_tw(al_raw,  "nearest"),
     }
 
 
@@ -267,26 +273,27 @@ if __name__ == "__main__":
         ok(f"順序正確: {r}")
     else: fail(f"順序錯: {r}")
 
-    step(4, "tick rounding — 1000+ 跨越 tick 5 / tick 1 邊界")
+    step(4, "tick rounding — 1000+ 跨越 tick 5 / tick 1 邊界 (all nearest)")
     r = compute_cdp(1000, 1010, 990, 1002)
+    # 5 條全部 nearest（不再 ceil/floor）
     # raw cdp = (1010+990+2*1002)/4 = 1001  → nearest tick 5 → 1000
-    # raw ah  = 1001 + 20 = 1021             → ceil tick 5    → 1025
-    # raw nh  = 2*1001 - 990 = 1012          → ceil tick 5    → 1015
-    # raw nl  = 2*1001 - 1010 = 992          → floor tick 1   → 992
-    # raw al  = 1001 - 20 = 981              → floor tick 1   → 981
-    expected = {"ah": 1025, "nh": 1015, "cdp": 1000, "nl": 992, "al": 981}
+    # raw ah  = 1001 + 20 = 1021             → nearest tick 5 → 1020
+    # raw nh  = 2*1001 - 990 = 1012          → nearest tick 5 → 1010
+    # raw nl  = 2*1001 - 1010 = 992          → nearest tick 1 → 992
+    # raw al  = 1001 - 20 = 981              → nearest tick 1 → 981
+    expected = {"ah": 1020, "nh": 1010, "cdp": 1000, "nl": 992, "al": 981}
     for k, v in expected.items():
         if abs(r[k] - v) > 0.001:
             fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
     ok(f"tick 對齊 + 跨 band 正確: {r}")
 
-    step(5, "tick rounding — 500-1000 band 用 tick 1")
+    step(5, "tick rounding — 500-1000 band 用 tick 1 (all nearest)")
     r = compute_cdp(580, 600, 560, 590)
     # raw cdp = (600+560+2*590)/4 = 585      → nearest tick 1 → 585
-    # raw ah  = 585 + 40 = 625                → ceil tick 1    → 625
-    # raw nh  = 2*585 - 560 = 610             → ceil tick 1    → 610
-    # raw nl  = 2*585 - 600 = 570             → floor tick 1   → 570
-    # raw al  = 585 - 40 = 545                → floor tick 1   → 545
+    # raw ah  = 585 + 40 = 625                → nearest tick 1 → 625
+    # raw nh  = 2*585 - 560 = 610             → nearest tick 1 → 610
+    # raw nl  = 2*585 - 600 = 570             → nearest tick 1 → 570
+    # raw al  = 585 - 40 = 545                → nearest tick 1 → 545
     expected = {"ah": 625, "nh": 610, "cdp": 585, "nl": 570, "al": 545}
     for k, v in expected.items():
         if abs(r[k] - v) > 0.001:
