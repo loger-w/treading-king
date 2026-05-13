@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IntradayCandle } from "../lib/api";
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 30_000;
 
 export function useIntradayCandles(symbol: string | null) {
   const [candles, setCandles] = useState<IntradayCandle[]>([]);
@@ -24,6 +24,7 @@ export function useIntradayCandles(symbol: string | null) {
 
   useEffect(() => {
     if (!symbol) { setCandles([]); return; }
+    setCandles([]);  // 先清空 — 避免新 symbol 載入過程中舊資料殘留視覺奇怪
     fetchOnce(symbol);
     timerRef.current = setInterval(() => fetchOnce(symbol), REFRESH_MS);
     return () => {
