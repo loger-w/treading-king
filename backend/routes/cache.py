@@ -21,6 +21,7 @@ from services.indicator_cache_job import (
     run_cache_job,
 )
 from services.supabase_client import SupabaseStatus, get_supabase
+from services.user_context import is_cache_job_owner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,6 +47,13 @@ async def refresh_cache(
         description="Dev: only process first N active symbols (None = all)",
     ),
 ) -> dict:
+    if not is_cache_job_owner():
+        raise HTTPException(
+            403,
+            detail={"error": "not_cache_owner",
+                    "message": "this instance is not the configured CACHE_JOB_OWNER"},
+        )
+
     if is_cache_job_running():
         raise HTTPException(
             409,

@@ -17,6 +17,7 @@ from services.indicator_cache_job import get_latest_done_run, get_latest_run
 from services.signal_engine import get_signal_engine
 from services.supabase_client import get_supabase
 from services.supabase_writer import get_supabase_writer
+from services.user_context import get_user_label, is_cache_job_owner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,6 +67,8 @@ async def health() -> dict:
         "is_trading_day": is_trading_day,
         "cache_last_success_at": cache_last_success_at,
         "cache_last_run_status": cache_last_run_status,
+        "user_label": get_user_label(),
+        "is_cache_owner": is_cache_job_owner(),
         # Phase 3 新增
         "ws_connections": {
             "active": ws_pool.conn_count(),
