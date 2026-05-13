@@ -14,7 +14,7 @@ const PAD_R = 12;
 const PAD_T = 12;
 const PAD_B = 28;
 
-export function IntradayChart({ symbol, candles, loading }: Props) {
+export function IntradayChart({ symbol, candles }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useState(false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
