@@ -17,6 +17,7 @@ from services import alerts
 from services.cdp import get_cdp_service
 from services.ring_buffer import Tick, get_ring_buffer
 from services.supabase_client import get_supabase
+from services.user_context import get_user_label
 from ws_broadcaster import get_broadcaster
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class SignalEngine:
         res = await asyncio.to_thread(
             lambda: sb.client.table("active_signals")
             .select("id, name, filter_json, scope, cooldown_seconds, ignore_auctions, enabled, created_at")
+            .eq("user_label", get_user_label())
             .eq("enabled", True)
             .execute()
         )
@@ -125,9 +127,12 @@ class SignalEngine:
                 if scope.get("type") == "symbols":
                     symbols_needed.update(scope.get("symbols", []))
                 elif scope.get("type") == "watchlist":
-                    # watchlist 全部
+                    # watchlist 全部（限定本 instance 的 user_label）
                     res = await asyncio.to_thread(
-                        lambda: sb.client.table("watchlist").select("symbol").execute()
+                        lambda: sb.client.table("watchlist")
+                        .select("symbol")
+                        .eq("user_label", get_user_label())
+                        .execute()
                     )
                     for row in (res.data or []):
                         symbols_needed.add(row["symbol"])
@@ -338,6 +343,7 @@ class SignalEngine:
             "trigger_price": tick.price,
             "trigger_volume": tick.size,
             "context_json": {"latest_tick_time": tick.time},
+            "user_label": get_user_label(),
         })
 
     async def _monitor_loop(self) -> None:
@@ -362,7 +368,11 @@ class SignalEngine:
             return
         try:
             await asyncio.to_thread(
-                lambda: sb.client.table("active_signals").update({"enabled": False}).eq("enabled", True).execute()
+                lambda: sb.client.table("active_signals")
+                .update({"enabled": False})
+                .eq("user_label", get_user_label())
+                .eq("enabled", True)
+                .execute()
             )
         except Exception as e:
             logger.error("auto disable failed: %s", e)
