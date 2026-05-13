@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CdpLevels, type IntradayCandle } from "../lib/api";
+import { useLocalToggle } from "../hooks/useLocalToggle";
 
 interface Props {
   symbol: string;
@@ -16,7 +17,7 @@ const PAD_B = 28;
 
 export function IntradayChart({ symbol, candles }: Props) {
   const [showVwap, setShowVwap] = useState(true);
-  const [showCdp, setShowCdp] = useState(false);
+  const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
   const [cdpError, setCdpError] = useState<string | null>(null);
 
