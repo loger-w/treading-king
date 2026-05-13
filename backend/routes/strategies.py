@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from models.condition import Filter
 from services.supabase_client import SupabaseStatus, get_supabase
+from services.user_context import get_user_label
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,6 +39,7 @@ async def list_strategies() -> dict:
     res = (
         sb.client.table("strategies")
         .select("id, name, description, filter_json, created_at")
+        .eq("user_label", get_user_label())
         .order("created_at", desc=True)
         .execute()
     )
@@ -54,6 +56,7 @@ async def create_strategy(payload: StrategyCreate) -> dict:
                 "name": payload.name,
                 "description": payload.description,
                 "filter_json": payload.filter_json.model_dump(),
+                "user_label": get_user_label(),
             }
         )
         .execute()
@@ -66,5 +69,11 @@ async def create_strategy(payload: StrategyCreate) -> dict:
 @router.delete("/api/strategies/{strategy_id}", status_code=204)
 async def delete_strategy(strategy_id: str) -> None:
     sb = _ensure_supabase()
-    sb.client.table("strategies").delete().eq("id", strategy_id).execute()
+    (
+        sb.client.table("strategies")
+        .delete()
+        .eq("user_label", get_user_label())
+        .eq("id", strategy_id)
+        .execute()
+    )
     return None
