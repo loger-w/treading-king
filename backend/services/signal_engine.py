@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from models.condition import (
@@ -38,6 +38,9 @@ class SignalEngine:
         self._cooldown: dict[tuple[str, str], float] = {}
         # in-memory cache: symbol → field → value (indicator + cdp 共用)
         self._field_cache: dict[str, dict[str, float]] = {}
+        # 上次 refill field_cache 的本地日期 — heartbeat 跨午夜時自動重 refill
+        # 解 24/7 backend 不重啟時 cdp_* 永遠停在前一天的 stale 問題
+        self._last_field_refill_date: date | None = None
         # metrics
         self._dropped_today = 0
         self._last_lag_ms = 0.0
@@ -156,6 +159,8 @@ class SignalEngine:
                 d["cdp_nl"] = levels["nl"]
                 d["cdp_al"] = levels["al"]
 
+        self._last_field_refill_date = date.today()
+
     async def _consume_loop(self) -> None:
         """主消費迴圈 — 從 queue 拉 tick → evaluate → fan-out。"""
         while True:
@@ -172,6 +177,9 @@ class SignalEngine:
 
         補 tick-driven 在「視窗滑動」場景的盲點：視窗剛滑出某筆 tick / 視窗起點漂走，
         但沒有新成交時，原本要等下一筆 tick 才被偵測。cooldown 沿用既有機制，不重複觸發。
+
+        同時負責每日 field_cache refill：跨午夜後第一個 heartbeat 觸發
+        _refill_field_cache，確保 cdp_* / indicator 欄位用最新一日的值。
         """
         rb = get_ring_buffer()
         while True:
@@ -179,6 +187,17 @@ class SignalEngine:
                 await asyncio.sleep(HEARTBEAT_INTERVAL_S)
             except asyncio.CancelledError:
                 return
+
+            # Daily field_cache refresh — 跨午夜後第一個 heartbeat 觸發
+            today = date.today()
+            if self._last_field_refill_date != today:
+                try:
+                    await self._refill_field_cache()
+                    logger.info("signal_engine: daily field_cache refilled for %s", today)
+                except Exception as e:
+                    # refill 失敗不影響 heartbeat — 下個 heartbeat 會再試
+                    logger.warning("signal_engine: daily field_cache refill failed: %s", e)
+
             symbols: set[str] = set()
             for a in self._active:
                 symbols.update(self._scope_symbols(a))
