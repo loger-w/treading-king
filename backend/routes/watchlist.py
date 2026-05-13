@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from services.cdp import get_cdp_service
 from services.fubon_ws import get_ws_pool
 from services.supabase_client import SupabaseStatus, get_supabase
+from services.user_context import get_user_label
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,6 +39,7 @@ async def list_watchlist() -> dict:
     res = await asyncio.to_thread(
         lambda: sb.client.table("watchlist")
         .select("symbol, added_at, note, symbols(name, market, is_etf)")
+        .eq("user_label", get_user_label())
         .order("added_at", desc=True)
         .execute()
     )
@@ -69,7 +71,9 @@ async def add_watchlist(payload: WatchlistAdd) -> dict:
     try:
         await asyncio.to_thread(
             lambda: sb.client.table("watchlist").insert({
-                "symbol": payload.symbol, "note": payload.note,
+                "symbol": payload.symbol,
+                "note": payload.note,
+                "user_label": get_user_label(),
             }).execute()
         )
     except Exception as e:
@@ -100,7 +104,11 @@ async def add_watchlist(payload: WatchlistAdd) -> dict:
 async def remove_watchlist(symbol: str) -> None:
     sb = _ensure_supabase()
     await asyncio.to_thread(
-        lambda: sb.client.table("watchlist").delete().eq("symbol", symbol).execute()
+        lambda: sb.client.table("watchlist")
+        .delete()
+        .eq("user_label", get_user_label())
+        .eq("symbol", symbol)
+        .execute()
     )
     # WS unsubscribe（其他 owner 可能還在）
     try:
