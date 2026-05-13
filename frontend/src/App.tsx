@@ -26,7 +26,7 @@ export default function App() {
 function Masthead() {
   return (
     <header className="border-t-4 border-accent bg-bg-card">
-      <div className="mx-auto flex max-w-[1600px] flex-wrap items-baseline justify-between gap-4 px-[60px] pb-4 pt-6 max-md:px-6">
+      <div className="mx-auto flex max-w-[1960px] flex-wrap items-baseline justify-between gap-4 px-9 pb-4 pt-6 max-md:px-6">
         <h1 className="font-serif text-3xl font-bold tracking-editorial text-ink">
           treading{" "}
           <span className="font-light text-ink-muted">·</span>{" "}
@@ -70,7 +70,7 @@ function Nav({
 
   return (
     <nav className="border-y border-line bg-bg-card/40">
-      <div className="mx-auto flex max-w-[1600px] gap-0 px-[60px] max-md:px-6">
+      <div className="mx-auto flex max-w-[1960px] gap-0 px-9 max-md:px-6">
         {items.map((it) => {
           const isActive = active === it.id;
           return (
