@@ -99,6 +99,66 @@ def _summary(active, symbol, tick) -> str:
     return " ".join(parts) if parts else "-"
 
 
+def _render_rule_summary(active) -> str:
+    """單行 render 一條 active_signal 的條件,給 report header 用。"""
+    f = active.filter_json
+    logic = _get(f, "logic", "AND")
+    parts: list[str] = []
+    for wc in (_get(f, "window_conditions", []) or []):
+        parts.append(
+            f"{_get(wc, 'type')} {_get(wc, 'operator')} {_get(wc, 'value')} "
+            f"({_get(wc, 'window_seconds')}s)"
+        )
+    for c in (_get(f, "conditions", []) or []):
+        parts.append(f"{_get(c, 'field')} {_get(c, 'operator')} {_get(c, 'value')}")
+    return (" " + logic + " ").join(parts)
+
+
+def _print_report(
+    *,
+    label: str,
+    watchlist: list[str],
+    actives: list,
+    replay_symbols: list[str],
+    candle_total: int,
+    candle_failed: list[str],
+    triggers: list[Trigger],
+) -> None:
+    today = datetime.now().strftime("%Y-%m-%d")
+    print(f"\n=== probe_replay_ticks 報告 ({today}, USER_LABEL={label}) ===")
+
+    wl_show = ", ".join(watchlist[:10]) + ("..." if len(watchlist) > 10 else "")
+    print(f"Watchlist: {len(watchlist)} symbols ({wl_show})")
+
+    print(f"Active signals: {len(actives)} enabled")
+    for a in actives:
+        rule = _render_rule_summary(a)
+        print(f'  - "{a.name}" — {rule}, cooldown={a.cooldown_seconds}s')
+
+    fail_show = f", failed: {', '.join(candle_failed)}" if candle_failed else ""
+    print(f"\nReplayed: {len(replay_symbols)} symbols | "
+          f"candles fetched: {candle_total} | failed: {len(candle_failed)}{fail_show}")
+
+    if not triggers:
+        print("\n觸發明細: (無 — 沒有規則命中)")
+    else:
+        print(f"\n觸發明細(按時間排序):")
+        print(f"  {'時間':<8}  {'symbol':<6}  {'規則':<28}  {'價':>10}  window/cache 摘要")
+        print(f"  {'-'*8}  {'-'*6}  {'-'*28}  {'-'*10}  {'-'*30}")
+        for t in sorted(triggers, key=lambda x: x.triggered_at):
+            ts = datetime.fromtimestamp(t.triggered_at).strftime("%H:%M:%S")
+            name = (t.active_signal_name[:26] + "..") if len(t.active_signal_name) > 28 else t.active_signal_name
+            print(f"  {ts:<8}  {t.symbol:<6}  {name:<28}  {t.trigger_price:>10.2f}  {t.summary}")
+
+    print("\n每規則統計:")
+    counts = Counter(t.active_signal_id for t in triggers)
+    for a in actives:
+        symbols_hit = {t.symbol for t in triggers if t.active_signal_id == a.id}
+        n = counts.get(a.id, 0)
+        suffix = f" ({len(symbols_hit)} symbols)" if n > 0 else "  ← 今日完全沒觸發"
+        print(f"  {a.name:<30} × {n} 次{suffix}")
+
+
 async def main() -> None:
     fubon = get_fubon()
     await fubon.init()
@@ -207,14 +267,15 @@ async def main() -> None:
         rb_mod.time = orig_rb_time
         se_mod.time = orig_se_time
 
-    print(f"\n[replay done] symbols={len(replay_symbols)} candles={candle_total} "
-          f"failed={len(candle_failed)} triggers={len(triggers)}")
-    # raw dump for sanity check (Task 4 改成正式 report)
-    for t in triggers[:20]:
-        ts = datetime.fromtimestamp(t.triggered_at).strftime("%H:%M:%S")
-        print(f"  {ts} {t.symbol} {t.active_signal_name} @{t.trigger_price} | {t.summary}")
-    if len(triggers) > 20:
-        print(f"  ... (還有 {len(triggers) - 20} 筆)")
+    _print_report(
+        label=label,
+        watchlist=watchlist,
+        actives=engine._active,
+        replay_symbols=replay_symbols,
+        candle_total=candle_total,
+        candle_failed=candle_failed,
+        triggers=triggers,
+    )
 
 
 if __name__ == "__main__":
