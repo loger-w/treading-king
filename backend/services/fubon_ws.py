@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable
 from services import alerts
 from services.fubon_client import FubonStatus, get_fubon
 from services.ring_buffer import Tick, get_ring_buffer
+from ws_broadcaster import get_broadcaster
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,13 @@ class WSPool:
         if self._on_tick is not None and self._loop is not None:
             self._loop.call_soon_threadsafe(
                 asyncio.create_task, self._on_tick(symbol, tick)
+            )
+
+        # 3. broadcast tick 給前端 — 分時走勢圖最後一根 K 棒即時更新
+        if self._loop is not None:
+            tick_payload = {"event": "tick", "data": {"symbol": symbol, "price": float(price)}}
+            self._loop.call_soon_threadsafe(
+                asyncio.create_task, get_broadcaster().broadcast(tick_payload)
             )
 
     async def _reconnect(self, conn_idx: int) -> None:

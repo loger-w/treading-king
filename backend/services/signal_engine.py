@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 QUEUE_MAXSIZE = 5000
 BACKPRESSURE_LAG_MS = 5000
 BACKPRESSURE_DURATION_S = 30
+HEARTBEAT_INTERVAL_S = 1.0
 
 
 class SignalEngine:
@@ -31,6 +32,7 @@ class SignalEngine:
         self._queue: asyncio.Queue[tuple[str, Tick]] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
         self._consumer: asyncio.Task | None = None
         self._monitor: asyncio.Task | None = None
+        self._heartbeat: asyncio.Task | None = None
         self._active: list[ActiveSignalOut] = []
         # cooldown: (active_signal_id, symbol) → last_triggered_at (epoch s)
         self._cooldown: dict[tuple[str, str], float] = {}
@@ -49,11 +51,12 @@ class SignalEngine:
         get_ws_pool().set_tick_callback(self.enqueue)
         self._consumer = asyncio.create_task(self._consume_loop())
         self._monitor = asyncio.create_task(self._monitor_loop())
+        self._heartbeat = asyncio.create_task(self._heartbeat_loop())
         await self.refresh_active_signals()
         logger.info("SignalEngine started")
 
     async def shutdown(self) -> None:
-        for t in (self._consumer, self._monitor):
+        for t in (self._consumer, self._monitor, self._heartbeat):
             if t and not t.done():
                 t.cancel()
 
@@ -160,8 +163,46 @@ class SignalEngine:
                 symbol, tick = await self._queue.get()
             except asyncio.CancelledError:
                 return
+            # lag 只在 tick-driven path 計（heartbeat 用的是舊 tick，會誤判 backpressure）
             self._last_lag_ms = (time.time() - tick.time) * 1000.0
             await self._evaluate(symbol, tick)
+
+    async def _heartbeat_loop(self) -> None:
+        """每秒對所有 active scope 內的 symbol 用 ring_buffer 最新 tick 重評估一次。
+
+        補 tick-driven 在「視窗滑動」場景的盲點：視窗剛滑出某筆 tick / 視窗起點漂走，
+        但沒有新成交時，原本要等下一筆 tick 才被偵測。cooldown 沿用既有機制，不重複觸發。
+        """
+        rb = get_ring_buffer()
+        while True:
+            try:
+                await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+            except asyncio.CancelledError:
+                return
+            symbols: set[str] = set()
+            for a in self._active:
+                symbols.update(self._scope_symbols(a))
+            for symbol in symbols:
+                tick = rb.latest(symbol)
+                if tick is None:
+                    continue
+                await self._evaluate(symbol, tick)
+
+    def _scope_symbols(self, active: ActiveSignalOut) -> list[str]:
+        s = active.scope
+        if isinstance(s, dict):
+            t = s.get("type")
+            if t == "watchlist":
+                return list(self._field_cache.keys())
+            if t == "symbols":
+                return list(s.get("symbols", []))
+        else:
+            t = getattr(s, "type", None)
+            if t == "watchlist":
+                return list(self._field_cache.keys())
+            if t == "symbols":
+                return list(getattr(s, "symbols", []))
+        return []
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件。"""
