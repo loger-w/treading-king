@@ -12,10 +12,50 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import date, timedelta
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+# 台股 tick ladder（價格 < upper 時用對應 tick）
+_TICK_LADDER = (
+    (10.0,           0.01),
+    (50.0,           0.05),
+    (100.0,          0.10),
+    (500.0,          0.50),
+    (1000.0,         1.00),
+    (float("inf"),   5.00),
+)
+
+
+def _tick_size(price: float) -> float:
+    """回傳 price 對應的台股最小升降單位。"""
+    for upper, tick in _TICK_LADDER:
+        if price < upper:
+            return tick
+    return 5.00  # unreachable
+
+
+def round_to_tick_tw(price: float, direction: Literal["up", "down", "nearest"]) -> float:
+    """對齊台股 tick。
+
+    direction:
+      - "up":      向上取（ceil） — 阻力位（AH/NH）
+      - "down":    向下取（floor） — 支撐位（NL/AL）
+      - "nearest": 四捨五入 — 中線（CDP）
+    """
+    tick = _tick_size(price)
+    units = price / tick
+    if direction == "up":
+        rounded = math.ceil(units) * tick
+    elif direction == "down":
+        rounded = math.floor(units) * tick
+    else:  # nearest
+        rounded = round(units) * tick
+    # 浮點誤差修正（tick 0.05 / 0.1 / 0.5 都會踩到）
+    return round(rounded, 2)
 
 
 class CdpLevels(TypedDict):
@@ -28,13 +68,20 @@ class CdpLevels(TypedDict):
 
 
 def compute_cdp(o: float, h: float, l: float, c: float) -> dict[str, float]:
-    """純函式 — 給 OHLC 算 5 線值。"""
-    cdp = (h + l + 2 * c) / 4
-    ah = cdp + (h - l)
-    nh = 2 * cdp - l
-    nl = 2 * cdp - h
-    al = cdp - (h - l)
-    return {"ah": ah, "nh": nh, "cdp": cdp, "nl": nl, "al": al}
+    """純函式 — 給 OHLC 算 5 線值，並對齊台股 tick：
+       AH/NH 向上、AL/NL 向下、CDP 中線取最近。"""
+    cdp_raw = (h + l + 2 * c) / 4
+    ah_raw = cdp_raw + (h - l)
+    nh_raw = 2 * cdp_raw - l
+    nl_raw = 2 * cdp_raw - h
+    al_raw = cdp_raw - (h - l)
+    return {
+        "ah":  round_to_tick_tw(ah_raw,  "up"),
+        "nh":  round_to_tick_tw(nh_raw,  "up"),
+        "cdp": round_to_tick_tw(cdp_raw, "nearest"),
+        "nl":  round_to_tick_tw(nl_raw,  "down"),
+        "al":  round_to_tick_tw(al_raw,  "down"),
+    }
 
 
 class CdpService:
@@ -205,6 +252,7 @@ if __name__ == "__main__":
     for k, v in expected.items():
         if abs(r[k] - v) > 0.001:
             fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
+    # 這些值剛好都在 tick 5 grid 上 (2335/2310/2295/2270/2255 都是 5 的倍數)，對齊版不影響預期
     ok(f"5 線都對: {r}")
 
     step(2, "compute_cdp 對極端值不爆")
@@ -218,5 +266,41 @@ if __name__ == "__main__":
     if r["ah"] > r["nh"] > r["cdp"] > r["nl"] > r["al"]:
         ok(f"順序正確: {r}")
     else: fail(f"順序錯: {r}")
+
+    step(4, "tick rounding — 1000+ 跨越 tick 5 / tick 1 邊界")
+    r = compute_cdp(1000, 1010, 990, 1002)
+    # raw cdp = (1010+990+2*1002)/4 = 1001  → nearest tick 5 → 1000
+    # raw ah  = 1001 + 20 = 1021             → ceil tick 5    → 1025
+    # raw nh  = 2*1001 - 990 = 1012          → ceil tick 5    → 1015
+    # raw nl  = 2*1001 - 1010 = 992          → floor tick 1   → 992
+    # raw al  = 1001 - 20 = 981              → floor tick 1   → 981
+    expected = {"ah": 1025, "nh": 1015, "cdp": 1000, "nl": 992, "al": 981}
+    for k, v in expected.items():
+        if abs(r[k] - v) > 0.001:
+            fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
+    ok(f"tick 對齊 + 跨 band 正確: {r}")
+
+    step(5, "tick rounding — 500-1000 band 用 tick 1")
+    r = compute_cdp(580, 600, 560, 590)
+    # raw cdp = (600+560+2*590)/4 = 585      → nearest tick 1 → 585
+    # raw ah  = 585 + 40 = 625                → ceil tick 1    → 625
+    # raw nh  = 2*585 - 560 = 610             → ceil tick 1    → 610
+    # raw nl  = 2*585 - 600 = 570             → floor tick 1   → 570
+    # raw al  = 585 - 40 = 545                → floor tick 1   → 545
+    expected = {"ah": 625, "nh": 610, "cdp": 585, "nl": 570, "al": 545}
+    for k, v in expected.items():
+        if abs(r[k] - v) > 0.001:
+            fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
+    ok(f"500-1000 band 對齊正確: {r}")
+
+    step(6, "tick rounding helper — direction up/down/nearest 邊界")
+    # 1004.5 在 1000+ band → tick 5
+    assert round_to_tick_tw(1004.5, "up")      == 1005, "up boundary"
+    assert round_to_tick_tw(1004.5, "down")    == 1000, "down boundary"
+    assert round_to_tick_tw(1004.5, "nearest") == 1005, "nearest 1004.5 → 1005 (round half up via Python round)"
+    # 50 邊界 — 50 < 50 false → 入 50-100 band tick 0.1
+    assert round_to_tick_tw(50.05, "nearest") == 50.10 or round_to_tick_tw(50.05, "nearest") == 50.00, \
+        "boundary 50 用 tick 0.1（banker round 可 50.0 或 50.1）"
+    ok("rounding helper 邊界 OK")
 
     print(f"\n{GREEN}All cdp smoke tests passed ✓{RESET}")
