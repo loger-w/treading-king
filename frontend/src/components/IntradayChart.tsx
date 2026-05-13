@@ -105,22 +105,33 @@ export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
         </div>
       ) : (
         <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} className="w-full h-auto">
-          {/* Y 軸格線 + label — 5 條等距取樣後 snap 到最近台股 tick，重複值 dedupe */}
-          {Array.from(new Set(
-            [0, 0.25, 0.5, 0.75, 1].map((p) =>
-              roundToNearestTick(yMin + (yMax - yMin) * (1 - p))
-            )
-          )).map((vTick) => {
-            const y = scaleY(vTick);
-            return (
-              <g key={vTick}>
-                <line x1={PAD_L} y1={y} x2={CHART_W - PAD_R} y2={y}
-                  stroke="var(--color-line, #2e2a22)" strokeWidth="0.5" />
-                <text x={PAD_L - 4} y={y + 3} textAnchor="end"
-                  className="fill-ink-dim text-[10px] tabular-nums">{formatTickPrice(vTick)}</text>
-              </g>
-            );
-          })}
+          {/* Y 軸格線 — 以昨收 baseline 為中心 (0%)，每 ±2% 一條 (±0/±2/±4/.../±10)
+              每條 snap 到合法台股 tick，超出 [yMin, yMax] 範圍的不畫、tick 重複的 dedupe */}
+          {(() => {
+            if (!baseline) return null;
+            const baselineTick = roundToNearestTick(baseline);
+            const linePrices = Array.from(new Set(
+              [-10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10].map((pct) =>
+                roundToNearestTick(baseline * (1 + pct / 100))
+              )
+            )).filter((v) => v >= yMin && v <= yMax);
+            return linePrices.map((vTick) => {
+              const y = scaleY(vTick);
+              const isBaseline = vTick === baselineTick;
+              return (
+                <g key={vTick}>
+                  <line x1={PAD_L} y1={y} x2={CHART_W - PAD_R} y2={y}
+                    stroke="var(--color-line, #2e2a22)"
+                    strokeWidth={isBaseline ? 0.8 : 0.5}
+                    opacity={isBaseline ? 1 : 0.55} />
+                  <text x={PAD_L - 4} y={y + 3} textAnchor="end"
+                    className={`text-[10px] tabular-nums ${isBaseline ? "fill-ink" : "fill-ink-dim"}`}>
+                    {formatTickPrice(vTick)}
+                  </text>
+                </g>
+              );
+            });
+          })()}
 
           {/* CDP 5 線（超出 ±10% 範圍的隱藏） */}
           {showCdp && cdp && visibleCdpKeys.length > 0 && (

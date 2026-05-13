@@ -2,16 +2,21 @@
 
 回 266 筆 1m K + average (= VWAP) + prev_close（昨日收盤，給前端算漲跌% 用），
 給前端 IntradayChart 用。
+
+prev_close 來源：富邦 intraday quote 的 previousClose 欄位（權威值，跟券商
+app 顯示一致）。不從 daily_ohlc 拿是因為 daily cache job 偶爾會漏單檔
+（觀察到 6531 缺 2026-05-12），用 quote API 比較可靠。
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException
 
 from services.fubon_client import FubonStatus, get_fubon
-from services.supabase_client import get_supabase
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -21,9 +26,6 @@ async def intraday_candles(symbol: str) -> dict:
     if fubon.status != FubonStatus.OK or fubon.sdk is None:
         raise HTTPException(503, detail={"error": "fubon_unavailable", "last_error": fubon.last_error})
 
-    # 並行抓 candles 跟昨日收盤
-    sb = get_supabase()
-
     async def fetch_candles() -> dict:
         return await asyncio.to_thread(
             fubon.sdk.marketdata.rest_client.stock.intraday.candles,
@@ -31,20 +33,12 @@ async def intraday_candles(symbol: str) -> dict:
         )
 
     async def fetch_prev_close() -> float | None:
-        if sb.client is None:
-            return None
         try:
-            res = await asyncio.to_thread(
-                lambda: sb.client.table("daily_ohlc")
-                .select("close")
-                .eq("symbol", symbol)
-                .order("date", desc=True)
-                .limit(1)
-                .execute()
-            )
-            rows = res.data or []
-            return float(rows[0]["close"]) if rows else None
-        except Exception:
+            q = await fubon.intraday_quote(symbol)
+            pc = q.get("previousClose")
+            return float(pc) if pc is not None else None
+        except Exception as e:
+            logger.warning("intraday_quote(%s) for prev_close failed: %s", symbol, e)
             return None
 
     try:
