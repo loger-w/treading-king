@@ -310,6 +310,17 @@ export interface SignalsHistoryResponse {
   count: number;
 }
 
+export interface TodayCountsRow {
+  symbol: string;
+  active_signal_id: string;
+}
+
+export interface TodayCountsResponse {
+  as_of: string;
+  today_start: string;
+  counts: TodayCountsRow[];
+}
+
 // Realtime WS payload
 export interface SignalEvent {
   event: "signal";
@@ -411,6 +422,9 @@ export const api = {
     if (params.limit) qs.set("limit", String(params.limit));
     return fetchJSON<SignalsHistoryResponse>(`/api/signals/history?${qs.toString()}`);
   },
+
+  signalsTodayCounts: () =>
+    fetchJSON<TodayCountsResponse>("/api/signals/today_counts"),
 
   candlesIntraday: (symbol: string) =>
     fetchJSON<IntradayCandlesResponse>(
