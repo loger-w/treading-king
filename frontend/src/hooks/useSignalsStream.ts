@@ -5,9 +5,27 @@ const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
 
 export type WSStatus = "connecting" | "open" | "closed";
 
+export interface TickEvent {
+  symbol: string;
+  price: number;
+}
+
+// Module-level EventTarget — 跨 hook instance 共用同一個 WS tick stream
+const tickBus = new EventTarget();
+
+/**
+ * 任意元件可 import 此 helper 訂閱 tick。
+ * 回傳 unsubscribe function（呼叫即 detach）。
+ */
+export function subscribeTicks(handler: (t: TickEvent) => void): () => void {
+  const fn = (ev: Event) => handler((ev as CustomEvent<TickEvent>).detail);
+  tickBus.addEventListener("tick", fn);
+  return () => tickBus.removeEventListener("tick", fn);
+}
+
 export function useSignalsStream(opts?: {
   onSignal?: (s: SignalEvent["data"]) => void;
-  onTick?: (symbol: string, price: number) => void;  // 預留：未來 backend 廣播 tick 給 chart 用
+  onTick?: (symbol: string, price: number) => void;
 }) {
   const [status, setStatus] = useState<WSStatus>("connecting");
   const [recent, setRecent] = useState<SignalEvent["data"][]>([]);
@@ -40,7 +58,9 @@ export function useSignalsStream(opts?: {
           setRecent((prev) => [data, ...prev].slice(0, 50));
           onSignalRef.current?.(data);
         } else if (msg.event === "tick") {
-          onTickRef.current?.(msg.data.symbol, msg.data.price);
+          const tick: TickEvent = { symbol: msg.data.symbol, price: msg.data.price };
+          onTickRef.current?.(tick.symbol, tick.price);
+          tickBus.dispatchEvent(new CustomEvent<TickEvent>("tick", { detail: tick }));
         }
       } catch { /* ignore */ }
     };
