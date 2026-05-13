@@ -28,23 +28,42 @@ export function IntradayChart({ symbol, candles, loading }: Props) {
     );
   }, [symbol, showCdp]);
 
-  const { yMin, yMax, scaleX, scaleY, polyClose, polyVwap } = useMemo(() => {
+  const { yMin, yMax, scaleX, scaleY, polyClose, polyVwap, visibleCdpKeys } = useMemo(() => {
     if (candles.length === 0) {
-      return { yMin: 0, yMax: 0, scaleX: () => 0, scaleY: () => 0, polyClose: "", polyVwap: "" };
+      return {
+        yMin: 0, yMax: 0,
+        scaleX: () => 0, scaleY: () => 0,
+        polyClose: "", polyVwap: "",
+        visibleCdpKeys: [] as Array<"ah" | "nh" | "cdp" | "nl" | "al">,
+      };
     }
     const closes = candles.map((c) => c.close);
     const vwaps = candles.map((c) => c.average);
-    const allY = [...closes, ...vwaps];
-    if (cdp && showCdp) allY.push(cdp.ah, cdp.al);
-    const yMin = Math.min(...allY) * 0.998;
-    const yMax = Math.max(...allY) * 1.002;
+
+    // 基準價 = 今天開盤（≈ 昨日收盤，差距理論 ≤ 10%）
+    const refPrice = candles[0].open;
+    const refMin = refPrice * 0.9;
+    const refMax = refPrice * 1.1;
+
+    // CDP 5 線：過濾掉超出 ±10% 的 key
+    const allCdpKeys = ["ah", "nh", "cdp", "nl", "al"] as const;
+    const visibleCdpKeys: Array<typeof allCdpKeys[number]> = (showCdp && cdp)
+      ? allCdpKeys.filter((k) => cdp[k] >= refMin && cdp[k] <= refMax)
+      : [];
+
+    // Y 軸：±10% 為最小範圍，價格超出就拉大（隱藏的 CDP 不算）
+    const priceMin = Math.min(...closes, ...vwaps);
+    const priceMax = Math.max(...closes, ...vwaps);
+    const yMin = Math.min(refMin, priceMin) * 0.998;
+    const yMax = Math.max(refMax, priceMax) * 1.002;
+
     const xRange = CHART_W - PAD_L - PAD_R;
     const yRange = CHART_H - PAD_T - PAD_B;
     const scaleX = (i: number) => PAD_L + (i / Math.max(candles.length - 1, 1)) * xRange;
     const scaleY = (v: number) => PAD_T + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
     const polyClose = candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`).join(" ");
     const polyVwap = candles.map((c, i) => `${scaleX(i)},${scaleY(c.average)}`).join(" ");
-    return { yMin, yMax, scaleX, scaleY, polyClose, polyVwap };
+    return { yMin, yMax, scaleX, scaleY, polyClose, polyVwap, visibleCdpKeys };
   }, [candles, cdp, showCdp]);
 
   const latest = candles[candles.length - 1];
@@ -75,10 +94,10 @@ export function IntradayChart({ symbol, candles, loading }: Props) {
             );
           })}
 
-          {/* CDP 5 線 */}
-          {showCdp && cdp && (
+          {/* CDP 5 線（超出 ±10% 範圍的隱藏） */}
+          {showCdp && cdp && visibleCdpKeys.length > 0 && (
             <>
-              {(["ah", "nh", "cdp", "nl", "al"] as const).map((k) => (
+              {visibleCdpKeys.map((k) => (
                 <g key={k}>
                   <line x1={PAD_L} y1={scaleY(cdp[k])} x2={CHART_W - PAD_R} y2={scaleY(cdp[k])}
                     stroke="var(--color-accent, #e85a4f)" strokeWidth="0.6"
