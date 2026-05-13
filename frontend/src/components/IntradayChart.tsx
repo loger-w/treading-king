@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CdpLevels, type IntradayCandle } from "../lib/api";
 import { useLocalToggle } from "../hooks/useLocalToggle";
+import { formatTickPrice, roundToNearestTick } from "../lib/tick";
 
 interface Props {
   symbol: string;
   name: string | null;
   candles: IntradayCandle[];
+  prevClose: number | null;  // 昨日收盤，給漲跌% / Y 軸 ±10% 用
 }
 
 const CHART_W = 720;
@@ -15,7 +17,7 @@ const PAD_R = 12;
 const PAD_T = 12;
 const PAD_B = 28;
 
-export function IntradayChart({ symbol, name, candles }: Props) {
+export function IntradayChart({ symbol, name, candles, prevClose }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
@@ -43,8 +45,8 @@ export function IntradayChart({ symbol, name, candles }: Props) {
     const closes = candles.map((c) => c.close);
     const vwaps = candles.map((c) => c.average);
 
-    // 基準價 = 今天開盤（≈ 昨日收盤，差距理論 ≤ 10%）
-    const refPrice = candles[0].open;
+    // 基準價 = 昨日收盤（台股漲跌停以昨收為基準）；prev_close 沒有時 fallback 今日開盤
+    const refPrice = prevClose ?? candles[0].open;
     const refMin = refPrice * 0.9;
     const refMax = refPrice * 1.1;
 
@@ -67,12 +69,14 @@ export function IntradayChart({ symbol, name, candles }: Props) {
     const polyClose = candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`).join(" ");
     const polyVwap = candles.map((c, i) => `${scaleX(i)},${scaleY(c.average)}`).join(" ");
     return { yMin, yMax, scaleX, scaleY, polyClose, polyVwap, visibleCdpKeys };
-  }, [candles, cdp, showCdp]);
+  }, [candles, cdp, showCdp, prevClose]);
 
   const latest = candles[candles.length - 1];
   const first = candles[0];
-  const change = latest && first ? latest.close - first.open : 0;
-  const changePct = latest && first && first.open ? (change / first.open) * 100 : 0;
+  // 漲跌基準：昨日收盤；prev_close 沒拿到時 fallback 今日開盤
+  const baseline = prevClose ?? (first ? first.open : 0);
+  const change = latest && baseline ? latest.close - baseline : 0;
+  const changePct = latest && baseline ? (change / baseline) * 100 : 0;
   const isUp = change > 0;
   const dirCls = isUp ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
 
@@ -101,16 +105,19 @@ export function IntradayChart({ symbol, name, candles }: Props) {
         </div>
       ) : (
         <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} className="w-full h-auto">
-          {/* Y 軸格線 + label (簡單 5 條) */}
-          {[0, 0.25, 0.5, 0.75, 1].map((p) => {
-            const v = yMin + (yMax - yMin) * (1 - p);
-            const y = PAD_T + p * (CHART_H - PAD_T - PAD_B);
+          {/* Y 軸格線 + label — 5 條等距取樣後 snap 到最近台股 tick，重複值 dedupe */}
+          {Array.from(new Set(
+            [0, 0.25, 0.5, 0.75, 1].map((p) =>
+              roundToNearestTick(yMin + (yMax - yMin) * (1 - p))
+            )
+          )).map((vTick) => {
+            const y = scaleY(vTick);
             return (
-              <g key={p}>
+              <g key={vTick}>
                 <line x1={PAD_L} y1={y} x2={CHART_W - PAD_R} y2={y}
                   stroke="var(--color-line, #2e2a22)" strokeWidth="0.5" />
                 <text x={PAD_L - 4} y={y + 3} textAnchor="end"
-                  className="fill-ink-dim text-[10px] tabular-nums">{v.toFixed(1)}</text>
+                  className="fill-ink-dim text-[10px] tabular-nums">{formatTickPrice(vTick)}</text>
               </g>
             );
           })}
@@ -125,7 +132,7 @@ export function IntradayChart({ symbol, name, candles }: Props) {
                     strokeDasharray="4 3" opacity="0.6" />
                   <text x={CHART_W - PAD_R - 2} y={scaleY(cdp[k]) - 2} textAnchor="end"
                     className="fill-accent text-[10px] uppercase">
-                    {k.toUpperCase()} {cdp[k].toFixed(1)}
+                    {k.toUpperCase()} {formatTickPrice(cdp[k])}
                   </text>
                 </g>
               ))}

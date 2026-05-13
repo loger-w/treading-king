@@ -57,7 +57,7 @@ export function Monitor() {
   }, []);
 
   // Intraday chart (selected symbol) — onTick callback 在下面 useSignalsStream 內共用
-  const { candles, onTick } = useIntradayCandles(selected);
+  const { candles, prevClose, onTick } = useIntradayCandles(selected);
 
   // 單一 WS 連線：onSignal 累加命中、onTick 給 chart
   const { status: wsStatus, recent } = useSignalsStream({
@@ -135,6 +135,7 @@ export function Monitor() {
                     symbol={selected}
                     name={symbolNames[selected] ?? null}
                     candles={candles}
+                    prevClose={prevClose}
                   />
                 </div>
               )}
