@@ -121,21 +121,29 @@ class SignalEngine:
 
         # 蒐集所有 active 涉及的 symbol 跟 fields
         symbols_needed: set[str] = set()
+        watchlist_fetched = False  # 只查一次 watchlist
         for a in self._active:
             scope = a.scope
+            # scope 可以是 dict（舊路徑）或 Pydantic model（_row_to_active 驗證後）
             if isinstance(scope, dict):
-                if scope.get("type") == "symbols":
-                    symbols_needed.update(scope.get("symbols", []))
-                elif scope.get("type") == "watchlist":
-                    # watchlist 全部（限定本 instance 的 user_label）
-                    res = await asyncio.to_thread(
-                        lambda: sb.client.table("watchlist")
-                        .select("symbol")
-                        .eq("user_label", get_user_label())
-                        .execute()
-                    )
-                    for row in (res.data or []):
-                        symbols_needed.add(row["symbol"])
+                scope_type = scope.get("type")
+                scope_symbols = scope.get("symbols", [])
+            else:
+                scope_type = getattr(scope, "type", None)
+                scope_symbols = getattr(scope, "symbols", [])
+            if scope_type == "symbols":
+                symbols_needed.update(scope_symbols)
+            elif scope_type == "watchlist" and not watchlist_fetched:
+                # watchlist 全部（限定本 instance 的 user_label）
+                res = await asyncio.to_thread(
+                    lambda: sb.client.table("watchlist")
+                    .select("symbol")
+                    .eq("user_label", get_user_label())
+                    .execute()
+                )
+                for row in (res.data or []):
+                    symbols_needed.add(row["symbol"])
+                watchlist_fetched = True
 
         # indicator_cache 最後 done date
         latest = await asyncio.to_thread(get_latest_done_run, sb.client)
