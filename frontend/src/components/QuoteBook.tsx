@@ -23,8 +23,8 @@ export function QuoteBook({ symbol }: Props) {
     );
   }
 
-  const maxBidQty = Math.max(1, ...bids.map((b) => b.size));
-  const maxAskQty = Math.max(1, ...asks.map((a) => a.size));
+  // 全局 max（買賣盤共用）— 視覺立即顯示哪邊掛單壓倒性
+  const maxQty = Math.max(1, ...bids.map((b) => b.size), ...asks.map((a) => a.size));
 
   const timeStr = lastSuccessAt
     ? lastSuccessAt.toLocaleTimeString("zh-TW", { hour12: false })
@@ -50,7 +50,7 @@ export function QuoteBook({ symbol }: Props) {
               <div key={i} className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums">
                 <span
                   className="absolute top-0 bottom-0 right-0 bg-bull/10 pointer-events-none"
-                  style={{ width: `${(b.size / maxBidQty) * 100}%` }}
+                  style={{ width: `${(b.size / maxQty) * 100}%` }}
                 />
                 <span className="relative z-[1] text-bull font-medium">{b.price.toFixed(2)}</span>
                 <span className="relative z-[1] text-right text-ink-muted">{b.size} 張</span>
@@ -67,7 +67,7 @@ export function QuoteBook({ symbol }: Props) {
               <div key={i} className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums">
                 <span
                   className="absolute top-0 bottom-0 left-0 bg-bear/10 pointer-events-none"
-                  style={{ width: `${(a.size / maxAskQty) * 100}%` }}
+                  style={{ width: `${(a.size / maxQty) * 100}%` }}
                 />
                 <span className="relative z-[1] text-bear font-medium">{a.price.toFixed(2)}</span>
                 <span className="relative z-[1] text-right text-ink-muted">{a.size} 張</span>
