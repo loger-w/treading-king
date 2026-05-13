@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query
 
 from services.supabase_client import SupabaseStatus, get_supabase
+from services.user_context import get_user_label
 
 router = APIRouter()
 
@@ -28,7 +29,7 @@ async def signals_history(
     def _q():
         q = sb.client.table("signals_log").select(
             "id, active_signal_id, symbol, triggered_at, trigger_price, trigger_volume, context_json"
-        ).order("triggered_at", desc=True).limit(limit)
+        ).eq("user_label", get_user_label()).order("triggered_at", desc=True).limit(limit)
         if symbol:
             q = q.eq("symbol", symbol)
         if active_signal_id:
@@ -58,6 +59,7 @@ async def today_counts() -> dict:
         return (
             sb.client.table("signals_log")
             .select("symbol, active_signal_id")
+            .eq("user_label", get_user_label())
             .gte("triggered_at", today_start_tw.isoformat())
             .execute()
         )
