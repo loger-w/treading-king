@@ -4,8 +4,8 @@ import { useLocalToggle } from "../hooks/useLocalToggle";
 
 interface Props {
   symbol: string;
+  name: string | null;
   candles: IntradayCandle[];
-  loading: boolean;
 }
 
 const CHART_W = 720;
@@ -15,7 +15,7 @@ const PAD_R = 12;
 const PAD_T = 12;
 const PAD_B = 28;
 
-export function IntradayChart({ symbol, candles }: Props) {
+export function IntradayChart({ symbol, name, candles }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
@@ -72,11 +72,29 @@ export function IntradayChart({ symbol, candles }: Props) {
   const latest = candles[candles.length - 1];
   const first = candles[0];
   const change = latest && first ? latest.close - first.open : 0;
+  const changePct = latest && first && first.open ? (change / first.open) * 100 : 0;
   const isUp = change > 0;
   const dirCls = isUp ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
 
   return (
     <div>
+      {/* 股票資訊 header — 名稱 · 代號 + 大字股價 + 漲跌百分比 */}
+      <div className="mb-4">
+        <div className="font-serif text-[22px] tracking-tight text-ink leading-tight">
+          {name ?? "—"} · {symbol}
+        </div>
+        <div className="flex items-baseline gap-4 mt-1">
+          <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
+            {latest ? latest.close.toFixed(2) : "—"}
+          </span>
+          {latest && (
+            <span className={`text-[18px] tabular-nums ${dirCls}`}>
+              {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change).toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+            </span>
+          )}
+        </div>
+      </div>
+
       {candles.length === 0 ? (
         <div className="h-[360px] flex items-center justify-center text-ink-dim font-serif italic">
           載入中…
@@ -142,31 +160,19 @@ export function IntradayChart({ symbol, candles }: Props) {
         </svg>
       )}
 
-      {/* 報價 + toggle */}
-      {latest && (
-        <div className="mt-2 flex items-baseline justify-between border-t border-line pt-2">
-          <div className="flex items-baseline gap-3">
-            <span className={`font-serif italic text-xl ${dirCls} tabular-nums`}>
-              {latest.close.toFixed(2)}
-            </span>
-            <span className={`text-sm ${dirCls} tabular-nums`}>
-              {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change).toFixed(2)}
-            </span>
-          </div>
-          <div className="flex gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setShowVwap((v) => !v)}
-              className={`px-2 py-1 border ${showVwap ? "border-accent text-accent" : "border-line text-ink-dim"}`}
-            >{showVwap ? "✓" : ""} VWAP</button>
-            <button
-              type="button"
-              onClick={() => setShowCdp((v) => !v)}
-              className={`px-2 py-1 border ${showCdp ? "border-accent text-accent" : "border-line text-ink-dim"}`}
-            >{showCdp ? "✓" : ""} CDP</button>
-          </div>
-        </div>
-      )}
+      {/* Toggle 按鈕（VWAP / CDP） */}
+      <div className="mt-2 flex justify-end gap-2 border-t border-line pt-2 text-xs">
+        <button
+          type="button"
+          onClick={() => setShowVwap((v) => !v)}
+          className={`px-2 py-1 border ${showVwap ? "border-accent text-accent" : "border-line text-ink-dim"}`}
+        >{showVwap ? "✓" : ""} VWAP</button>
+        <button
+          type="button"
+          onClick={() => setShowCdp((v) => !v)}
+          className={`px-2 py-1 border ${showCdp ? "border-accent text-accent" : "border-line text-ink-dim"}`}
+        >{showCdp ? "✓" : ""} CDP</button>
+      </div>
       {showCdp && cdpError && (
         <div className="mt-1 text-xs text-bear">CDP 無資料：{cdpError}</div>
       )}
