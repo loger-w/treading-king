@@ -169,6 +169,38 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
         >
+          {/* 紅綠背景填色 — 走勢線跟平盤之間,漲紅跌綠(看盤軟體典型樣式)
+              一個多邊形(走勢→baseline 封閉區),clipPath 切上下兩半分別塗色 */}
+          {baseline > 0 && (() => {
+            const baselineY = scaleY(baseline);
+            const lastIdx = candles.length - 1;
+            const points = [
+              `${scaleX(0)},${baselineY}`,
+              ...candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`),
+              `${scaleX(lastIdx)},${baselineY}`,
+            ].join(" ");
+            return (
+              <>
+                <defs>
+                  <clipPath id="above-baseline">
+                    <rect x={PAD_L} y={PAD_T}
+                      width={CHART_W - PAD_L - PAD_R}
+                      height={Math.max(0, baselineY - PAD_T)} />
+                  </clipPath>
+                  <clipPath id="below-baseline">
+                    <rect x={PAD_L} y={baselineY}
+                      width={CHART_W - PAD_L - PAD_R}
+                      height={Math.max(0, CHART_H - PAD_B - baselineY)} />
+                  </clipPath>
+                </defs>
+                <polygon points={points} className="fill-bull" fillOpacity="0.15"
+                  clipPath="url(#above-baseline)" />
+                <polygon points={points} className="fill-bear" fillOpacity="0.15"
+                  clipPath="url(#below-baseline)" />
+              </>
+            );
+          })()}
+
           {/* Y 軸格線 — 以昨收 baseline 為中心 (0%)，每 ±2% 一條 (±0/±2/±4/.../±10)
               每條 snap 到合法台股 tick，超出 [yMin, yMax] 範圍的不畫、tick 重複的 dedupe */}
           {(() => {
@@ -221,10 +253,21 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
               stroke="var(--color-ink-dim, #8a8273)" strokeWidth="1" strokeDasharray="3 2" />
           )}
 
-          {/* 主價線 */}
-          {polyClose && (
+          {/* 主價線 — 用 clipPath 切上下兩段,平盤上紅、平盤下綠(跟 fill 同步) */}
+          {polyClose && baseline > 0 && (
+            <>
+              <polyline points={polyClose} fill="none"
+                className="stroke-bull" strokeWidth="1"
+                clipPath="url(#above-baseline)" />
+              <polyline points={polyClose} fill="none"
+                className="stroke-bear" strokeWidth="1"
+                clipPath="url(#below-baseline)" />
+            </>
+          )}
+          {/* baseline 沒值時(極罕見)fallback 單條白線 */}
+          {polyClose && !(baseline > 0) && (
             <polyline points={polyClose} fill="none"
-              stroke="var(--color-ink, #ede4d3)" strokeWidth="1.5" />
+              stroke="var(--color-ink, #ede4d3)" strokeWidth="1" />
           )}
 
           {/* 今日最高 / 最低 標記 + 數字 */}
@@ -238,7 +281,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                 textAnchor="middle"
                 className="fill-bull text-[10px] tabular-nums font-medium"
               >
-                H {formatTickPrice(todayHigh)}
+                {formatTickPrice(todayHigh)}
               </text>
             </g>
           )}
@@ -252,7 +295,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                 textAnchor="middle"
                 className="fill-bear text-[10px] tabular-nums font-medium"
               >
-                L {formatTickPrice(todayLow)}
+                {formatTickPrice(todayLow)}
               </text>
             </g>
           )}

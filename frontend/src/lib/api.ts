@@ -93,7 +93,12 @@ export interface QuoteResponse {
   lastPrice?: number;
   bids?: Array<{ price: number; size: number }>;
   asks?: Array<{ price: number; size: number }>;
-  total?: { tradeValue?: number; tradeVolume?: number };
+  total?: {
+    tradeValue?: number;
+    tradeVolume?: number;
+    tradeVolumeAtBid?: number;   // 內盤累積 — 成交在 bid 價(賣方主動)
+    tradeVolumeAtAsk?: number;   // 外盤累積 — 成交在 ask 價(買方主動)
+  };
   isClose?: boolean;
 }
 
