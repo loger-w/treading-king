@@ -212,9 +212,12 @@ class WSPool:
                 asyncio.create_task, self._on_tick(symbol, tick)
             )
 
-        # 3. broadcast tick 給前端 — 分時走勢圖最後一根 K 棒即時更新
+        # 3. broadcast tick 給前端 — 分時走勢圖最後一根 K 棒即時更新 + 明細張數
         if self._loop is not None:
-            tick_payload = {"event": "tick", "data": {"symbol": symbol, "price": float(price)}}
+            tick_payload = {
+                "event": "tick",
+                "data": {"symbol": symbol, "price": float(price), "size": int(size)},
+            }
             self._loop.call_soon_threadsafe(
                 asyncio.create_task, get_broadcaster().broadcast(tick_payload)
             )
