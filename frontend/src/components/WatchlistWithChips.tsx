@@ -62,53 +62,53 @@ export function WatchlistWithChips({
         const totalHits = totalHitsForSymbol(it.symbol, hitCounts);
         const hasHit = totalHits > 0;
 
+        const q = quotes[it.symbol];
+        const price = q?.price;
+        const pct = q?.changePct ?? null;
+        const dirCls = pct == null
+          ? null
+          : pct > 0 ? "text-bull"
+          : pct < 0 ? "text-bear"
+          : null;
+        const priceCls = dirCls ?? "text-ink-dim";
+        // 跌的時候 marker 用綠（bear）；漲 / 平盤 / 無資料 維持原 accent 紅
+        const isDown = pct != null && pct < 0;
+        const markerBg = isDown ? "bg-bear" : "bg-accent";
+        const markerBorder = isDown ? "border-l-bear" : "border-l-accent";
+
         return (
           <li
             key={it.symbol}
             className={[
               "relative px-3.5 py-4 border-b border-line cursor-pointer transition-colors duration-200",
-              isSel ? "bg-bg-card border-l-2 border-l-accent pl-3" : "hover:bg-bg-card/40",
+              isSel ? `bg-bg-card border-l-2 ${markerBorder} pl-3` : "hover:bg-bg-card/40",
             ].join(" ")}
             onClick={() => onSelect(it.symbol)}
           >
             {/* has-hit marker (覆蓋於 selected 時隱藏 — selected 自己有 left border) */}
             {hasHit && !isSel && (
               <span
-                className="absolute left-0 top-4 w-[3px] h-[22px] bg-accent"
+                className={`absolute left-0 top-4 w-[3px] h-[22px] ${markerBg}`}
                 aria-hidden
               />
             )}
 
-            {(() => {
-              const q = quotes[it.symbol];
-              const price = q?.price;
-              const pct = q?.changePct;
-              const dirCls = pct == null
-                ? null
-                : pct > 0 ? "text-bull"
-                : pct < 0 ? "text-bear"
-                : null;
-              const symbolCls = dirCls ?? "text-ink";
-              const priceCls = dirCls ?? "text-ink-dim";
-              return (
-                <div className="flex items-baseline gap-2 min-w-0 mb-2.5 pr-7">
-                  <span className={`text-[19px] font-medium shrink-0 ${symbolCls}`}>
-                    {it.symbol}
+            <div className="flex items-baseline gap-2 min-w-0 mb-2.5 pr-7">
+              <span className="text-[19px] font-medium shrink-0 text-ink">
+                {it.symbol}
+              </span>
+              <span className="text-sm text-ink-muted truncate">
+                {it.name ?? "—"}
+              </span>
+              <span className={`shrink-0 text-sm tabular-nums ${priceCls}`}>
+                {price != null ? price.toFixed(2) : "—"}
+                {pct != null && (
+                  <span className="ml-1 text-xs">
+                    {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
                   </span>
-                  <span className="text-sm text-ink-muted truncate">
-                    {it.name ?? "—"}
-                  </span>
-                  <span className={`shrink-0 text-sm tabular-nums ${priceCls}`}>
-                    {price != null ? price.toFixed(2) : "—"}
-                    {pct != null && (
-                      <span className="ml-1 text-xs">
-                        {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
-                      </span>
-                    )}
-                  </span>
-                </div>
-              );
-            })()}
+                )}
+              </span>
+            </div>
 
             <div className="flex flex-wrap gap-1.5">
               {symRules.map((r) => (
