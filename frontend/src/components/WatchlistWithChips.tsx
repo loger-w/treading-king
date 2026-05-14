@@ -79,8 +79,11 @@ export function WatchlistWithChips({
               />
             )}
 
-            <div className="flex items-baseline justify-between gap-2 mb-0.5">
-              <span className="text-[19px] font-medium text-ink">{it.symbol}</span>
+            <div className="flex items-baseline justify-between gap-2 mb-2.5">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span className="text-[19px] font-medium text-ink shrink-0">{it.symbol}</span>
+                <span className="text-sm text-ink-muted truncate">{it.name ?? "—"}</span>
+              </div>
               {(() => {
                 const q = quotes[it.symbol];
                 const price = q?.price;
@@ -91,7 +94,7 @@ export function WatchlistWithChips({
                   : pct < 0 ? "text-bear"
                   : "text-ink-muted";
                 return (
-                  <span className={`text-right text-sm tabular-nums ${dirCls}`}>
+                  <span className={`shrink-0 text-right text-sm tabular-nums ${dirCls}`}>
                     {price != null ? price.toFixed(2) : "—"}
                     {pct != null && (
                       <span className="ml-1.5 text-xs">
@@ -102,7 +105,6 @@ export function WatchlistWithChips({
                 );
               })()}
             </div>
-            <div className="text-[15px] text-ink-muted mb-2.5">{it.name ?? "—"}</div>
 
             <div className="flex flex-wrap gap-1.5">
               {symRules.map((r) => (
