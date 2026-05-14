@@ -16,7 +16,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
     active_signals, cache, candles, cdp as cdp_route, health, me as me_route,
-    preview, quote, screen, signals_history, strategies, symbols,
+    preview, quote, signals_history, symbols,
     watchlist, ws,
 )  # noqa: E402
 from services.fubon_client import get_fubon  # noqa: E402
@@ -118,8 +118,6 @@ app.include_router(quote.router)
 app.include_router(preview.router)
 app.include_router(symbols.router)
 app.include_router(cache.router)
-app.include_router(screen.router)
-app.include_router(strategies.router)
 app.include_router(watchlist.router)
 app.include_router(active_signals.router)
 app.include_router(signals_history.router)

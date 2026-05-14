@@ -129,7 +129,8 @@ export interface CacheRefreshResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Screener DSL — 對應 backend models/condition.py
+// Condition DSL — 對應 backend models/condition.py
+// 給 ActiveFilter(即時訊號規則) 用,Screener 已移除
 // ---------------------------------------------------------------------------
 
 export const ALL_FIELDS = [
@@ -160,62 +161,6 @@ export interface Filter {
   conditions: Condition[];
   logic: "AND" | "OR";
   limit?: number;
-}
-
-export interface ScreenResultRow {
-  symbol: string;
-  name: string | null;
-  market: string | null;
-  is_etf: boolean | null;
-  close: number | null;
-  change_pct: number | null;
-  volume: number | null;
-  amount: number | null;
-  rsi_14: number | null;
-  macd: number | null;
-  macd_signal: number | null;
-  kdj_k: number | null;
-  kdj_d: number | null;
-  kdj_j: number | null;
-  sma_5: number | null;
-  sma_20: number | null;
-  sma_60: number | null;
-  bbands_upper: number | null;
-  bbands_middle: number | null;
-  bbands_lower: number | null;
-  // Phase 3 CDP fields — Screener 目前不回，留 optional 給未來/UI 顯示「—」
-  cdp_ah?: number | null;
-  cdp_nh?: number | null;
-  cdp?: number | null;
-  cdp_nl?: number | null;
-  cdp_al?: number | null;
-}
-
-export interface ScreenResponse {
-  as_of_date: string;
-  total_scanned: number;
-  count: number;
-  results: ScreenResultRow[];
-  filter: Filter;
-  // Legacy phase 2a wrapper 才有：
-  rule?: string;
-  criteria?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
-export interface Strategy {
-  id: string;
-  name: string;
-  description: string | null;
-  filter_json: Filter;
-  created_at: string;
-}
-
-export interface StrategiesResponse {
-  strategies: Strategy[];
 }
 
 // ---------------------------------------------------------------------------
@@ -373,29 +318,6 @@ export const api = {
     });
   },
 
-  // 新版（Phase 2b）
-  screen: (filter: Filter) =>
-    fetchJSON<ScreenResponse>("/api/screen", {
-      method: "POST",
-      body: JSON.stringify(filter),
-    }),
-
-  // 舊版（Phase 2a 兼容）
-  screenRsiOversold: (limit = 200) =>
-    fetchJSON<ScreenResponse>(`/api/screen/rsi-oversold?limit=${limit}`),
-
-  strategies: {
-    list: () => fetchJSON<StrategiesResponse>("/api/strategies"),
-    create: (s: { name: string; description?: string | null; filter_json: Filter }) =>
-      fetchJSON<Strategy>("/api/strategies", {
-        method: "POST",
-        body: JSON.stringify(s),
-      }),
-    delete: (id: string) =>
-      fetchJSON<void>(`/api/strategies/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      }),
-  },
 
   symbols: (search = "", limit = 20) =>
     fetchJSON<SymbolSearchResponse>(

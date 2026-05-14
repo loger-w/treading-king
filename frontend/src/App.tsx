@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { useMe } from "./hooks/useMe";
 import { Health } from "./pages/Health";
 import { Monitor } from "./pages/Monitor";
-import { Screener } from "./pages/Screener";
 
-type Page = "health" | "screener" | "monitor";
+type Page = "health" | "monitor";
 
 export default function App() {
   const [page, setPage] = useState<Page>("health");
@@ -18,7 +17,6 @@ export default function App() {
       <Masthead />
       <Nav active={page} onNavigate={setPage} />
       {page === "health" && <Health />}
-      {page === "screener" && <Screener />}
       {page === "monitor" && <Monitor />}
     </>
   );
@@ -79,7 +77,6 @@ function Nav({
 }) {
   const items: Array<{ id: Page; label: string }> = [
     { id: "health", label: "系統狀態" },
-    // { id: "screener", label: "篩股" },  // 暫時隱藏，待 cache job 自動化後啟用
     { id: "monitor", label: "即時監控" },
   ];
 

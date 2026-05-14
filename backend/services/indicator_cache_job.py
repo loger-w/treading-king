@@ -8,7 +8,7 @@ Plan §Phase 2a：
 - 進度寫 indicator_cache_runs (run_date PK)；失敗時 alerts.notify_critical
 
 「同表 + date filter staging」路線：
-- reader 在 routes/screen.py 用 SELECT MAX(run_date) WHERE status='done' 取最後一次成功 date
+- reader 在 signal_engine._refill_field_cache 用 get_latest_done_run 取最後一次成功 date
 - 任意時刻 kill 半截 job → reader 還是讀「上一個成功 date」，沒 inconsistent 列
 
 效能粗估：2363 × 8 = 18904 calls / 5 req/s ≈ 63 min（首跑驗證 rate limit 真實值）。
@@ -98,7 +98,7 @@ async def run_cache_job(limit: int | None = None) -> dict[str, Any]:
 def get_latest_done_run(client: Any) -> dict[str, Any] | None:
     """Return the most recent cache_runs row with status='done', or None.
 
-    Used by routes/screen.py to know which date the cache reads should target.
+    Used by signal_engine._refill_field_cache to know which date to read for indicator fields.
     """
     res = (
         client.table("indicator_cache_runs")

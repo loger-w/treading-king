@@ -66,7 +66,7 @@ function SystemStatus() {
         />
         <StatusRow
           name="Supabase"
-          desc="Postgres — symbols / strategies / signals_log 等表"
+          desc="Postgres — symbols / watchlist / active_signals / signals_log 等表"
           status={data?.supabase_status}
           lastError={data?.supabase_last_error}
         />

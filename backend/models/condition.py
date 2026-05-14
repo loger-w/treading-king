@@ -1,11 +1,12 @@
-"""條件 DSL — 篩股引擎的 input schema。
+"""條件 DSL — 即時訊號 ActiveFilter 的 input schema。
 
-Plan §Phase 2b。Filter 的 JSON 形式存在 strategies.filter_json，
-前端透過條件編輯器生成、後端解析翻成 supabase query。
+Plan §Phase 2b 建好,Screener 移除後僅供 ActiveFilter 繼承用。
+Filter 的 JSON 形式存在 active_signals.filter_json,前端條件編輯器
+(ActiveSignalEditor) 生成,signal_engine 評估時讀取。
 
 v1 限制：
 - operator 不含 cross_above/cross_below（indicator_cache 表無歷史）
-- exclude_etf 保留但目前無實效（cache 表已只含 4 位純數字個股）
+- exclude_etf 保留但目前無實效(原本給 Screener 用,Screener 已移除)
 - days_ago 保留但目前只支援 0（同上）
 
 未來 v2 cache 改保留 N 天歷史時，把 cross_above/cross_below 跟 days_ago>0 接回。
@@ -85,7 +86,7 @@ Logic = Literal["AND", "OR"]
 class Filter(BaseModel):
     """篩股請求的完整 schema。
 
-    DSL 演進時 schema_version 加 1，保留舊版 strategies 可載入（Phase 2b 末若改設計）。
+    DSL 演進時 schema_version 加 1，保留舊版 active_signals.filter_json 可載入。
     """
 
     schema_version: int = 1

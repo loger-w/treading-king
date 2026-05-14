@@ -78,7 +78,7 @@ def main() -> None:
         )
 
     # Step 2: login (智能路由)
-    step(2, "Login (apikey_dma_login for screener, no cert needed)")
+    step(2, "Login (apikey_dma_login — DMA mode, no cert needed)")
     # 富邦語境：FUBON_ACCOUNT 通常就是身分證字號，等同 FUBON_PERSONAL_ID
     personal_id = (
         os.getenv("FUBON_PERSONAL_ID", "").strip()
@@ -107,8 +107,8 @@ def main() -> None:
         except Exception as e:
             fail("apikey_login failed.", e)
     else:
-        # 無憑證 → DMA 行情登入（篩股工具足夠）
-        print(f"    Using apikey_dma_login (no cert needed for screener)")
+        # 無憑證 → DMA 行情登入（行情查詢 + WS 訂閱足夠）
+        print(f"    Using apikey_dma_login (DMA mode, no cert needed)")
         try:
             result = sdk.apikey_dma_login(personal_id, api_key)
             ok(f"apikey_dma_login OK ({type(result).__name__})")
