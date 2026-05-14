@@ -19,8 +19,8 @@ export interface TradeRow {
  *  - 比前一筆價低 → sell (內盤，綠)
  *  - 平盤 → 沿用上一筆方向（首筆預設 neutral）
  *
- * 注意：本期不顯示單量（WS tick payload 目前不含 size — 見 fubon_ws.py 第 217 行
- * broadcast payload 只有 symbol/price）。等 backend broadcast 加 size 後 hook 補上 vol。
+ * 注意：本期不顯示單量（WS tick payload 目前不含 size — fubon_ws.py broadcast
+ * payload 只有 symbol/price）。等 backend broadcast 加 size 後 hook 補上 vol。
  */
 export function useTradeTape(symbol: string | null): TradeRow[] {
   const [rows, setRows] = useState<TradeRow[]>([]);

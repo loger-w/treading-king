@@ -8,7 +8,6 @@ export interface QuoteBookData {
   asks: Array<{ price: number; size: number }>;
   innerVolume: number;   // 內盤累積成交量(賣方主動)
   outerVolume: number;   // 外盤累積成交量(買方主動)
-  lastSuccessAt: Date | null;
   error: string | null;
 }
 
@@ -27,7 +26,6 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
   const [asks, setAsks] = useState<QuoteBookData["asks"]>([]);
   const [innerVolume, setInnerVolume] = useState(0);
   const [outerVolume, setOuterVolume] = useState(0);
-  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -37,7 +35,7 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     if (!symbol) {
       setBids([]); setAsks([]);
       setInnerVolume(0); setOuterVolume(0);
-      setLastSuccessAt(null); setError(null);
+      setError(null);
       return;
     }
 
@@ -59,7 +57,6 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
         setAsks(r.asks ?? []);
         setInnerVolume(r.total?.tradeVolumeAtBid ?? 0);
         setOuterVolume(r.total?.tradeVolumeAtAsk ?? 0);
-        setLastSuccessAt(new Date());
         setError(null);
       } catch (e) {
         if (ctrl.signal.aborted) return;
@@ -75,5 +72,5 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     };
   }, [symbol]);
 
-  return { bids, asks, innerVolume, outerVolume, lastSuccessAt, error };
+  return { bids, asks, innerVolume, outerVolume, error };
 }

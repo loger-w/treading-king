@@ -6,17 +6,15 @@ const REFRESH_MS = 30_000;
 export function useIntradayCandles(symbol: string | null) {
   const [candles, setCandles] = useState<IntradayCandle[]>([]);
   const [prevClose, setPrevClose] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchOnce = useCallback(async (s: string) => {
-    setError(null);
     try {
       const r = await api.candlesIntraday(s);
       setCandles(r.data ?? []);
       setPrevClose(r.prev_close);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      console.warn("useIntradayCandles fetch failed:", e);
     }
   }, []);
 
@@ -44,5 +42,5 @@ export function useIntradayCandles(symbol: string | null) {
     });
   }, [symbol]);
 
-  return { candles, prevClose, error, onTick, refetch: () => symbol && fetchOnce(symbol) };
+  return { candles, prevClose, onTick };
 }

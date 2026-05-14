@@ -15,9 +15,9 @@ import { useWatchlist } from "../hooks/useWatchlist";
 import { api, type SignalLogRow } from "../lib/api";
 
 /**
- * 即時監控頁 — v12 grid-4 等高 layout。
+ * 即時監控頁 — grid-4 等高 layout。
  *
- * Layout (spec docs/superpowers/specs/2026-05-13-monitor-revamp-design.md):
+ * Layout:
  *   觸發歷史 300 | 自選 340 | 分時走勢+五檔 1fr | 明細 300
  *   max-w 1960、等高 (中央列驅動，其他 3 欄 stretch + scroll-panel flex:1)
  *

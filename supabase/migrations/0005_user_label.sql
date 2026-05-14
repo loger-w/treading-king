@@ -1,6 +1,6 @@
 -- 2026-05-13 — 本地版 + 共用 Supabase + user_label 隔離
 -- 3 張個人表加 user_label;既有 row 全 backfill 為 'loger';之後 drop default。
--- 共用市場資料表(symbols / indicator_cache / daily_ohlc / cache_runs)不動。
+-- 共用市場資料表(symbols / indicator_cache / daily_ohlc / indicator_cache_runs)不動。
 
 -- ---------------------------------------------------------------------------
 -- watchlist: PK 從 (symbol) 改為 (user_label, symbol)

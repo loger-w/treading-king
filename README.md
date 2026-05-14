@@ -64,8 +64,6 @@ notepad frontend\.env
 
 會開兩個 PowerShell 視窗（backend + frontend）。等 backend log 出現 `Startup done` + frontend 出現 `Local: http://localhost:5173`，瀏覽器打開 http://localhost:5173。
 
-Masthead 右上角應該顯示 `You are: <你的 label>`，看到代表 `.env` 設對了。
-
 ## 常見問題
 
 **Q. 我看得到別人的 watchlist 嗎？**
@@ -85,12 +83,6 @@ backend startup 會驗 label 格式，但**不**擋重複——同一個 label �
 
 **Q. service_role key 外洩會怎樣？**
 拿到 key 的人可以讀寫整個 Supabase（所有人的資料）。請當作密碼保管：不要 commit、不要貼 Discord、不要存在公開雲端硬碟。
-
-## 開發者文件
-
-- `docs/superpowers/specs/` — 設計文件(monitor revamp / probe 等)
-- `docs/superpowers/plans/` — 實作計畫
-- `docs/decisions/` — 重要決策紀錄
 
 ## 授權
 

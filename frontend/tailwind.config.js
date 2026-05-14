@@ -24,7 +24,7 @@ export default {
         },
         // 強調色 — 在暗底會跳
         accent: {
-          DEFAULT: "#e85a4f",  // 深紅 — masthead top border, accent dots
+          DEFAULT: "#e85a4f",  // 深紅 — accent dots / hit markers
           hover: "#f06b5f",
         },
         // 台股慣例：上漲紅、下跌綠（與美股相反）

@@ -36,4 +36,4 @@ Start-Process powershell -ArgumentList @(
 Write-Host ""
 Write-Host "Backend + Frontend launched in new windows." -ForegroundColor Green
 Write-Host "  Open http://localhost:5173 in your browser." -ForegroundColor Cyan
-Write-Host "  Masthead should show 'You are: <your label>'. If not, check the backend window log." -ForegroundColor Cyan
+Write-Host "  If the page doesn't load, check the backend window log." -ForegroundColor Cyan

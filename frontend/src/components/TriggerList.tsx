@@ -6,8 +6,6 @@ import { type ActiveSignal, type SignalLogRow, type SignalEvent } from "../lib/a
  * 每 row 兩行：
  *   line1: 股票代號 + name (italic)        時間
  *   line2: 規則名稱                         觸發價
- *
- * 資料合併與 dedup 邏輯沿用原 TriggerHistoryTable。
  */
 interface Props {
   historical: SignalLogRow[];

@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, cache, candles, cdp as cdp_route, health, me as me_route,
+    active_signals, cache, candles, cdp as cdp_route,
     preview, quote, signals_history, symbols,
     watchlist, ws,
 )  # noqa: E402
@@ -113,7 +113,6 @@ app.add_middleware(
 
 app.add_middleware(APIKeyMiddleware)
 
-app.include_router(health.router)
 app.include_router(quote.router)
 app.include_router(preview.router)
 app.include_router(symbols.router)
@@ -124,14 +123,3 @@ app.include_router(signals_history.router)
 app.include_router(candles.router)
 app.include_router(cdp_route.router)
 app.include_router(ws.router)
-app.include_router(me_route.router)
-
-
-@app.get("/")
-async def root() -> dict:
-    return {
-        "name": "treading-king",
-        "version": "0.3.0",
-        "docs": "/docs",
-        "health": "/api/health",
-    }

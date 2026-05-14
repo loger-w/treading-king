@@ -6,7 +6,7 @@ import { type HitCounts } from "../hooks/useTodayHits";
  * 自選 list + Scope chip 顯示。
  *
  * 排序：has-hit 置頂（按 total hit desc），無命中按 added_at desc（原順序）。
- * 命中股票左側 3px accent marker（spec §7.3）。
+ * 命中股票左側 3px accent marker。
  *
  * 點 row → onSelect(symbol)；點 × → onRemove(symbol)。
  */

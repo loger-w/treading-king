@@ -154,7 +154,6 @@ class ActiveSignalCreate(BaseModel):
     filter_json: ActiveFilter
     scope: Scope
     cooldown_seconds: int = Field(default=1800, ge=60, le=86400)
-    ignore_auctions: bool = True
     enabled: bool = True
 
 

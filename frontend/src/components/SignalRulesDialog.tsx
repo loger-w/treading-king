@@ -6,7 +6,6 @@ import { api, type ActiveSignal } from "../lib/api";
  * 訊號規則 Dialog — 列表 + 新增/編輯 + toggle 啟用 + 刪除。
  *
  * 內嵌 ActiveSignalEditor 做新增/編輯（nested modal — z-index 由內部 fixed inset-0 處理）。
- * 對應 spec §7.5 / v11 mockup dialog 樣式。
  *
  * 關閉：點 × / 點 backdrop / 按 Esc。
  */
@@ -48,7 +47,6 @@ export function SignalRulesDialog({ open, rules, onClose, onChanged }: Props) {
       filter_json: r.filter_json,
       scope: r.scope,
       cooldown_seconds: r.cooldown_seconds,
-      ignore_auctions: r.ignore_auctions,
       enabled: !r.enabled,
     });
     onChanged();

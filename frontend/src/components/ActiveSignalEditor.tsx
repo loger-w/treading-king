@@ -42,7 +42,6 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   });
   const [scope, setScope] = useState<Scope>(initial?.scope ?? { type: "watchlist" });
   const [cooldown, setCooldown] = useState(initial?.cooldown_seconds ?? 1800);
-  const [ignoreAuctions, setIgnoreAuctions] = useState(initial?.ignore_auctions ?? true);
   const [enabled] = useState(initial?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,7 +86,7 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const payload = { name: name.trim(), filter_json: filter, scope, cooldown_seconds: cooldown, ignore_auctions: ignoreAuctions, enabled };
+      const payload = { name: name.trim(), filter_json: filter, scope, cooldown_seconds: cooldown, enabled };
       if (initial) await api.activeSignals.update(initial.id, payload);
       else await api.activeSignals.create(payload);
       onSaved();
@@ -196,10 +195,6 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
             <input type="number" min={60} max={86400} value={cooldown}
               onChange={(e) => setCooldown(Number(e.target.value))}
               className="bg-bg-deep border border-line text-sm px-2 py-1 w-32 tabular-nums" />
-          </div>
-          <div>
-            <div className="label-tiny mb-1">集合競價時段忽略 volume_burst</div>
-            <label className="text-sm"><input type="checkbox" checked={ignoreAuctions} onChange={(e) => setIgnoreAuctions(e.target.checked)} className="accent-accent mr-1" />開啟</label>
           </div>
         </div>
 

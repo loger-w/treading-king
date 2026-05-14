@@ -1,6 +1,6 @@
 """Fubon Neo SDK wrapper — DMA login + degraded mode + auto-retry.
 
-Plan §Phase 1 對應實作。所有 sync SDK call 透過 asyncio.to_thread 包裝。
+所有 sync SDK call 透過 asyncio.to_thread 包裝。
 
 DMA login 路線：apikey_dma_login(personal_id, api_key) — 無需 PFX 憑證。
 用途：行情查詢 + WebSocket trades/books/ticks/snapshot/tickers 訂閱。

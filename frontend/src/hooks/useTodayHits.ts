@@ -14,10 +14,7 @@ export type HitCounts = Record<string, Record<string, number>>;
 
 export function useTodayHits() {
   const [counts, setCounts] = useState<HitCounts>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  // initial baseline
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -32,11 +29,8 @@ export function useTodayHits() {
         }
         setCounts(grouped);
       } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        console.warn("useTodayHits baseline failed:", e);
         // fallback: 保持 {} (全 0)
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -55,19 +49,5 @@ export function useTodayHits() {
     });
   }, []);
 
-  const getCount = useCallback(
-    (symbol: string, activeSignalId: string): number =>
-      counts[symbol]?.[activeSignalId] ?? 0,
-    [counts],
-  );
-
-  const getTotalForSymbol = useCallback(
-    (symbol: string): number => {
-      const m = counts[symbol] ?? {};
-      return Object.values(m).reduce((a, b) => a + b, 0);
-    },
-    [counts],
-  );
-
-  return { counts, loading, error, bump, getCount, getTotalForSymbol };
+  return { counts, bump };
 }

@@ -1,5 +1,4 @@
--- supabase/migrations/0004_realtime_signals.sql
--- Phase 3 — active_signals + signals_log + daily_ohlc
+-- active_signals + signals_log + daily_ohlc
 
 create table if not exists active_signals (
   id                uuid primary key default gen_random_uuid(),
@@ -7,7 +6,6 @@ create table if not exists active_signals (
   filter_json       jsonb not null,
   scope             jsonb not null,
   cooldown_seconds  int  default 1800 check (cooldown_seconds between 60 and 86400),
-  ignore_auctions   boolean default true,
   enabled           boolean default true,
   created_at        timestamptz default now()
 );
@@ -35,7 +33,6 @@ create index if not exists idx_signals_log_active_signal_time
 create table if not exists daily_ohlc (
   symbol  text not null references symbols(symbol),
   date    date not null,
-  open    numeric,
   high    numeric,
   low     numeric,
   close   numeric,

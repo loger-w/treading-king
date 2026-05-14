@@ -1,4 +1,4 @@
-"""富邦 WS 連線池 — refcount registry 解 plan §R1（兩 owner 同 symbol 取消其一不互踩）。
+"""富邦 WS 連線池 — refcount registry（兩 owner 同 symbol 取消其一不互踩）。
 
 重要：富邦 WS callback 是 sync (在 fubon SDK thread)，要 bridge 到 asyncio。
 我們在 startup 時 cache main loop reference，sync callback 用 loop.call_soon_threadsafe
@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 # 富邦官方規格 (https://www.fbs.com.tw/TradeAPI/en/docs/market-data/rate-limit/):
 #   - WebSocket 每連線最多 200 subscriptions
 #   - WebSocket 每帳號最多 5 connections
-# 但 SDK 的 websocket_client.stock 是 process-level singleton (probe_ws_singleton
-# commit c156070 已驗，三次 id() 相同)。同 process 內取多次回同一個 ws instance。
+# 但 SDK 的 websocket_client.stock 是 process-level singleton。
+# 同 process 內取多次回同一個 ws instance。
 # 要拿到富邦允許的 5 connections 必須 multi-process 架構 (5 個獨立 SDK login)。
 # 目前單 process 真實容量 = 1 × 200 = 200。
 # MAX_CONNS=1 反映 SDK 真實限制 — 避免 _pick_conn_with_capacity 誤判把 sub 分到

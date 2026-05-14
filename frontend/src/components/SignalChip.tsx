@@ -4,8 +4,6 @@
  * 視覺：
  * - 預設：line-strong 邊框 + ink-muted 文字
  * - 命中（count > 0）：accent 紅邊框 + 微紅底 + accent 上標數字
- *
- * 對應 spec §7.3 / v11 mockup chip 樣式。
  */
 
 const SUPERSCRIPT_DIGITS = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"];

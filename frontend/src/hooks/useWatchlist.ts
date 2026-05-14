@@ -3,19 +3,13 @@ import { api, type WatchlistRow } from "../lib/api";
 
 export function useWatchlist() {
   const [items, setItems] = useState<WatchlistRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
     try {
       const r = await api.watchlist.list();
       setItems(r.watchlist);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
+      console.warn("useWatchlist refresh failed:", e);
     }
   }, []);
 
@@ -31,5 +25,5 @@ export function useWatchlist() {
     await refresh();
   }, [refresh]);
 
-  return { items, loading, error, refresh, add, remove };
+  return { items, add, remove };
 }

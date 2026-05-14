@@ -49,7 +49,7 @@ async def list_active() -> dict:
     sb = _ensure_supabase()
     res = await asyncio.to_thread(
         lambda: sb.client.table("active_signals")
-        .select("id, name, filter_json, scope, cooldown_seconds, ignore_auctions, enabled, created_at")
+        .select("id, name, filter_json, scope, cooldown_seconds, enabled, created_at")
         .eq("user_label", get_user_label())
         .order("created_at", desc=True).execute()
     )
@@ -65,7 +65,6 @@ async def create_active(payload: ActiveSignalCreate) -> dict:
             "filter_json": payload.filter_json.model_dump(),
             "scope": payload.scope.model_dump(),
             "cooldown_seconds": payload.cooldown_seconds,
-            "ignore_auctions": payload.ignore_auctions,
             "enabled": payload.enabled,
             "user_label": get_user_label(),
         }).execute()
@@ -110,7 +109,6 @@ async def update_active(sid: str, payload: ActiveSignalCreate) -> dict:
             "filter_json": payload.filter_json.model_dump(),
             "scope": payload.scope.model_dump(),
             "cooldown_seconds": payload.cooldown_seconds,
-            "ignore_auctions": payload.ignore_auctions,
             "enabled": payload.enabled,
         })
         .eq("user_label", get_user_label())

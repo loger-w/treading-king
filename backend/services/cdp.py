@@ -1,6 +1,5 @@
 """CDP 5 線 — 從昨日 OHLC 算 5 個值，盤中為固定值。
 
-Plan §Phase 3 §4.5。
 公式（台股 / 港股慣例）：
   CDP = (H + L + 2C) / 4
   AH (最高值) = CDP + (H − L)
@@ -67,7 +66,7 @@ class CdpLevels(TypedDict):
     as_of_date: str  # 昨日 ISO date string
 
 
-def compute_cdp(o: float, h: float, l: float, c: float) -> dict[str, float]:
+def compute_cdp(h: float, l: float, c: float) -> dict[str, float]:
     """純函式 — 給 OHLC 算 5 線值，5 條全部對齊到最近的台股 tick。
 
     每個價位的 tick 不同（< 10 / 10-50 / 50-100 / 100-500 / 500-1000 / >=1000
@@ -136,7 +135,7 @@ class CdpService:
         # 抓最近一筆 daily_ohlc（昨日）
         res = (
             sb.client.table("daily_ohlc")
-            .select("date, open, high, low, close")
+            .select("date, high, low, close")
             .eq("symbol", symbol)
             .order("date", desc=True)
             .limit(1)
@@ -149,8 +148,7 @@ class CdpService:
         row = rows[0]
         try:
             levels = compute_cdp(
-                float(row["open"]), float(row["high"]),
-                float(row["low"]), float(row["close"]),
+                float(row["high"]), float(row["low"]), float(row["close"]),
             )
             self._cache[symbol] = {
                 "ah": levels["ah"], "nh": levels["nh"], "cdp": levels["cdp"],
@@ -216,7 +214,7 @@ class CdpService:
                 continue
             upserts.append({
                 "symbol": symbol, "date": d,
-                "open": row.get("open"), "high": row.get("high"),
+                "high": row.get("high"),
                 "low": row.get("low"), "close": row.get("close"),
             })
 
@@ -248,86 +246,3 @@ def get_cdp_service() -> CdpService:
     if _service is None:
         _service = CdpService()
     return _service
-
-
-# ----------------------- inline smoke -----------------------
-
-if __name__ == "__main__":
-    import sys
-
-    if sys.platform == "win32":
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
-
-    GREEN, RED, YELLOW, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[0m"
-
-    def step(n, t): print(f"\n{YELLOW}[Test {n}] {t}{RESET}")
-    def ok(m): print(f"{GREEN}  ✓ {m}{RESET}")
-    def fail(m): print(f"{RED}  ✗ {m}{RESET}"); sys.exit(1)
-
-    step(1, "compute_cdp(O=2300, H=2320, L=2280, C=2290) — 對 spec 範例")
-    r = compute_cdp(2300, 2320, 2280, 2290)
-    # CDP = (2320+2280+2*2290)/4 = (2320+2280+4580)/4 = 9180/4 = 2295
-    # AH = 2295 + (2320-2280) = 2295 + 40 = 2335
-    # NH = 2*2295 - 2280 = 4590 - 2280 = 2310
-    # NL = 2*2295 - 2320 = 4590 - 2320 = 2270
-    # AL = 2295 - 40 = 2255
-    expected = {"ah": 2335, "nh": 2310, "cdp": 2295, "nl": 2270, "al": 2255}
-    for k, v in expected.items():
-        if abs(r[k] - v) > 0.001:
-            fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
-    # 這些值剛好都在 tick 5 grid 上 (2335/2310/2295/2270/2255 都是 5 的倍數)，對齊版不影響預期
-    ok(f"5 線都對: {r}")
-
-    step(2, "compute_cdp 對極端值不爆")
-    r = compute_cdp(0.01, 0.02, 0.01, 0.015)
-    if all(isinstance(v, float) for v in r.values()):
-        ok("極小值 OK")
-    else: fail("type 不對")
-
-    step(3, "ordering — AH > NH > CDP > NL > AL（H>L 時）")
-    r = compute_cdp(580, 600, 560, 590)
-    if r["ah"] > r["nh"] > r["cdp"] > r["nl"] > r["al"]:
-        ok(f"順序正確: {r}")
-    else: fail(f"順序錯: {r}")
-
-    step(4, "tick rounding — 1000+ 跨越 tick 5 / tick 1 邊界 (all nearest)")
-    r = compute_cdp(1000, 1010, 990, 1002)
-    # 5 條全部 nearest（不再 ceil/floor）
-    # raw cdp = (1010+990+2*1002)/4 = 1001  → nearest tick 5 → 1000
-    # raw ah  = 1001 + 20 = 1021             → nearest tick 5 → 1020
-    # raw nh  = 2*1001 - 990 = 1012          → nearest tick 5 → 1010
-    # raw nl  = 2*1001 - 1010 = 992          → nearest tick 1 → 992
-    # raw al  = 1001 - 20 = 981              → nearest tick 1 → 981
-    expected = {"ah": 1020, "nh": 1010, "cdp": 1000, "nl": 992, "al": 981}
-    for k, v in expected.items():
-        if abs(r[k] - v) > 0.001:
-            fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
-    ok(f"tick 對齊 + 跨 band 正確: {r}")
-
-    step(5, "tick rounding — 500-1000 band 用 tick 1 (all nearest)")
-    r = compute_cdp(580, 600, 560, 590)
-    # raw cdp = (600+560+2*590)/4 = 585      → nearest tick 1 → 585
-    # raw ah  = 585 + 40 = 625                → nearest tick 1 → 625
-    # raw nh  = 2*585 - 560 = 610             → nearest tick 1 → 610
-    # raw nl  = 2*585 - 600 = 570             → nearest tick 1 → 570
-    # raw al  = 585 - 40 = 545                → nearest tick 1 → 545
-    expected = {"ah": 625, "nh": 610, "cdp": 585, "nl": 570, "al": 545}
-    for k, v in expected.items():
-        if abs(r[k] - v) > 0.001:
-            fail(f"{k} 不對: 算到 {r[k]}, 預期 {v}")
-    ok(f"500-1000 band 對齊正確: {r}")
-
-    step(6, "tick rounding helper — direction up/down/nearest 邊界")
-    # 1004.5 在 1000+ band → tick 5
-    assert round_to_tick_tw(1004.5, "up")      == 1005, "up boundary"
-    assert round_to_tick_tw(1004.5, "down")    == 1000, "down boundary"
-    assert round_to_tick_tw(1004.5, "nearest") == 1005, "nearest 1004.5 → 1005 (round half up via Python round)"
-    # 50 邊界 — 50 < 50 false → 入 50-100 band tick 0.1
-    assert round_to_tick_tw(50.05, "nearest") == 50.10 or round_to_tick_tw(50.05, "nearest") == 50.00, \
-        "boundary 50 用 tick 0.1（banker round 可 50.0 或 50.1）"
-    ok("rounding helper 邊界 OK")
-
-    print(f"\n{GREEN}All cdp smoke tests passed ✓{RESET}")

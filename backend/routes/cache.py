@@ -1,6 +1,6 @@
 """POST /api/cache/refresh, GET /api/cache/status — indicator cache job control.
 
-Plan §Phase 2a：前端按鈕「跑 cache job」打 refresh；「狀態」顯示 status row。
+Admin endpoints (curl-only, no UI)。
 
 refresh 是 fire-and-forget 背景 task：response 立刻回 202，job 之後在背景跑。
 重複呼叫會被 indicator_cache_job._running 擋掉，回 409。

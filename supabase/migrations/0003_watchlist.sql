@@ -1,4 +1,4 @@
--- watchlist：自選清單 = 即時監控池(Phase 3 active_signals.scope 會用)
+-- watchlist：自選清單 = 即時監控池(active_signals.scope 會用)
 
 create table if not exists watchlist (
   symbol      text primary key references symbols(symbol),

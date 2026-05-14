@@ -1,6 +1,6 @@
 """8:25 過夜重連 — fubon relogin + ws pool 重訂閱所有 active symbols。
 
-Plan §Phase 3 §5.6。固定 8:25 觸發（盤前 5 分鐘），給 8:30 集合競價開始時 token 是新的。
+固定 8:25 觸發（盤前 5 分鐘），給 8:30 集合競價開始時 token 是新的。
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ async def run_overnight_reconnect() -> bool:
 
     logger.info("overnight reconnect starting…")
 
-    # 1. 重 login + init_realtime（重用 Phase 1 fubon_client 的 retry）
+    # 1. 重 login + init_realtime（重用 fubon_client 的 retry）
     await fubon.init()
     if fubon.status != FubonStatus.OK:
         logger.error("overnight relogin failed: %s", fubon.last_error)

@@ -1,6 +1,5 @@
 """Async batch flush writer — evaluator 命中時 append，500ms 或 ≥100 列觸發 INSERT signals_log。
 
-Plan §Phase 3 §4.4。
 失敗 retry 1 次仍失敗 → alerts + buffer 保留待下次 flush 重送。
 buffer > 1000 列 → FIFO drop + metric。
 """

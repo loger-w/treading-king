@@ -1,4 +1,4 @@
-// Plan §Phase 1: 一律用 relative path（vite.config.ts proxy 會接到 :8000）
+// 一律用 relative path（vite.config.ts proxy 會接到 :8000）
 
 const BFF_API_KEY = import.meta.env.VITE_BFF_API_KEY ?? "";
 
@@ -31,101 +31,17 @@ export class ApiError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Health
-// ---------------------------------------------------------------------------
-
-export interface HealthResponse {
-  status: "ok" | "degraded" | "error";
-  fubon_status: "ok" | "error" | "degraded";
-  fubon_last_error: string | null;
-  supabase_status: "ok" | "error";
-  supabase_last_error: string | null;
-  is_trading_day: boolean;
-  cache_last_success_at: string | null;
-  cache_last_run_status: "running" | "done" | "failed" | "skipped" | null;
-  // Phase 3 (optional — present if signal engine started)
-  ws_connections?: {
-    active: number;
-    subscribed_symbols: number;
-    max_capacity: number;
-    status: string;
-  };
-  signal_engine?: {
-    queue_depth: number;
-    lag_ms: number;
-    dropped_today: number;
-    degraded: boolean;
-    active_count: number;
-    writer_buffer: number;
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Me
-// ---------------------------------------------------------------------------
-
-export interface MeResponse {
-  user_label: string;
-  is_cache_owner: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Quote
+// Quote — 只描述 QuoteBook 五檔/內外盤實際用的欄位（backend response 還有其他
+// 欄位但前端不讀；新需求要用其他欄位時再補回介面）
 // ---------------------------------------------------------------------------
 
 export interface QuoteResponse {
-  date?: string;
-  type?: string;
-  exchange?: string;
-  market?: string;
-  symbol: string;
-  name?: string;
-  referencePrice?: number;
-  previousClose?: number;
-  openPrice?: number;
-  highPrice?: number;
-  lowPrice?: number;
-  closePrice?: number;
-  avgPrice?: number;
-  change?: number;
-  changePercent?: number;
-  amplitude?: number;
-  lastPrice?: number;
   bids?: Array<{ price: number; size: number }>;
   asks?: Array<{ price: number; size: number }>;
   total?: {
-    tradeValue?: number;
-    tradeVolume?: number;
     tradeVolumeAtBid?: number;   // 內盤累積 — 成交在 bid 價(賣方主動)
     tradeVolumeAtAsk?: number;   // 外盤累積 — 成交在 ask 價(買方主動)
   };
-  isClose?: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Cache
-// ---------------------------------------------------------------------------
-
-export interface CacheRunRow {
-  run_date: string;
-  is_trading_day: boolean;
-  started_at: string | null;
-  finished_at: string | null;
-  symbols_total: number | null;
-  symbols_done: number | null;
-  status: "running" | "done" | "failed" | "skipped";
-  error_text: string | null;
-}
-
-export interface CacheStatusResponse {
-  running: boolean;
-  latest_run: CacheRunRow | null;
-}
-
-export interface CacheRefreshResponse {
-  status: "accepted";
-  limit: number | null;
-  message: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +90,7 @@ export interface SymbolSearchResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: WindowCondition / ActiveSignal / Watchlist / Candles / CDP
+// WindowCondition / ActiveSignal / Watchlist / Candles / CDP
 // ---------------------------------------------------------------------------
 
 export type WindowConditionType = "price_change_pct" | "volume_burst" | "trade_count";
@@ -201,7 +117,6 @@ export interface ActiveSignal {
   filter_json: ActiveFilter;
   scope: Scope;
   cooldown_seconds: number;
-  ignore_auctions: boolean;
   enabled: boolean;
   created_at: string;
 }
@@ -294,8 +209,6 @@ export interface SignalEvent {
 // ---------------------------------------------------------------------------
 
 export const api = {
-  health: () => fetchJSON<HealthResponse>("/api/health"),
-  me: () => fetchJSON<MeResponse>("/api/me"),
   quote: (symbol: string) =>
     fetchJSON<QuoteResponse>(`/api/quote/${encodeURIComponent(symbol)}`),
 
@@ -304,15 +217,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ symbol }),
     }),
-
-  cacheStatus: () => fetchJSON<CacheStatusResponse>("/api/cache/status"),
-  cacheRefresh: (limit?: number) => {
-    const qs = limit ? `?limit=${limit}` : "";
-    return fetchJSON<CacheRefreshResponse>(`/api/cache/refresh${qs}`, {
-      method: "POST",
-    });
-  },
-
 
   symbols: (search = "", limit = 20) =>
     fetchJSON<SymbolSearchResponse>(

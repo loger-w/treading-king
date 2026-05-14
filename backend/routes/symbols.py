@@ -1,5 +1,5 @@
 """POST /api/symbols/refresh — 從 TWSE/OTC 公開檔抓全市場 symbol 主表 → upsert supabase.
-GET  /api/symbols?search=&limit= — Phase 2b：給 watchlist / 條件編輯器搜 symbol 用。
+GET  /api/symbols?search=&limit= — 給 Monitor 搜尋框 + 加入自選股用。
 
 資料源（公開、免登入）：
 - TWSE 上市：https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL
@@ -37,7 +37,7 @@ async def search_symbols(
     search: str = Query("", description="Prefix match on symbol, contains match on name"),
     limit: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """搜 symbol（給 watchlist / 條件編輯器選股用）。"""
+    """搜 symbol（給 Monitor 搜尋框 / 加入自選股用）。"""
     sb = get_supabase()
     if sb.status.value != "ok" or sb.client is None:
         raise HTTPException(
@@ -90,7 +90,6 @@ async def refresh_symbols() -> dict:
                         "symbol": code,
                         "name": name,
                         "market": "TWSE",
-                        "industry": None,
                         "is_etf": _is_non_stock(code),
                         "is_active": True,
                     }
@@ -118,7 +117,6 @@ async def refresh_symbols() -> dict:
                         "symbol": code,
                         "name": name,
                         "market": "OTC",
-                        "industry": None,
                         "is_etf": _is_non_stock(code),
                         "is_active": True,
                     }

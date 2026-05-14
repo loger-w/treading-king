@@ -1,7 +1,4 @@
-"""訊號 evaluator — 消費 tick → 跑 WindowCondition + Filter.conditions → 達成 fan-out。
-
-Plan §Phase 3 §4.3 / §5.1。
-"""
+"""訊號 evaluator — 消費 tick → 跑 WindowCondition + Filter.conditions → 達成 fan-out。"""
 from __future__ import annotations
 
 import asyncio
@@ -78,7 +75,7 @@ class SignalEngine:
             return
         res = await asyncio.to_thread(
             lambda: sb.client.table("active_signals")
-            .select("id, name, filter_json, scope, cooldown_seconds, ignore_auctions, enabled, created_at")
+            .select("id, name, filter_json, scope, cooldown_seconds, enabled, created_at")
             .eq("user_label", get_user_label())
             .eq("enabled", True)
             .execute()
@@ -104,7 +101,6 @@ class SignalEngine:
             id=r["id"], name=r["name"],
             filter_json=r["filter_json"], scope=r["scope"],
             cooldown_seconds=r.get("cooldown_seconds", 1800),
-            ignore_auctions=r.get("ignore_auctions", True),
             enabled=r.get("enabled", True),
             created_at=str(r.get("created_at", "")),
         )

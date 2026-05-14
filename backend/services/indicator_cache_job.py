@@ -1,6 +1,5 @@
 """Indicator cache job — parallel fetch all active symbols' technicals → supabase.
 
-Plan §Phase 2a：
 - 從 symbols WHERE is_active=true 讀（~2363 檔）
 - ThreadPoolExecutor(max_workers=8) + token bucket (5 req/s)
 - 每檔抓 1 intraday.quote + 5 technical（rsi/macd/kdj/sma×3/bb）= 8 API call
@@ -113,10 +112,7 @@ def get_latest_done_run(client: Any) -> dict[str, Any] | None:
 
 
 def get_latest_run(client: Any) -> dict[str, Any] | None:
-    """Return the most recent cache_runs row regardless of status, or None.
-
-    Used by /api/health to surface cache state.
-    """
+    """Return the most recent cache_runs row regardless of status, or None."""
     res = (
         client.table("indicator_cache_runs")
         .select("*")
@@ -146,7 +142,7 @@ def _run_cache_job_sync(limit: int | None) -> dict[str, Any]:
     sdk = fubon.sdk
 
     today = date.today()
-    is_trading = today.weekday() < 5  # TODO: 真實 TWSE 行事曆（plan §Phase 2.5）
+    is_trading = today.weekday() < 5  # TODO: 接 TWSE 行事曆
 
     symbols = _fetch_active_symbols(client, limit=limit)
     if not symbols:
@@ -257,7 +253,6 @@ def _fetch_symbol(sdk: Any, symbol: str, today: date) -> dict[str, Any]:
 
     # ---- price (intraday.quote) ----
     # 實測 field：closePrice / changePercent / total.tradeVolume / total.tradeValue
-    # （probe_technical_fields.py 2026-05-11 驗）
     limiter.acquire()
     quote = _safe_call(intraday.quote, symbol=symbol)
     if quote:
@@ -273,7 +268,7 @@ def _fetch_symbol(sdk: Any, symbol: str, today: date) -> dict[str, Any]:
     row["rsi_14"] = _last_value(rsi, "rsi")
 
     # ---- MACD ----
-    # 實測 field：macdLine / signalLine（probe_technical_fields.py 2026-05-11 驗）
+    # 實測 field：macdLine / signalLine
     limiter.acquire()
     macd = _safe_call(tech.macd, symbol=symbol, **MACD_PARAMS)
     row["macd"] = _last_value(macd, "macdLine")
