@@ -12,6 +12,7 @@ interface Props {
   recent: SignalEvent["data"][];
   rules: ActiveSignal[];
   symbolNames: Record<string, string | null>;
+  prevCloseMap: Record<string, number | null>;
   selectedSymbol: string | null;
   onSelect: (symbol: string) => void;
 }
@@ -34,7 +35,7 @@ function formatTime(iso: string): string {
 }
 
 export function TriggerList({
-  historical, recent, rules, symbolNames, selectedSymbol, onSelect,
+  historical, recent, rules, symbolNames, prevCloseMap, selectedSymbol, onSelect,
 }: Props) {
   const ruleNameById = Object.fromEntries(rules.map((r) => [r.id, r.name]));
 
@@ -93,22 +94,35 @@ export function TriggerList({
             ].join(" ")}
           >
             <div className="flex items-baseline justify-between gap-2">
-              <span className="font-serif font-bold text-base tracking-[-0.2px]">
+              <span className="font-serif font-bold text-lg tracking-[-0.2px]">
                 {r.symbol}
                 {r.name && (
-                  <span className="ml-1.5 font-serif italic font-normal text-xs text-ink-muted">
+                  <span className="ml-1.5 font-serif italic font-normal text-sm text-ink-muted">
                     {r.name}
                   </span>
                 )}
               </span>
-              <span className="text-xs text-ink-dim tabular-nums">{r.time}</span>
+              <span className="text-sm text-ink-dim tabular-nums">{r.time}</span>
             </div>
             <div className="flex items-baseline justify-between gap-2 mt-1">
-              <span className="text-xs text-ink-dim uppercase tracking-[0.5px]">
+              <span className="text-sm text-ink-dim uppercase tracking-[0.5px]">
                 {r.ruleName}
               </span>
-              <span className="text-sm tabular-nums text-bull font-medium">
-                {r.price.toFixed(2)}
+              <span className="flex items-baseline gap-2">
+                {(() => {
+                  const prev = prevCloseMap[r.symbol];
+                  if (prev == null || prev === 0) return null;
+                  const pct = ((r.price - prev) / prev) * 100;
+                  const cls = pct > 0 ? "text-bull" : pct < 0 ? "text-bear" : "text-ink-muted";
+                  return (
+                    <span className={`text-xs tabular-nums ${cls}`}>
+                      {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+                    </span>
+                  );
+                })()}
+                <span className="text-base tabular-nums text-bull font-medium">
+                  {r.price.toFixed(2)}
+                </span>
               </span>
             </div>
           </li>

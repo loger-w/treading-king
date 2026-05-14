@@ -12,6 +12,7 @@ import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
 import { useWatchlist } from "../hooks/useWatchlist";
+import { useSnapshotCache } from "../hooks/useSnapshotCache";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
 
@@ -87,6 +88,19 @@ export function Monitor() {
 
   const watchlistQuotes = useWatchlistQuotes(watchlistSymbols);
 
+  const triggerSymbols = useMemo(() => {
+    const set = new Set<string>();
+    for (const h of historicalToday) set.add(h.symbol);
+    for (const r of recent) set.add(r.symbol);
+    return Array.from(set);
+  }, [historicalToday, recent]);
+  const triggerSnapshot = useSnapshotCache(triggerSymbols);
+  const prevCloseMap = useMemo(() => {
+    const m: Record<string, number | null> = {};
+    for (const s of triggerSymbols) m[s] = triggerSnapshot[s]?.prevClose ?? null;
+    return m;
+  }, [triggerSymbols, triggerSnapshot]);
+
   // 預覽訂閱：selected 不在 watchlist 時通知 backend 用 owner='preview' 訂閱該 symbol
   usePreviewSubscribe(selected, watchlistSymbols);
 
@@ -144,6 +158,7 @@ export function Monitor() {
                   recent={recent}
                   rules={rules}
                   symbolNames={symbolNames}
+                  prevCloseMap={prevCloseMap}
                   selectedSymbol={selected}
                   onSelect={handleSelect}
                 />
