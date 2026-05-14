@@ -114,7 +114,7 @@ function SystemStatus() {
 
 function cacheDesc(data: HealthResponse | null): string {
   if (!data) return "檢查中…";
-  if (!data.cache_last_success_at) return "尚未跑過成功的 cache — 切到「篩股」分頁";
+  if (!data.cache_last_success_at) return "尚未跑過成功的 cache — 即時訊號 indicator/CDP 條件會拿不到值";
   const when = new Date(data.cache_last_success_at);
   const formatted = when.toLocaleString("zh-TW", {
     month: "long",

@@ -1,6 +1,6 @@
 -- 2026-05-13 — 本地版 + 共用 Supabase + user_label 隔離
--- 4 張個人表加 user_label；既有 row 全 backfill 為 'loger'；之後 drop default。
--- 共用市場資料表（symbols / indicator_cache / daily_ohlc / cache_runs）不動。
+-- 3 張個人表加 user_label;既有 row 全 backfill 為 'loger';之後 drop default。
+-- 共用市場資料表(symbols / indicator_cache / daily_ohlc / cache_runs)不動。
 
 -- ---------------------------------------------------------------------------
 -- watchlist: PK 從 (symbol) 改為 (user_label, symbol)
@@ -10,13 +10,6 @@ alter table watchlist drop constraint if exists watchlist_pkey;
 alter table watchlist add primary key (user_label, symbol);
 alter table watchlist alter column user_label drop default;
 create index if not exists idx_watchlist_label on watchlist(user_label);
-
--- ---------------------------------------------------------------------------
--- strategies (id 已是 uuid PK，不動 PK)
--- ---------------------------------------------------------------------------
-alter table strategies add column if not exists user_label text not null default 'loger';
-alter table strategies alter column user_label drop default;
-create index if not exists idx_strategies_label on strategies(user_label, created_at desc);
 
 -- ---------------------------------------------------------------------------
 -- active_signals

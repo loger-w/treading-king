@@ -38,8 +38,7 @@ interface Props {
 export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [filter, setFilter] = useState<ActiveFilter>(initial?.filter_json ?? {
-    market: ["TWSE", "OTC"], exclude_etf: true,
-    conditions: [], window_conditions: [], logic: "AND", limit: 200,
+    conditions: [], window_conditions: [], logic: "AND",
   });
   const [scope, setScope] = useState<Scope>(initial?.scope ?? { type: "watchlist" });
   const [cooldown, setCooldown] = useState(initial?.cooldown_seconds ?? 1800);

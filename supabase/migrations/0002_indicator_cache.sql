@@ -1,8 +1,10 @@
--- Phase 2a — indicator_cache + indicator_cache_runs
--- Plan §Phase 2a 對應。
+-- indicator_cache + indicator_cache_runs
+--
+-- 每日盤後 cache job 灌 16 個 technical indicator(rsi/macd/kdj/sma/bbands)+ 收盤價量。
+-- 即時訊號 evaluator 讀這張表算 indicator 條件(`rsi_14 < 30` 等)。
 --
 -- 「同表 + date filter staging」路線：reader 用 SELECT MAX(run_date)
--- WHERE status='done' 取最後一次成功的 date，避開 rename swap 的 race。
+-- WHERE status='done' 取最後一次成功的 date,避開 rename swap 的 race。
 
 -- ---------------------------------------------------------------------------
 -- indicator_cache：每檔每日的價量 + 5 個 technical 快取

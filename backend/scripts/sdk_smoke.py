@@ -163,7 +163,7 @@ def main() -> None:
 
     # Step 5: WS connect + envelope shape check
     # Note: DMA login 進入 Speed mode，不支援 aggregates/candles channel
-    # Speed mode 支援：trades / books / ticks / snapshot / tickers — 對篩股工具足夠
+    # Speed mode 支援：trades / books / ticks / snapshot / tickers — 即時訊號夠用
     # (200-symbol cap 延後到 Phase 3 真實 connection pool 驗證)
     step(5, "WebSocket: connect + subscribe trades(2330) + parse envelope")
     import json as _json

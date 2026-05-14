@@ -129,8 +129,7 @@ export interface CacheRefreshResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Condition DSL — 對應 backend models/condition.py
-// 給 ActiveFilter(即時訊號規則) 用,Screener 已移除
+// Condition DSL — 對應 backend models/condition.py,供 ActiveFilter 繼承用
 // ---------------------------------------------------------------------------
 
 export const ALL_FIELDS = [
@@ -139,7 +138,6 @@ export const ALL_FIELDS = [
   "kdj_k", "kdj_d", "kdj_j",
   "sma_5", "sma_20", "sma_60",
   "bbands_upper", "bbands_middle", "bbands_lower",
-  // Phase 3
   "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
 ] as const;
 export type ConditionField = typeof ALL_FIELDS[number];
@@ -156,11 +154,8 @@ export interface Condition {
 
 export interface Filter {
   schema_version?: number;
-  market: Array<"TWSE" | "OTC">;
-  exclude_etf: boolean;
   conditions: Condition[];
   logic: "AND" | "OR";
-  limit?: number;
 }
 
 // ---------------------------------------------------------------------------

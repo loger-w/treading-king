@@ -1,15 +1,13 @@
 """條件 DSL — 即時訊號 ActiveFilter 的 input schema。
 
-Plan §Phase 2b 建好,Screener 移除後僅供 ActiveFilter 繼承用。
 Filter 的 JSON 形式存在 active_signals.filter_json,前端條件編輯器
 (ActiveSignalEditor) 生成,signal_engine 評估時讀取。
 
 v1 限制：
-- operator 不含 cross_above/cross_below（indicator_cache 表無歷史）
-- exclude_etf 保留但目前無實效(原本給 Screener 用,Screener 已移除)
-- days_ago 保留但目前只支援 0（同上）
+- operator 不含 cross_above/cross_below(indicator_cache 表無歷史)
+- days_ago 保留但目前只支援 0(同上)
 
-未來 v2 cache 改保留 N 天歷史時，把 cross_above/cross_below 跟 days_ago>0 接回。
+未來 v2 cache 改保留 N 天歷史時,把 cross_above/cross_below 跟 days_ago>0 接回。
 """
 from __future__ import annotations
 
@@ -17,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# 篩股可用的 21 個欄位（16 個 indicator_cache + Phase 3 新增 5 個 CDP 線）
+# 即時訊號可用的 21 個欄位(16 個 indicator_cache + 5 個 CDP 線)
 ConditionField = Literal[
     "close",
     "change_pct",
@@ -35,7 +33,7 @@ ConditionField = Literal[
     "bbands_upper",
     "bbands_middle",
     "bbands_lower",
-    # Phase 3 新增（從 daily_ohlc 算出的 5 線）
+    # 從 daily_ohlc 算出的 5 線
     "cdp_ah",
     "cdp_nh",
     "cdp",
@@ -57,10 +55,10 @@ ALL_FIELDS: tuple[ConditionField, ...] = (
 
 
 class Condition(BaseModel):
-    """單一篩股條件。
+    """單一條件。
 
-    value 是 float 時：跟常數比較（譬如 rsi_14 < 30）
-    value 是 str 時：跟其他欄位比較（譬如 close > sma_20，value="sma_20"）
+    value 是 float 時:跟常數比較(譬如 rsi_14 < 30)
+    value 是 str 時:跟其他欄位比較(譬如 close > sma_20, value="sma_20")
         — str 必須是 ALL_FIELDS 之一
     """
 
@@ -74,34 +72,23 @@ class Condition(BaseModel):
     def value_str_must_be_field(cls, v: float | str) -> float | str:
         if isinstance(v, str) and v not in ALL_FIELDS:
             raise ValueError(
-                f"value 是 str 時必須是欄位名，{v!r} 不在 {ALL_FIELDS}"
+                f"value 是 str 時必須是欄位名,{v!r} 不在 {ALL_FIELDS}"
             )
         return v
 
 
-Market = Literal["TWSE", "OTC"]
 Logic = Literal["AND", "OR"]
 
 
 class Filter(BaseModel):
-    """篩股請求的完整 schema。
+    """Condition 集合的 base — 供 ActiveFilter 繼承。
 
-    DSL 演進時 schema_version 加 1，保留舊版 active_signals.filter_json 可載入。
+    DSL 演進時 schema_version 加 1,保留舊版 active_signals.filter_json 可載入。
     """
 
     schema_version: int = 1
-    market: list[Market] = Field(default_factory=lambda: ["TWSE", "OTC"])
-    exclude_etf: bool = True
     conditions: list[Condition] = Field(default_factory=list)
     logic: Logic = "AND"
-    limit: int = Field(default=200, ge=1, le=2000)
-
-    @field_validator("market")
-    @classmethod
-    def market_non_empty(cls, v: list[Market]) -> list[Market]:
-        if not v:
-            raise ValueError("market 至少要有一個（TWSE 或 OTC）")
-        return v
 
     @model_validator(mode="after")
     def conditions_non_empty(self):
@@ -111,7 +98,7 @@ class Filter(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 擴充 — 即時訊號 DSL
+# 即時訊號 DSL — Filter 之上加時窗條件
 # ---------------------------------------------------------------------------
 
 WindowConditionType = Literal["price_change_pct", "volume_burst", "trade_count"]
@@ -136,14 +123,15 @@ class WindowCondition(BaseModel):
 class ActiveFilter(Filter):
     """即時訊號專用 Filter — 在 Filter 之上加時窗條件。
 
-    跟 Filter 的差異：允許 conditions=[] 當 window_conditions 非空（即時訊號可單獨用時窗條件）。
+    跟 Filter 的差異:允許 conditions=[] 當 window_conditions 非空
+    (即時訊號可單獨用時窗條件)。
     """
 
     window_conditions: list[WindowCondition] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def conditions_non_empty(self):
-        # 覆蓋 Filter.conditions_non_empty：允許 conditions=[] 當 window_conditions 非空
+        # 覆蓋 Filter.conditions_non_empty:允許 conditions=[] 當 window_conditions 非空
         if not self.conditions and not self.window_conditions:
             raise ValueError("至少要有一個 condition 或 window_condition")
         return self
