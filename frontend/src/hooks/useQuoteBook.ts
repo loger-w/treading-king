@@ -6,8 +6,6 @@ const POLL_MS = 1000;
 export interface QuoteBookData {
   bids: Array<{ price: number; size: number }>;
   asks: Array<{ price: number; size: number }>;
-  innerVolume: number;   // 內盤累積成交量(賣方主動)
-  outerVolume: number;   // 外盤累積成交量(買方主動)
   error: string | null;
 }
 
@@ -24,8 +22,6 @@ export interface QuoteBookData {
 export function useQuoteBook(symbol: string | null): QuoteBookData {
   const [bids, setBids] = useState<QuoteBookData["bids"]>([]);
   const [asks, setAsks] = useState<QuoteBookData["asks"]>([]);
-  const [innerVolume, setInnerVolume] = useState(0);
-  const [outerVolume, setOuterVolume] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -34,7 +30,6 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
   useEffect(() => {
     if (!symbol) {
       setBids([]); setAsks([]);
-      setInnerVolume(0); setOuterVolume(0);
       setError(null);
       return;
     }
@@ -42,11 +37,10 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     // 切 symbol：清舊資料 + cancel pending
     abortRef.current?.abort();
     setBids([]); setAsks([]);
-    setInnerVolume(0); setOuterVolume(0);
     setError(null);
 
     async function fetchOnce() {
-      if (document.hidden) return;  // tab 背景時跳過
+      if (document.hidden) return;
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
@@ -55,8 +49,6 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
         if (ctrl.signal.aborted) return;
         setBids(r.bids ?? []);
         setAsks(r.asks ?? []);
-        setInnerVolume(r.total?.tradeVolumeAtBid ?? 0);
-        setOuterVolume(r.total?.tradeVolumeAtAsk ?? 0);
         setError(null);
       } catch (e) {
         if (ctrl.signal.aborted) return;
@@ -72,5 +64,5 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     };
   }, [symbol]);
 
-  return { bids, asks, innerVolume, outerVolume, error };
+  return { bids, asks, error };
 }
