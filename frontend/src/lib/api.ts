@@ -31,17 +31,12 @@ export class ApiError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Quote — 只描述 QuoteBook 五檔/內外盤實際用的欄位（backend response 還有其他
-// 欄位但前端不讀；新需求要用其他欄位時再補回介面）
+// Quote — QuoteBook 用的五檔欄位
 // ---------------------------------------------------------------------------
 
 export interface QuoteResponse {
   bids?: Array<{ price: number; size: number }>;
   asks?: Array<{ price: number; size: number }>;
-  total?: {
-    tradeVolumeAtBid?: number;   // 內盤累積 — 成交在 bid 價(賣方主動)
-    tradeVolumeAtAsk?: number;   // 外盤累積 — 成交在 ask 價(買方主動)
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +160,16 @@ export interface CdpLevels {
   as_of_date: string;
 }
 
+export interface SnapshotRow {
+  symbol: string;
+  prev_close: number | null;
+  last_price: number | null;
+}
+
+export interface SnapshotResponse {
+  quotes: SnapshotRow[];
+}
+
 export interface SignalLogRow {
   id: number;
   active_signal_id: string | null;
@@ -276,4 +281,10 @@ export const api = {
 
   cdp: (symbol: string) =>
     fetchJSON<CdpLevels>(`/api/cdp/${encodeURIComponent(symbol)}`),
+
+  quotesSnapshot: (symbols: string[]) =>
+    fetchJSON<SnapshotResponse>("/api/quotes/snapshot", {
+      method: "POST",
+      body: JSON.stringify({ symbols }),
+    }),
 };

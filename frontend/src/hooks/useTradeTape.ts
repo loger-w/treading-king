@@ -8,6 +8,7 @@ export type TradeSide = "buy" | "sell" | "neutral";
 export interface TradeRow {
   time: Date;
   price: number;
+  size: number;
   side: TradeSide;
 }
 
@@ -51,7 +52,7 @@ export function useTradeTape(symbol: string | null): TradeRow[] {
       lastPriceRef.current = t.price;
       lastSideRef.current = side;
 
-      setRows((prev) => [{ time: new Date(), price: t.price, side }, ...prev].slice(0, MAX_TICKS));
+      setRows((prev) => [{ time: new Date(), price: t.price, size: t.size, side }, ...prev].slice(0, MAX_TICKS));
     });
     return unsub;
   }, [symbol]);

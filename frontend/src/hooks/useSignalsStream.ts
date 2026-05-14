@@ -8,6 +8,7 @@ export type WSStatus = "connecting" | "open" | "closed";
 export interface TickEvent {
   symbol: string;
   price: number;
+  size: number;
 }
 
 // Module-level EventTarget — 跨 hook instance 共用同一個 WS tick stream
@@ -58,7 +59,11 @@ export function useSignalsStream(opts?: {
           setRecent((prev) => [data, ...prev].slice(0, 50));
           onSignalRef.current?.(data);
         } else if (msg.event === "tick") {
-          const tick: TickEvent = { symbol: msg.data.symbol, price: msg.data.price };
+          const tick: TickEvent = {
+            symbol: msg.data.symbol,
+            price: msg.data.price,
+            size: msg.data.size ?? 0,
+          };
           onTickRef.current?.(tick.symbol, tick.price);
           tickBus.dispatchEvent(new CustomEvent<TickEvent>("tick", { detail: tick }));
         }
