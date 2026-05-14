@@ -221,7 +221,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                     strokeWidth={isBaseline ? 0.8 : 0.5}
                     opacity={isBaseline ? 1 : 0.55} />
                   <text x={PAD_L - 4} y={y + 3} textAnchor="end"
-                    className={`text-[10px] tabular-nums ${isBaseline ? "fill-ink" : "fill-ink-dim"}`}>
+                    className={`text-[12px] tabular-nums ${isBaseline ? "fill-ink" : "fill-ink-dim"}`}>
                     {formatTickPrice(vTick)}
                   </text>
                 </g>
@@ -239,8 +239,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                     strokeDasharray="4 3" opacity="0.6" />
                   {/* label 放在 chart 右側 margin 外，避免被即時價線遮住 */}
                   <text x={CHART_W - PAD_R + 4} y={scaleY(cdp[k]) + 3} textAnchor="start"
-                    className="fill-accent text-[10px] uppercase">
-                    {k.toUpperCase()} {formatTickPrice(cdp[k])}
+                    className="fill-accent text-[12px] tabular-nums">
+                    {formatTickPrice(cdp[k])}
                   </text>
                 </g>
               ))}
@@ -252,6 +252,16 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             <polyline points={polyVwap} fill="none"
               stroke="var(--color-ink-dim, #8a8273)" strokeWidth="1" strokeDasharray="3 2" />
           )}
+          {showVwap && candles.length > 0 && (() => {
+            const lastIdx = candles.length - 1;
+            const lastAvg = candles[lastIdx].average;
+            return (
+              <text x={scaleX(lastIdx) + 4} y={scaleY(lastAvg) + 3} textAnchor="start"
+                className="fill-ink-dim text-[12px] tabular-nums">
+                {formatTickPrice(lastAvg)}
+              </text>
+            );
+          })()}
 
           {/* 主價線 — 用 clipPath 切上下兩段,平盤上紅、平盤下綠(跟 fill 同步) */}
           {polyClose && baseline > 0 && (
@@ -279,7 +289,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                 x={scaleX(todayHighIdx)}
                 y={scaleY(todayHigh) - 6}
                 textAnchor="middle"
-                className="fill-bull text-[10px] tabular-nums font-medium"
+                className="fill-bull text-[12px] tabular-nums font-medium"
               >
                 {formatTickPrice(todayHigh)}
               </text>
@@ -293,7 +303,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                 x={scaleX(todayLowIdx)}
                 y={scaleY(todayLow) + 13}
                 textAnchor="middle"
-                className="fill-bear text-[10px] tabular-nums font-medium"
+                className="fill-bear text-[12px] tabular-nums font-medium"
               >
                 {formatTickPrice(todayLow)}
               </text>
@@ -310,7 +320,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             const mm = String(t.getMinutes()).padStart(2, "0");
             return (
               <text key={p} x={x} y={CHART_H - 8} textAnchor="middle"
-                className="fill-ink-dim text-[10px] tabular-nums">{hh}:{mm}</text>
+                className="fill-ink-dim text-[12px] tabular-nums">{hh}:{mm}</text>
             );
           })}
 
@@ -340,7 +350,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                   fill="var(--color-line, #2e2a22)"
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5" />
                 <text x={PAD_L - 4} y={lineY + 3} textAnchor="end"
-                  className="fill-ink text-[10px] tabular-nums font-medium">
+                  className="fill-ink text-[12px] tabular-nums font-medium">
                   {formatTickPrice(candle.close)}
                 </text>
                 {/* 底部 X 軸：該 candle 的時間（小色塊高亮） */}
@@ -348,7 +358,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                   fill="var(--color-line, #2e2a22)"
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5" />
                 <text x={lineX} y={CHART_H - PAD_B + 12} textAnchor="middle"
-                  className="fill-ink text-[10px] tabular-nums font-medium">
+                  className="fill-ink text-[12px] tabular-nums font-medium">
                   {hh}:{mm}
                 </text>
               </g>
