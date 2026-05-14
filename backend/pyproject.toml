@@ -1,7 +1,7 @@
 [project]
 name = "treading-king-backend"
 version = "0.1.0"
-description = "treading-king BFF — 台股篩股 + 即時訊號"
+description = "treading-king BFF — 台股即時監控"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.110",

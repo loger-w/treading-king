@@ -1,6 +1,6 @@
 # trading-king — 個人台股即時監控
 
-整合富邦 Neo API 的本地版股票篩股 + 即時訊號工具。所有人在自己 Windows 電腦本機跑、共用同一個 Supabase 資料庫，靠 `.env` 的 `USER_LABEL` 隔離各自的自選清單 / 策略 / 訊號紀錄。
+整合富邦 Neo API 的本地版台股即時監控工具。所有人在自己 Windows 電腦本機跑、共用同一個 Supabase 資料庫，靠 `.env` 的 `USER_LABEL` 隔離各自的自選清單 / 訊號規則 / 觸發紀錄。
 
 ## 你需要先準備
 
@@ -69,10 +69,10 @@ Masthead 右上角應該顯示 `You are: <你的 label>`，看到代表 `.env` �
 ## 常見問題
 
 **Q. 我看得到別人的 watchlist 嗎？**
-不會。watchlist / strategies / active_signals / signals_log 全部按 `USER_LABEL` 隔離。市場資料（symbols / 技術指標 / OHLC）才是共用。
+不會。watchlist / active_signals / signals_log 全部按 `USER_LABEL` 隔離。市場資料(symbols / 技術指標 / OHLC)才是共用。
 
 **Q. 8:25 盤後的 indicator cache 是誰跑？**
-只有 `CACHE_JOB_OWNER` 跟 `USER_LABEL` 相符的那台 backend 會跑——這台一律是 loger 的電腦。如果 loger 那天沒開機，當天 indicator 不會更新，最壞影響是隔天條件式篩股用的是前一交易日資料。
+只有 `CACHE_JOB_OWNER` 跟 `USER_LABEL` 相符的那台 backend 會跑——這台一律是 loger 的電腦。如果 loger 那天沒開機,當天 indicator 不會更新,最壞影響是即時訊號的 indicator/CDP 條件(`rsi_14<30`、`close>cdp_ah` 等)拿到舊一日的值。
 
 **Q. 我的富邦帳號會被別人用到嗎？**
 不會。`.env` 只在你電腦上，富邦 SDK 在你本機 process 內跑。
@@ -88,8 +88,8 @@ backend startup 會驗 label 格式，但**不**擋重複——同一個 label �
 
 ## 開發者文件
 
-- `docs/superpowers/specs/2026-05-13-local-userlabel-design.md` — 本地版設計
-- `docs/superpowers/plans/2026-05-13-local-userlabel.md` — 實作計劃
+- `docs/superpowers/specs/` — 設計文件(monitor revamp / probe 等)
+- `docs/superpowers/plans/` — 實作計畫
 - `docs/decisions/` — 重要決策紀錄
 
 ## 授權
