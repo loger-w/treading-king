@@ -97,7 +97,7 @@ export function TriggerList({
               <span className="font-serif font-bold text-lg tracking-[-0.2px]">
                 {r.symbol}
                 {r.name && (
-                  <span className="ml-1.5 font-serif italic font-normal text-sm text-ink-muted">
+                  <span className="ml-1.5 font-serif font-normal text-sm text-ink-muted">
                     {r.name}
                   </span>
                 )}
