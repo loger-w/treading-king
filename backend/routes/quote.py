@@ -37,7 +37,10 @@ async def get_quote(symbol: str) -> dict:
 
     try:
         result = await fubon.intraday_quote(symbol)
-        return result
+        return {
+            "bids": result.get("bids", []),
+            "asks": result.get("asks", []),
+        }
     except Exception as e:
         logger.warning("intraday_quote(%s) failed: %s", symbol, e)
         raise HTTPException(502, detail={"error": "fubon_call_failed", "detail": str(e)})
