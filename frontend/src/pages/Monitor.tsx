@@ -118,10 +118,10 @@ export function Monitor() {
         onPickSymbol={handleSearchPick}
       />
 
-      <main>
-        <div className="mx-auto max-w-[1960px] px-9 pt-3 pb-12 max-md:px-6">
+      <main className="h-screen flex flex-col overflow-hidden">
+        <div className="mx-auto w-full max-w-[1960px] px-9 pt-3 pb-12 max-md:px-6 flex-1 min-h-0">
           <div
-            className="grid items-stretch gap-6 max-[1200px]:grid-cols-1"
+            className="grid items-stretch gap-6 max-[1200px]:grid-cols-1 h-full"
             style={{ gridTemplateColumns: "300px 340px 1fr 300px" }}
           >
 
