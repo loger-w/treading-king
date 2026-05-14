@@ -79,32 +79,36 @@ export function WatchlistWithChips({
               />
             )}
 
-            <div className="flex items-baseline justify-between gap-2 mb-2.5">
-              <div className="flex items-baseline gap-2 min-w-0">
-                <span className="text-[19px] font-medium text-ink shrink-0">{it.symbol}</span>
-                <span className="text-sm text-ink-muted truncate">{it.name ?? "—"}</span>
-              </div>
-              {(() => {
-                const q = quotes[it.symbol];
-                const price = q?.price;
-                const pct = q?.changePct;
-                const dirCls = pct == null
-                  ? "text-ink-dim"
-                  : pct > 0 ? "text-bull"
-                  : pct < 0 ? "text-bear"
-                  : "text-ink-muted";
-                return (
-                  <span className={`shrink-0 text-right text-sm tabular-nums ${dirCls}`}>
+            {(() => {
+              const q = quotes[it.symbol];
+              const price = q?.price;
+              const pct = q?.changePct;
+              const dirCls = pct == null
+                ? null
+                : pct > 0 ? "text-bull"
+                : pct < 0 ? "text-bear"
+                : null;
+              const symbolCls = dirCls ?? "text-ink";
+              const priceCls = dirCls ?? "text-ink-dim";
+              return (
+                <div className="flex items-baseline gap-2 min-w-0 mb-2.5 pr-7">
+                  <span className={`text-[19px] font-medium shrink-0 ${symbolCls}`}>
+                    {it.symbol}
+                  </span>
+                  <span className="text-sm text-ink-muted truncate">
+                    {it.name ?? "—"}
+                  </span>
+                  <span className={`shrink-0 text-sm tabular-nums ${priceCls}`}>
                     {price != null ? price.toFixed(2) : "—"}
                     {pct != null && (
-                      <span className="ml-1.5 text-xs">
+                      <span className="ml-1 text-xs">
                         {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
                       </span>
                     )}
                   </span>
-                );
-              })()}
-            </div>
+                </div>
+              );
+            })()}
 
             <div className="flex flex-wrap gap-1.5">
               {symRules.map((r) => (

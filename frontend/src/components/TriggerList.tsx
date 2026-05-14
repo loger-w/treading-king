@@ -108,22 +108,29 @@ export function TriggerList({
               <span className="text-sm text-ink-dim uppercase tracking-[0.5px]">
                 {r.ruleName}
               </span>
-              <span className="flex items-baseline gap-2">
-                {(() => {
-                  const prev = prevCloseMap[r.symbol];
-                  if (prev == null || prev === 0) return null;
-                  const pct = ((r.price - prev) / prev) * 100;
-                  const cls = pct > 0 ? "text-bull" : pct < 0 ? "text-bear" : "text-ink-muted";
-                  return (
-                    <span className={`text-xs tabular-nums ${cls}`}>
-                      {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+              {(() => {
+                const prev = prevCloseMap[r.symbol];
+                const pct = (prev != null && prev !== 0)
+                  ? ((r.price - prev) / prev) * 100
+                  : null;
+                const cls = pct == null
+                  ? "text-ink-muted"
+                  : pct > 0 ? "text-bull"
+                  : pct < 0 ? "text-bear"
+                  : "text-ink-muted";
+                return (
+                  <span className="flex items-baseline gap-2">
+                    {pct != null && (
+                      <span className={`text-xs tabular-nums ${cls}`}>
+                        {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+                      </span>
+                    )}
+                    <span className={`text-base tabular-nums font-medium ${cls}`}>
+                      {r.price.toFixed(2)}
                     </span>
-                  );
-                })()}
-                <span className="text-base tabular-nums text-bull font-medium">
-                  {r.price.toFixed(2)}
-                </span>
-              </span>
+                  </span>
+                );
+              })()}
             </div>
           </li>
         );
