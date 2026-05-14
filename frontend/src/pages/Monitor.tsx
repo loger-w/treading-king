@@ -126,17 +126,19 @@ export function Monitor() {
   }
 
   return (
-    <>
-      <TopToolbar
-        wsStatus={wsStatus}
-        rulesCount={rules.length}
-        dialogOpen={dialogOpen}
-        onOpenRules={() => setDialogOpen((v) => !v)}
-        onPickSymbol={handleSearchPick}
-      />
+    <div className="h-screen flex flex-col overflow-hidden">
+      <div className="shrink-0">
+        <TopToolbar
+          wsStatus={wsStatus}
+          rulesCount={rules.length}
+          dialogOpen={dialogOpen}
+          onOpenRules={() => setDialogOpen((v) => !v)}
+          onPickSymbol={handleSearchPick}
+        />
+      </div>
 
-      <main className="h-screen flex flex-col overflow-hidden">
-        <div className="mx-auto w-full max-w-[1960px] px-9 pt-3 pb-12 max-md:px-6 flex-1 min-h-0">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="mx-auto w-full max-w-[1960px] px-9 pt-3 pb-6 max-md:px-6 flex-1 min-h-0">
           <div
             className="grid items-stretch gap-6 max-[1200px]:grid-cols-1 h-full"
             style={{ gridTemplateColumns: "300px 340px 1fr 300px" }}
@@ -152,7 +154,7 @@ export function Monitor() {
                   ({historicalToday.length + recent.length})
                 </span>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 scroll-editorial">
                 <TriggerList
                   historical={historicalToday}
                   recent={recent}
@@ -175,7 +177,7 @@ export function Monitor() {
                   ({watchlistItems.length})
                 </span>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 scroll-editorial">
                 <WatchlistWithChips
                   items={watchlistItems}
                   rules={rules}
@@ -223,7 +225,7 @@ export function Monitor() {
                   明細
                 </h2>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 scroll-editorial">
                 <TradeTape symbol={selected} />
               </div>
             </section>
@@ -238,6 +240,6 @@ export function Monitor() {
         onClose={() => setDialogOpen(false)}
         onChanged={refreshRules}
       />
-    </>
+    </div>
   );
 }

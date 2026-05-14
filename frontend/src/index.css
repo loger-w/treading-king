@@ -54,6 +54,28 @@
   .border-section {
     @apply border-t-2 border-line-strong;
   }
+
+  /* Editorial Dark scrollbar — 細條無圓角，平時與線條同色，hover 變 accent */
+  .scroll-editorial {
+    scrollbar-width: thin;
+    scrollbar-color: #4a4234 transparent;
+  }
+  .scroll-editorial::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-editorial::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-editorial::-webkit-scrollbar-thumb {
+    background: #4a4234;
+  }
+  .scroll-editorial::-webkit-scrollbar-thumb:hover {
+    background: #e85a4f;
+  }
+  .scroll-editorial::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
 /* Tabular numerals for prices */
