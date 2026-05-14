@@ -12,6 +12,7 @@ import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
 import { useWatchlist } from "../hooks/useWatchlist";
+import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
 
 /**
@@ -83,6 +84,8 @@ export function Monitor() {
     () => watchlistItems.map((w) => w.symbol),
     [watchlistItems]
   );
+
+  const watchlistQuotes = useWatchlistQuotes(watchlistSymbols);
 
   // 預覽訂閱：selected 不在 watchlist 時通知 backend 用 owner='preview' 訂閱該 symbol
   usePreviewSubscribe(selected, watchlistSymbols);
@@ -162,6 +165,7 @@ export function Monitor() {
                   items={watchlistItems}
                   rules={rules}
                   hitCounts={counts}
+                  quotes={watchlistQuotes}
                   selectedSymbol={selected}
                   onSelect={setSelected}
                   onRemove={remove}

@@ -1,6 +1,7 @@
 import { type ActiveSignal, type WatchlistRow } from "../lib/api";
 import { SignalChip } from "./SignalChip";
 import { type HitCounts } from "../hooks/useTodayHits";
+import { type WatchlistQuote } from "../hooks/useWatchlistQuotes";
 
 /**
  * 自選 list + Scope chip 顯示。
@@ -14,6 +15,7 @@ interface Props {
   items: WatchlistRow[];
   rules: ActiveSignal[];
   hitCounts: HitCounts;
+  quotes: Record<string, WatchlistQuote>;
   selectedSymbol: string | null;
   onSelect: (symbol: string) => void;
   onRemove: (symbol: string) => void;
@@ -34,7 +36,7 @@ function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {
 }
 
 export function WatchlistWithChips({
-  items, rules, hitCounts, selectedSymbol, onSelect, onRemove,
+  items, rules, hitCounts, quotes, selectedSymbol, onSelect, onRemove,
 }: Props) {
   // sort: has-hit desc, by total hits desc; rest 維持原順序
   const sorted = [...items].sort((a, b) => {
@@ -77,7 +79,29 @@ export function WatchlistWithChips({
               />
             )}
 
-            <span className="block text-[19px] font-medium text-ink mb-0.5">{it.symbol}</span>
+            <div className="flex items-baseline justify-between gap-2 mb-0.5">
+              <span className="text-[19px] font-medium text-ink">{it.symbol}</span>
+              {(() => {
+                const q = quotes[it.symbol];
+                const price = q?.price;
+                const pct = q?.changePct;
+                const dirCls = pct == null
+                  ? "text-ink-dim"
+                  : pct > 0 ? "text-bull"
+                  : pct < 0 ? "text-bear"
+                  : "text-ink-muted";
+                return (
+                  <span className={`text-right text-sm tabular-nums ${dirCls}`}>
+                    {price != null ? price.toFixed(2) : "—"}
+                    {pct != null && (
+                      <span className="ml-1.5 text-xs">
+                        {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
+            </div>
             <div className="text-[15px] text-ink-muted mb-2.5">{it.name ?? "—"}</div>
 
             <div className="flex flex-wrap gap-1.5">
