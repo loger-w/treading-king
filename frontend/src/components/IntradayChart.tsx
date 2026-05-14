@@ -129,7 +129,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <div className="font-serif text-[22px] tracking-tight text-ink leading-tight">
-            {name ?? "—"} · {symbol}
+            <span className="font-medium">{symbol}</span>
+            <span className="ml-2 text-ink-muted">{name ?? "—"}</span>
           </div>
           <div className="flex items-baseline gap-4 mt-1">
             <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
