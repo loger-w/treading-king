@@ -1,7 +1,19 @@
 # Sidebar + Multi-page Shell
 
 **Date**: 2026-05-15
-**Status**: Approved, ready for implementation plan
+**Status**: Implemented(commit `81945cb`)
+
+## ⚠ Revision · 2026-05-15
+
+實作驗收時發現 push 模式在 1960px+ 寬螢幕會讓 Monitor 的 `mx-auto max-w-[1960px]` 置中位置飄移。改用 **overlay drawer** pattern:
+
+- Sidebar 改 `position: absolute` + `z-10`,**浮在內容上方**而非推擠
+- 內容區固定 `ml-[56px]`,永遠保留 icon rail 寬度,**Monitor 位置永遠不動**
+- Sidebar 展開(56→220)時覆蓋內容最左 164px;收合後內容完整露出
+- `useSidebarState` 預設改為 collapsed(配合 overlay 預設 UX)
+- 展開時 sidebar 加上 `shadow-[2px_0_12px_rgba(0,0,0,0.5)]` 強化「浮層」視覺
+
+以下章節描述的 push 模式為早期方向,Architecture / State 兩節以本 Revision 為準。
 
 ## Summary
 
