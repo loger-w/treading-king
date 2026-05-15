@@ -29,7 +29,7 @@ _TICK_LADDER = (
 )
 
 
-def _tick_size(price: float) -> float:
+def tick_size(price: float) -> float:
     """回傳 price 對應的台股最小升降單位。"""
     for upper, tick in _TICK_LADDER:
         if price < upper:
@@ -45,7 +45,7 @@ def round_to_tick_tw(price: float, direction: Literal["up", "down", "nearest"]) 
       - "down":    向下取（floor） — 支撐位（NL/AL）
       - "nearest": 取最近（Python round，半值偶數捨入） — 中線（CDP）
     """
-    tick = _tick_size(price)
+    tick = tick_size(price)
     units = price / tick
     if direction == "up":
         rounded = math.ceil(units) * tick
@@ -71,7 +71,7 @@ def compute_cdp(h: float, l: float, c: float) -> dict[str, float]:
 
     每個價位的 tick 不同（< 10 / 10-50 / 50-100 / 100-500 / 500-1000 / >=1000
     分別是 0.01 / 0.05 / 0.10 / 0.50 / 1 / 5），round_to_tick_tw 內部用
-    _tick_size(price) 取當下價位的 tick 再 round。
+    tick_size(price) 取當下價位的 tick 再 round。
 
     語意：chart 上看到的 CDP 線數字 = 會 eq 觸發的成交價，1:1 對應。
     """
