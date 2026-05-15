@@ -5,7 +5,7 @@ const KEY = 'sidebar:expanded';
 export function useSidebarState() {
   const [expanded, setExpanded] = useState<boolean>(() => {
     const raw = localStorage.getItem(KEY);
-    return raw === null ? true : raw === '1';
+    return raw === null ? false : raw === '1';
   });
 
   useEffect(() => {

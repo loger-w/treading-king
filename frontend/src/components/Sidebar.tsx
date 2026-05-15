@@ -32,9 +32,11 @@ export function Sidebar({ current, onNavigate }: Props) {
   return (
     <aside
       className={[
-        'h-screen shrink-0 bg-bg-deep border-r border-line',
+        'absolute left-0 top-0 bottom-0 z-10 bg-bg-deep border-r border-line',
         'flex flex-col transition-[width] duration-200 ease-out',
-        expanded ? 'w-[220px]' : 'w-[56px]',
+        expanded
+          ? 'w-[220px] shadow-[2px_0_12px_rgba(0,0,0,0.5)]'
+          : 'w-[56px]',
       ].join(' ')}
     >
       <div
