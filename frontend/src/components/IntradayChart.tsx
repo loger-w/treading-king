@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type CdpLevels, type IntradayCandle } from "../lib/api";
+import { api, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/api";
 import { useLocalToggle } from "../hooks/useLocalToggle";
 import { formatTickPrice, roundToNearestTick } from "../lib/tick";
 
@@ -18,12 +18,25 @@ const PAD_L = 56;
 const PAD_R = 56;  // 寬一點，把 CDP label 擠到外面去（不被即時走勢價線蓋）
 const PAD_T = 12;
 const PAD_B = 28;
+const VOL_GAP = 4;     // 主圖 x label 與成交量子圖的間隔
+const VOL_H = 72;      // 成交量子圖高度
+const VOL_PAD_T = 6;   // 成交量子圖內上 padding（給最大值 label 留空間）
+const TOTAL_H = CHART_H + VOL_GAP + VOL_H;
+
+function formatVolume(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${Math.round(v / 1_000)}K`;
+  return String(v);
+}
 
 export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, onAddToWatchlist }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
+  const [showVolume, setShowVolume] = useLocalToggle("tk:chart:volume", true);
+  const [showMa, setShowMa] = useLocalToggle("tk:chart:ma", false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
   const [cdpError, setCdpError] = useState<string | null>(null);
+  const [ma, setMa] = useState<MaLevels | null>(null);
 
   useEffect(() => {
     // 切 symbol 時先清舊 CDP — 避免新圖上殘留舊 CDP 線
@@ -35,10 +48,20 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
     );
   }, [symbol, showCdp]);
 
+  useEffect(() => {
+    // 切 symbol 時先清舊 MA — 避免新圖上殘留舊值
+    setMa(null);
+    if (!showMa) return;
+    api.ma(symbol).then(setMa).catch((e) => {
+      console.warn("MA fetch failed:", e);
+    });
+  }, [symbol, showMa]);
+
   const {
     yMin, yMax, scaleX, scaleY,
-    polyClose, polyVwap, visibleCdpKeys,
+    polyClose, polyVwap, visibleCdpKeys, visibleMaKeys,
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
+    maxVolume, scaleVolY, volBarW,
   } = useMemo(() => {
     if (candles.length === 0) {
       return {
@@ -46,7 +69,9 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         scaleX: () => 0, scaleY: () => 0,
         polyClose: "", polyVwap: "",
         visibleCdpKeys: [] as Array<"ah" | "nh" | "cdp" | "nl" | "al">,
+        visibleMaKeys: [] as Array<"sma_5" | "sma_20">,
         todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
+        maxVolume: 0, scaleVolY: (_: number) => 0, volBarW: 0,
       };
     }
     const closes = candles.map((c) => c.close);
@@ -85,12 +110,33 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
     const scaleY = (v: number) => PAD_T + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
     const polyClose = candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`).join(" ");
     const polyVwap = candles.map((c, i) => `${scaleX(i)},${scaleY(c.average)}`).join(" ");
+
+    // 成交量子圖 scale：0 到 maxVolume，pane 範圍 [volTop, volBottom]
+    const maxVolume = Math.max(1, ...candles.map((c) => c.volume));
+    const volTop = CHART_H + VOL_GAP + VOL_PAD_T;
+    const volBottom = TOTAL_H;
+    const scaleVolY = (v: number) =>
+      volTop + (1 - v / maxVolume) * (volBottom - volTop);
+    // bar 寬度：每根 candle 在 x 軸佔的格子寬 * 0.7（留間隙）；最少 1px
+    const slotW = xRange / Math.max(candles.length, 1);
+    const volBarW = Math.max(1, slotW * 0.7);
+
+    // MA 可見性過濾(超出 ±10% 範圍的不畫,沿用 CDP 同邏輯)
+    const allMaKeys = ["sma_5", "sma_20"] as const;
+    const visibleMaKeys: Array<typeof allMaKeys[number]> = (showMa && ma)
+      ? allMaKeys.filter((k) => {
+          const v = ma[k];
+          return v !== null && v >= refMin && v <= refMax;
+        })
+      : [];
+
     return {
       yMin, yMax, scaleX, scaleY,
-      polyClose, polyVwap, visibleCdpKeys,
+      polyClose, polyVwap, visibleCdpKeys, visibleMaKeys,
       todayHigh, todayHighIdx, todayLow, todayLowIdx,
+      maxVolume, scaleVolY, volBarW,
     };
-  }, [candles, cdp, showCdp, prevClose]);
+  }, [candles, cdp, showCdp, ma, showMa, prevClose]);
 
   // hover crosshair state — 只跟 candle idx 走（價位由 candle.close 決定）
   const [hover, setHover] = useState<{ idx: number } | null>(null);
@@ -165,7 +211,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         </div>
       ) : (
         <svg
-          viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+          viewBox={`0 0 ${CHART_W} ${showVolume ? TOTAL_H : CHART_H}`}
           className="w-full h-auto cursor-crosshair"
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -248,6 +294,29 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             </>
           )}
 
+          {/* MA5 / MA20 兩條水平線(超出 ±10% 的隱藏) */}
+          {showMa && ma && visibleMaKeys.length > 0 && (
+            <>
+              {visibleMaKeys.map((k) => {
+                const v = ma[k]!;  // visibleMaKeys 已過濾過 non-null
+                const isShort = k === "sma_5";
+                const colorCls = isShort ? "stroke-bull" : "stroke-ink-dim";
+                const labelCls = isShort ? "fill-bull" : "fill-ink-dim";
+                return (
+                  <g key={k}>
+                    <line x1={PAD_L} y1={scaleY(v)} x2={CHART_W - PAD_R} y2={scaleY(v)}
+                      className={colorCls} strokeWidth="0.6"
+                      strokeDasharray="2 4" opacity="0.7" />
+                    <text x={CHART_W - PAD_R + 4} y={scaleY(v) + 3} textAnchor="start"
+                      className={`${labelCls} text-[12px] tabular-nums`}>
+                      {isShort ? "MA5" : "MA20"} {formatTickPrice(v)}
+                    </text>
+                  </g>
+                );
+              })}
+            </>
+          )}
+
           {/* VWAP */}
           {showVwap && polyVwap && (
             <polyline points={polyVwap} fill="none"
@@ -311,6 +380,41 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             </g>
           )}
 
+          {/* 成交量子圖 — bar 顏色用 candle 本身的方向（close vs open） */}
+          {showVolume && candles.length > 0 && (
+            <g>
+              {/* 分隔線：主圖底部與成交量 pane 之間 */}
+              <line x1={PAD_L} y1={CHART_H + VOL_GAP / 2}
+                x2={CHART_W - PAD_R} y2={CHART_H + VOL_GAP / 2}
+                stroke="var(--color-line, #2e2a22)" strokeWidth="0.5" opacity="0.6" />
+              {/* 最大值 label（top-right of pane）*/}
+              <text x={CHART_W - PAD_R - 2} y={CHART_H + VOL_GAP + VOL_PAD_T + 8}
+                textAnchor="end" className="fill-ink-dim text-[11px] tabular-nums">
+                {formatVolume(maxVolume)}
+              </text>
+              {/* "VOL" label（top-left）*/}
+              <text x={PAD_L - 4} y={CHART_H + VOL_GAP + VOL_PAD_T + 8}
+                textAnchor="end" className="fill-ink-dim text-[11px] uppercase tracking-wide">
+                Vol
+              </text>
+              {/* bars */}
+              {candles.map((c, i) => {
+                const x = scaleX(i) - volBarW / 2;
+                const y = scaleVolY(c.volume);
+                const h = TOTAL_H - y;
+                const cls = c.close > c.open
+                  ? "fill-bull"
+                  : c.close < c.open
+                  ? "fill-bear"
+                  : "fill-ink-dim";
+                return (
+                  <rect key={i} x={x} y={y} width={volBarW} height={Math.max(0, h)}
+                    className={cls} fillOpacity="0.7" />
+                );
+              })}
+            </g>
+          )}
+
           {/* X 軸時間 label */}
           {[0, 0.25, 0.5, 0.75, 1].map((p) => {
             if (candles.length === 0) return null;
@@ -335,14 +439,24 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             const mm = String(t.getMinutes()).padStart(2, "0");
             return (
               <g>
-                {/* 垂直虛線（snap 到最近 candle） */}
-                <line x1={lineX} y1={PAD_T} x2={lineX} y2={CHART_H - PAD_B}
+                {/* 垂直虛線（snap 到最近 candle）— 開啟成交量時延伸到子圖底部 */}
+                <line x1={lineX} y1={PAD_T}
+                  x2={lineX} y2={showVolume ? TOTAL_H : CHART_H - PAD_B}
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5"
                   strokeDasharray="3 3" opacity="0.7" />
                 {/* 水平虛線（snap 到 candle close 的 y） */}
                 <line x1={PAD_L} y1={lineY} x2={CHART_W - PAD_R} y2={lineY}
                   stroke="var(--color-ink-dim, #8a8273)" strokeWidth="0.5"
                   strokeDasharray="3 3" opacity="0.7" />
+                {/* hover 對應的成交量 label（顯示在子圖右側 margin 外）*/}
+                {showVolume && (
+                  <text x={CHART_W - PAD_R + 4}
+                    y={scaleVolY(candle.volume) + 3}
+                    textAnchor="start"
+                    className="fill-ink text-[11px] tabular-nums">
+                    {formatVolume(candle.volume)}
+                  </text>
+                )}
                 {/* candle close 上的 marker */}
                 <circle cx={lineX} cy={lineY} r="2.5"
                   className="fill-ink" />
@@ -368,7 +482,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         </svg>
       )}
 
-      {/* Toggle 按鈕（VWAP / CDP） */}
+      {/* Toggle 按鈕（VWAP / CDP / VOL / MA） */}
       <div className="mt-2 flex justify-end gap-2 border-t border-line pt-2 text-xs">
         <button
           type="button"
@@ -380,6 +494,16 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
           onClick={() => setShowCdp((v) => !v)}
           className={`px-2 py-1 border ${showCdp ? "border-accent text-accent" : "border-line text-ink-dim"}`}
         >{showCdp ? "✓" : ""} CDP</button>
+        <button
+          type="button"
+          onClick={() => setShowVolume((v) => !v)}
+          className={`px-2 py-1 border ${showVolume ? "border-accent text-accent" : "border-line text-ink-dim"}`}
+        >{showVolume ? "✓" : ""} VOL</button>
+        <button
+          type="button"
+          onClick={() => setShowMa((v) => !v)}
+          className={`px-2 py-1 border ${showMa ? "border-accent text-accent" : "border-line text-ink-dim"}`}
+        >{showMa ? "✓" : ""} MA</button>
       </div>
       {showCdp && cdpError && (
         <div className="mt-1 text-xs text-bear">CDP 無資料：{cdpError}</div>
