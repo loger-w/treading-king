@@ -1,8 +1,8 @@
 import { useState } from "react";
 import {
-  ALL_FIELDS, api, type ActiveFilter, type ActiveSignal, type Condition,
-  type ConditionField, type ConditionOperator, type Scope, type WindowCondition,
-  type WindowConditionType, type WindowSeconds,
+  ALL_FIELDS, api, type ActiveFilter, type ActiveSignal, type CdpProximity,
+  type Condition, type ConditionField, type ConditionOperator,
+  type Scope, type WindowCondition, type WindowConditionType, type WindowSeconds,
 } from "../lib/api";
 
 const FIELD_LABEL: Record<ConditionField, string> = {
@@ -28,6 +28,13 @@ const WINDOW_OPTIONS: { value: WindowSeconds; label: string }[] = [
 const WINDOW_TYPE_LABEL: Record<WindowConditionType, string> = {
   price_change_pct: "漲跌幅 %", volume_burst: "累積成交量", trade_count: "成交筆數",
 };
+
+const CDP_LEVEL_LABEL: Record<"ah" | "nh" | "cdp" | "nl" | "al", string> = {
+  ah: "AH (最高值)", nh: "NH (近高)", cdp: "CDP 中線",
+  nl: "NL (近低)", al: "AL (最低值)",
+};
+
+const ALL_CDP_LEVELS = ["ah", "nh", "cdp", "nl", "al"] as const;
 
 interface Props {
   initial?: ActiveSignal;
@@ -78,9 +85,40 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
     setFilter({ ...filter, conditions: filter.conditions.filter((_, j) => j !== i) });
   }
 
+  function enableCdpProx() {
+    setFilter({
+      ...filter,
+      cdp_proximity: { levels: [...ALL_CDP_LEVELS], tolerance_ticks: 0 },
+    });
+  }
+  function disableCdpProx() {
+    setFilter({ ...filter, cdp_proximity: null });
+  }
+  function toggleCdpLevel(level: typeof ALL_CDP_LEVELS[number]) {
+    const prox = filter.cdp_proximity;
+    if (!prox) return;
+    const checked = prox.levels.includes(level);
+    let next: CdpProximity["levels"];
+    if (checked) {
+      if (prox.levels.length <= 1) return;  // 至少留 1 個
+      next = prox.levels.filter((l) => l !== level);
+    } else {
+      next = [...prox.levels, level];
+    }
+    setFilter({ ...filter, cdp_proximity: { ...prox, levels: next } });
+  }
+  function updateCdpTolerance(tol: number) {
+    const prox = filter.cdp_proximity;
+    if (!prox) return;
+    const clamped = Math.max(0, Math.min(10, Math.round(tol)));
+    setFilter({ ...filter, cdp_proximity: { ...prox, tolerance_ticks: clamped } });
+  }
+
   async function save() {
     if (!name.trim()) { setError("請輸入名稱"); return; }
-    if (filter.conditions.length === 0 && (filter.window_conditions ?? []).length === 0) {
+    if (filter.conditions.length === 0
+        && (filter.window_conditions ?? []).length === 0
+        && !filter.cdp_proximity) {
       setError("至少要有一條條件"); return;
     }
     setSaving(true);
@@ -176,6 +214,48 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
             );
           })}
           <button type="button" onClick={addCond} className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">+ 新增條件</button>
+        </div>
+
+        {/* CDP 觸發區塊 */}
+        <div className="border-t border-line pt-3 mb-4">
+          <div className="label-tiny mb-2">CDP 觸發</div>
+          <p className="text-2xs text-ink-dim mb-3 leading-relaxed">
+            價格打到(或接近)任一所選 CDP 線即觸發。Tolerance = 0 為嚴格打到,&gt;0 為 ± N tick 內也算。
+          </p>
+          {filter.cdp_proximity === null || filter.cdp_proximity === undefined ? (
+            <button type="button" onClick={enableCdpProx}
+              className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">
+              + 啟用 CDP 觸發
+            </button>
+          ) : (
+            <div className="border border-line p-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {ALL_CDP_LEVELS.map((lv) => {
+                  const checked = filter.cdp_proximity!.levels.includes(lv);
+                  const isLastChecked = checked && filter.cdp_proximity!.levels.length === 1;
+                  return (
+                    <label key={lv} className={`text-sm flex items-center gap-1 ${isLastChecked ? "opacity-60" : "cursor-pointer"}`}>
+                      <input type="checkbox" checked={checked}
+                        disabled={isLastChecked}
+                        onChange={() => toggleCdpLevel(lv)}
+                        className="accent-accent" />
+                      {CDP_LEVEL_LABEL[lv]}
+                    </label>
+                  );
+                })}
+                <button type="button" onClick={disableCdpProx}
+                  className="ml-auto text-ink-dim hover:text-bear text-xs">移除</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-ink-muted">Tolerance:</span>
+                <input type="number" min={0} max={10} step={1}
+                  value={filter.cdp_proximity.tolerance_ticks}
+                  onChange={(e) => updateCdpTolerance(Number(e.target.value))}
+                  className="bg-bg-deep border border-line text-sm px-2 py-1 w-20 tabular-nums" />
+                <span className="text-xs text-ink-dim">tick (0 = 嚴格打到,&gt;0 = 接近也算)</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Logic / Scope / Cooldown */}
