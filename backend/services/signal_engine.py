@@ -264,17 +264,46 @@ class SignalEngine:
         return False
 
     def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
-        # WindowCondition + Filter.conditions
+        # WindowCondition + Filter.conditions + CdpProximity
         f = active.filter_json
         results: list[bool] = []
         for wc in (f.get("window_conditions") if isinstance(f, dict) else getattr(f, "window_conditions", [])):
             results.append(self._eval_window(symbol, tick, wc))
         for c in (f.get("conditions") if isinstance(f, dict) else getattr(f, "conditions", [])):
             results.append(self._eval_filter_cond(symbol, tick, c))
+        cdp_prox = (f.get("cdp_proximity") if isinstance(f, dict)
+                    else getattr(f, "cdp_proximity", None))
+        if cdp_prox is not None:
+            results.append(self._eval_cdp_proximity(symbol, tick, cdp_prox))
         if not results:
             return False
         logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
         return all(results) if logic == "AND" else any(results)
+
+    def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> bool:
+        """tick.price 落在所選 CDP 線的 ±N tick 範圍內就 true。
+
+        prox 可以是 dict(從 filter_json JSON 讀)或 Pydantic CdpProximityCondition。
+        """
+        from services.cdp import tick_size
+
+        cache = self._field_cache.get(symbol, {})
+        levels = prox.get("levels") if isinstance(prox, dict) else prox.levels
+        tol_ticks = (prox.get("tolerance_ticks") if isinstance(prox, dict)
+                     else prox.tolerance_ticks)
+
+        field_map = {
+            "ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp",
+            "nl": "cdp_nl", "al": "cdp_al",
+        }
+        for level in levels:
+            v = cache.get(field_map[level])
+            if v is None:
+                continue
+            tol = tol_ticks * tick_size(v)
+            if abs(tick.price - v) <= tol:
+                return True
+        return False
 
     def _eval_window(self, symbol: str, tick: Tick, wc) -> bool:
         wc_type = wc.get("type") if isinstance(wc, dict) else wc.type
