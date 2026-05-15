@@ -18,7 +18,7 @@
 ## Summary
 
 加入一個可收合的左側 sidebar,把目前單頁的 frontend(只有 Monitor)變成 multi-page shell。
-本次只放兩個導覽項:**即時監控**(沿用現有 `Monitor.tsx`)、**微型台指當沖回測**(空殼 placeholder,內容後續)。
+本次只放兩個導覽項:**即時監控**(沿用現有 `Monitor.tsx`)、**小台指策略回測 (MXF)**(空殼 placeholder,內容後續)。
 
 實作上不引入 `react-router-dom`,用 `useState` 切頁;Monitor 採 always-mount + CSS hide,避免切換時斷 WS 重連。
 
@@ -32,7 +32,7 @@
 
 ## Non-goals
 
-- 微型台指當沖回測的回測引擎本身(後續另一輪 spec)
+- 小台指策略回測 (MXF)的回測引擎本身(後續另一輪 spec)
 - URL routing / 深層連結(目前無需求,日後若需要再升級到 react-router)
 - 頁面狀態持久化(reload 後預設回 Monitor 即可)
 - Custom tooltip 元件 — 收合時的 affordance 用瀏覽器原生 `title`
@@ -46,7 +46,7 @@ frontend/src/
 │   └── Sidebar.tsx                      [新] ~120 行
 ├── pages/
 │   ├── Monitor.tsx                      [不動]
-│   └── MicroFutBacktest.tsx             [新] ~30 行 placeholder
+│   └── MXFBacktest.tsx             [新] ~30 行 placeholder
 └── hooks/
     └── useSidebarState.ts               [新] ~20 行,localStorage 持久化
 ```
@@ -58,7 +58,7 @@ frontend/src/
   <Sidebar current={page} onNavigate={setPage} />
   <div className="flex-1 min-w-0 overflow-hidden relative">
     <div hidden={page !== 'monitor'} className="h-full"><Monitor /></div>
-    <div hidden={page !== 'backtest'} className="h-full"><MicroFutBacktest /></div>
+    <div hidden={page !== 'backtest'} className="h-full"><MXFBacktest /></div>
   </div>
 </div>
 ```
@@ -93,7 +93,7 @@ frontend/src/
 
 兩項:
 1. **即時監控** — id: `'monitor'`
-2. **微型台指當沖回測** — id: `'backtest'`
+2. **小台指策略回測 (MXF)** — id: `'backtest'`
 
 每項:
 
@@ -169,14 +169,14 @@ const [page, setPage] = useState<Page>('monitor');
 
 不持久化 — reload 預設回 Monitor。等回測有實際功能再考慮持久化。
 
-## `MicroFutBacktest.tsx` placeholder 內容
+## `MXFBacktest.tsx` placeholder 內容
 
 ```tsx
-export function MicroFutBacktest() {
+export function MXFBacktest() {
   return (
     <div className="h-full flex flex-col items-center justify-center px-8">
       <span className="label-tiny mb-3">Module · Upcoming</span>
-      <h1 className="h-display text-4xl text-ink mb-4">微型台指當沖回測</h1>
+      <h1 className="h-display text-4xl text-ink mb-4">小台指策略回測 (MXF)</h1>
       <p className="text-ink-muted max-w-md text-center leading-relaxed">
         策略回測引擎開發中。<br />
         日內 1 分 / 5 分 K、bid/ask 推方向、規則編輯器、績效報表 — 後續實作。
@@ -196,7 +196,7 @@ export function MicroFutBacktest() {
 1. ✅ Sidebar 預設展開,Monitor 顯示正常
 2. ✅ 點漢堡 → 寬度動畫順,Monitor 內容區自動長出
 3. ✅ 重整頁面 → 收合狀態保留
-4. ✅ 點「微型台指當沖回測」item → 切到 placeholder,active 指示移動
+4. ✅ 點「小台指策略回測 (MXF)」item → 切到 placeholder,active 指示移動
 5. ✅ 切回「即時監控」→ Monitor 立即顯示,WS 連線、自選股、active signals 全部維持(因 always-mount)
    - ⚠️ 另查:`IntradayChart` 在 `display:none` 期間 ResizeObserver 不會觸發。切回時若圖表沒自動重 fit,需在 Monitor 切回時手動觸發 chart 的 resize(`api.timeScale().fitContent()` 或 `api.resize()`)。實作時若觀察到問題再處理。
 6. ✅ 收合時 hover icon → 瀏覽器跳原生 tooltip 顯示 label
@@ -207,7 +207,7 @@ export function MicroFutBacktest() {
 
 ## Out of scope(後續可能擴充)
 
-- 微型台指當沖回測的回測引擎、策略編輯、績效報表
+- 小台指策略回測 (MXF)的回測引擎、策略編輯、績效報表
 - URL routing 與深層連結
 - 第三、第四個 nav 項目
 - 自訂 tooltip(若原生 `title` UX 不夠好)
