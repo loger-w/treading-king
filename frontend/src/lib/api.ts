@@ -98,8 +98,15 @@ export interface WindowCondition {
   value: number;
 }
 
+export interface CdpProximity {
+  levels: Array<"ah" | "nh" | "cdp" | "nl" | "al">;
+  tolerance_ticks: number;
+}
+
 export interface ActiveFilter extends Filter {
+  // schema_version 已從 Filter inherit,不重複宣告
   window_conditions?: WindowCondition[];
+  cdp_proximity?: CdpProximity | null;
 }
 
 export type Scope =
