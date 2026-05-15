@@ -160,6 +160,13 @@ export interface CdpLevels {
   as_of_date: string;
 }
 
+export interface MaLevels {
+  symbol: string;
+  sma_5: number | null;
+  sma_20: number | null;
+  as_of_date: string | null;
+}
+
 export interface SnapshotRow {
   symbol: string;
   prev_close: number | null;
@@ -281,6 +288,9 @@ export const api = {
 
   cdp: (symbol: string) =>
     fetchJSON<CdpLevels>(`/api/cdp/${encodeURIComponent(symbol)}`),
+
+  ma: (symbol: string) =>
+    fetchJSON<MaLevels>(`/api/ma/${encodeURIComponent(symbol)}`),
 
   quotesSnapshot: (symbols: string[]) =>
     fetchJSON<SnapshotResponse>("/api/quotes/snapshot", {
