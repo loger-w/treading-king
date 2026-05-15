@@ -15,13 +15,10 @@ export interface TradeRow {
 /**
  * 累積 selected symbol 的最近 50 筆 tick，並判定內外盤。
  *
- * 內外盤判定（簡化）：
- *  - 比前一筆價高 → buy (外盤，紅)
- *  - 比前一筆價低 → sell (內盤，綠)
- *  - 平盤 → 沿用上一筆方向（首筆預設 neutral）
- *
- * 注意：本期不顯示單量（WS tick payload 目前不含 size — fubon_ws.py broadcast
- * payload 只有 symbol/price）。等 backend broadcast 加 size 後 hook 補上 vol。
+ * 內外盤判定（優先用 bid/ask）：
+ *  - tick 帶 bid/ask（成交當下的最佳買賣價）：price ≥ ask → 外盤 (buy)；
+ *    price ≤ bid → 內盤 (sell)；介於中間 → neutral
+ *  - 缺 bid/ask 時 fallback 到 uptick rule：與前一筆比較
  */
 export function useTradeTape(symbol: string | null): TradeRow[] {
   const [rows, setRows] = useState<TradeRow[]>([]);
@@ -43,11 +40,16 @@ export function useTradeTape(symbol: string | null): TradeRow[] {
 
     const unsub = subscribeTicks((t) => {
       if (t.symbol !== symbol) return;
+
       let side: TradeSide = "neutral";
-      if (lastPriceRef.current !== null) {
+      if (t.bid != null && t.ask != null && t.bid > 0 && t.ask > 0) {
+        if (t.price >= t.ask) side = "buy";
+        else if (t.price <= t.bid) side = "sell";
+        else side = "neutral";
+      } else if (lastPriceRef.current !== null) {
         if (t.price > lastPriceRef.current) side = "buy";
         else if (t.price < lastPriceRef.current) side = "sell";
-        else side = lastSideRef.current;  // 平盤沿用上次
+        else side = lastSideRef.current;
       }
       lastPriceRef.current = t.price;
       lastSideRef.current = side;

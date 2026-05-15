@@ -22,6 +22,8 @@ class Tick:
     price: float
     size: int
     time: float  # epoch seconds
+    bid: float | None = None  # 成交當下的最佳買價（用來判內外盤）
+    ask: float | None = None  # 成交當下的最佳賣價
 
 
 class RingBuffer:

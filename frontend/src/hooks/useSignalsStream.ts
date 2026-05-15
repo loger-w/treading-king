@@ -9,6 +9,8 @@ export interface TickEvent {
   symbol: string;
   price: number;
   size: number;
+  bid?: number;
+  ask?: number;
 }
 
 // Module-level EventTarget — 跨 hook instance 共用同一個 WS tick stream
@@ -24,13 +26,19 @@ export function subscribeTicks(handler: (t: TickEvent) => void): () => void {
   return () => tickBus.removeEventListener("tick", fn);
 }
 
+interface ManagedWS {
+  ws: WebSocket;
+  reconnect: boolean;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+}
+
 export function useSignalsStream(opts?: {
   onSignal?: (s: SignalEvent["data"]) => void;
   onTick?: (symbol: string, price: number) => void;
 }) {
   const [status, setStatus] = useState<WSStatus>("connecting");
   const [recent, setRecent] = useState<SignalEvent["data"][]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const currentRef = useRef<ManagedWS | null>(null);
   const attemptRef = useRef(0);
   const onSignalRef = useRef(opts?.onSignal);
   const onTickRef = useRef(opts?.onTick);
@@ -39,12 +47,16 @@ export function useSignalsStream(opts?: {
   useEffect(() => { onTickRef.current = opts?.onTick; }, [opts?.onTick]);
 
   const connect = useCallback(() => {
-    setStatus("connecting");
     const apiKey = (import.meta.env.VITE_BFF_API_KEY ?? "") as string;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws/realtime?api_key=${encodeURIComponent(apiKey)}`;
+    setStatus("connecting");
+
     const ws = new WebSocket(url);
-    wsRef.current = ws;
+    // 這個 ws 自己的 state — onclose 從 closure 抓 managed，cleanup 在外面把它的
+    // reconnect 設 false 就能擋掉自身的 reconnect，不會被後一個 mount 的 ws 影響。
+    const managed: ManagedWS = { ws, reconnect: true, reconnectTimer: null };
+    currentRef.current = managed;
 
     ws.onopen = () => {
       setStatus("open");
@@ -63,6 +75,8 @@ export function useSignalsStream(opts?: {
             symbol: msg.data.symbol,
             price: msg.data.price,
             size: msg.data.size ?? 0,
+            bid: typeof msg.data.bid === "number" ? msg.data.bid : undefined,
+            ask: typeof msg.data.ask === "number" ? msg.data.ask : undefined,
           };
           onTickRef.current?.(tick.symbol, tick.price);
           tickBus.dispatchEvent(new CustomEvent<TickEvent>("tick", { detail: tick }));
@@ -72,9 +86,13 @@ export function useSignalsStream(opts?: {
 
     ws.onclose = () => {
       setStatus("closed");
+      if (!managed.reconnect) return;
       const delay = RECONNECT_DELAYS_MS[Math.min(attemptRef.current, RECONNECT_DELAYS_MS.length - 1)];
       attemptRef.current += 1;
-      setTimeout(connect, delay);
+      managed.reconnectTimer = setTimeout(() => {
+        managed.reconnectTimer = null;
+        connect();
+      }, delay);
     };
 
     ws.onerror = () => { /* close 會跟著觸發 */ };
@@ -83,7 +101,15 @@ export function useSignalsStream(opts?: {
   useEffect(() => {
     connect();
     return () => {
-      wsRef.current?.close();
+      const managed = currentRef.current;
+      if (managed) {
+        managed.reconnect = false;
+        if (managed.reconnectTimer) {
+          clearTimeout(managed.reconnectTimer);
+          managed.reconnectTimer = null;
+        }
+        try { managed.ws.close(); } catch { /* ignore */ }
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

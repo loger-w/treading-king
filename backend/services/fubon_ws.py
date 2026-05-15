@@ -201,7 +201,16 @@ class WSPool:
         size = data.get("size", 0)
         if not symbol or price is None:
             return
-        tick = Tick(price=float(price), size=int(size), time=time.time())
+
+        bid = data.get("bid")
+        ask = data.get("ask")
+        tick = Tick(
+            price=float(price),
+            size=int(size),
+            time=time.time(),
+            bid=float(bid) if bid is not None else None,
+            ask=float(ask) if ask is not None else None,
+        )
 
         # 1. ring_buffer (sync, thread-safe)
         get_ring_buffer().append(symbol, tick)
@@ -212,12 +221,18 @@ class WSPool:
                 asyncio.create_task, self._on_tick(symbol, tick)
             )
 
-        # 3. broadcast tick 給前端 — 分時走勢圖最後一根 K 棒即時更新 + 明細張數
+        # 3. broadcast tick 給前端 — 分時走勢圖最後一根 K 棒即時更新 + 明細張數 + 內外盤
         if self._loop is not None:
-            tick_payload = {
-                "event": "tick",
-                "data": {"symbol": symbol, "price": float(price), "size": int(size)},
+            tick_data: dict[str, Any] = {
+                "symbol": symbol,
+                "price": float(price),
+                "size": int(size),
             }
+            if bid is not None:
+                tick_data["bid"] = float(bid)
+            if ask is not None:
+                tick_data["ask"] = float(ask)
+            tick_payload = {"event": "tick", "data": tick_data}
             self._loop.call_soon_threadsafe(
                 asyncio.create_task, get_broadcaster().broadcast(tick_payload)
             )
