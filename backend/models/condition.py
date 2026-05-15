@@ -120,20 +120,40 @@ class WindowCondition(BaseModel):
     value: float
 
 
-class ActiveFilter(Filter):
-    """即時訊號專用 Filter — 在 Filter 之上加時窗條件。
+class CdpProximityCondition(BaseModel):
+    """CDP 觸發條件 — tick price 落在所選 CDP 線的 ±N tick 範圍內。
 
-    跟 Filter 的差異:允許 conditions=[] 當 window_conditions 非空
-    (即時訊號可單獨用時窗條件)。
+    levels: 要監看的 CDP 線(5 條任意組合,預設全選)
+    tolerance_ticks:
+      - 0  → 嚴格「打到」(tick.price == cdp_X,已 round to tick 所以可 exact match)
+      - >0 → 「接近」(tick.price 在 cdp_X ± tolerance × tick_size(cdp_X) 內)
     """
 
+    levels: list[Literal["ah", "nh", "cdp", "nl", "al"]] = Field(
+        default_factory=lambda: ["ah", "nh", "cdp", "nl", "al"],
+        min_length=1,
+    )
+    tolerance_ticks: int = Field(default=0, ge=0, le=10)
+
+
+class ActiveFilter(Filter):
+    """即時訊號專用 Filter — 在 Filter 之上加時窗條件 + CDP 觸發條件。
+
+    跟 Filter 的差異:允許 conditions=[] 當 window_conditions 或 cdp_proximity 非空
+    (即時訊號可單獨用其中任一種觸發機制)。
+    """
+
+    schema_version: int = 2  # bump from 1 → 2 (加了 cdp_proximity 欄位)
     window_conditions: list[WindowCondition] = Field(default_factory=list)
+    cdp_proximity: CdpProximityCondition | None = None
 
     @model_validator(mode="after")
     def conditions_non_empty(self):
-        # 覆蓋 Filter.conditions_non_empty:允許 conditions=[] 當 window_conditions 非空
-        if not self.conditions and not self.window_conditions:
-            raise ValueError("至少要有一個 condition 或 window_condition")
+        # 覆蓋 Filter.conditions_non_empty:允許 conditions=[] 當 window_conditions 或 cdp_proximity 非空
+        if (not self.conditions
+                and not self.window_conditions
+                and self.cdp_proximity is None):
+            raise ValueError("至少要有一個 condition / window_condition / cdp_proximity")
         return self
 
 
