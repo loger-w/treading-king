@@ -98,8 +98,15 @@ export interface WindowCondition {
   value: number;
 }
 
+export interface CdpProximity {
+  levels: Array<"ah" | "nh" | "cdp" | "nl" | "al">;
+  tolerance_ticks: number;
+}
+
 export interface ActiveFilter extends Filter {
+  // schema_version 已從 Filter inherit,不重複宣告
   window_conditions?: WindowCondition[];
+  cdp_proximity?: CdpProximity | null;
 }
 
 export type Scope =
@@ -158,6 +165,13 @@ export interface CdpLevels {
   nl: number;
   al: number;
   as_of_date: string;
+}
+
+export interface MaLevels {
+  symbol: string;
+  sma_5: number | null;
+  sma_20: number | null;
+  as_of_date: string | null;
 }
 
 export interface SnapshotRow {
@@ -281,6 +295,9 @@ export const api = {
 
   cdp: (symbol: string) =>
     fetchJSON<CdpLevels>(`/api/cdp/${encodeURIComponent(symbol)}`),
+
+  ma: (symbol: string) =>
+    fetchJSON<MaLevels>(`/api/ma/${encodeURIComponent(symbol)}`),
 
   quotesSnapshot: (symbols: string[]) =>
     fetchJSON<SnapshotResponse>("/api/quotes/snapshot", {

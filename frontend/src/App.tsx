@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sidebar, type Page } from './components/Sidebar';
 import { Monitor } from './pages/Monitor';
-import { MicroFutBacktest } from './pages/MicroFutBacktest';
+import { MXFBacktest } from './pages/MXFBacktest';
 
 export default function App() {
   const [page, setPage] = useState<Page>('monitor');
@@ -17,8 +17,8 @@ export default function App() {
         <div hidden={page !== 'monitor'} className="h-full">
           <Monitor />
         </div>
-        <div hidden={page !== 'backtest'} className="h-full">
-          <MicroFutBacktest />
+        <div hidden={page !== 'mxf_backtest'} className="h-full">
+          <MXFBacktest />
         </div>
       </div>
     </div>
