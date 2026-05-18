@@ -37,7 +37,6 @@ notepad backend\.env
 - `SUPABASE_URL` / `SUPABASE_KEY`（loger 給你的 URL + service_role key）
 - `BFF_API_KEY`：隨便填一個秘密字串（前後端共用，例如 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 生一個）
 - `USER_LABEL`：你的 label（例如 `frank`）
-- `CACHE_JOB_OWNER`：**留空**（只有 loger 會跑 cache job）
 
 4. 設定 frontend 環境變數
 
@@ -67,10 +66,7 @@ notepad frontend\.env
 ## 常見問題
 
 **Q. 我看得到別人的 watchlist 嗎？**
-不會。watchlist / active_signals / signals_log 全部按 `USER_LABEL` 隔離。市場資料(symbols / 技術指標 / OHLC)才是共用。
-
-**Q. 8:25 盤後的 indicator cache 是誰跑？**
-只有 `CACHE_JOB_OWNER` 跟 `USER_LABEL` 相符的那台 backend 會跑——這台一律是 loger 的電腦。如果 loger 那天沒開機,當天 indicator 不會更新,最壞影響是即時訊號的 indicator/CDP 條件(`rsi_14<30`、`close>cdp_ah` 等)拿到舊一日的值。
+不會。watchlist / active_signals / signals_log 全部按 `USER_LABEL` 隔離。市場資料(symbols / OHLC)才是共用。
 
 **Q. 我的富邦帳號會被別人用到嗎？**
 不會。`.env` 只在你電腦上，富邦 SDK 在你本機 process 內跑。

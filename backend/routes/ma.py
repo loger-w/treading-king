@@ -1,52 +1,77 @@
-"""GET /api/ma/{symbol} — 回日 K SMA5 / SMA20。
+"""GET /api/ma/{symbol} — 即時打富邦 tech.sma,回最新一根日 K 的 SMA5 / SMA20。
 
-從 indicator_cache 拿最後一次成功 cache run 那天的 sma_5 / sma_20。
-缺值(剛加入自選、indicator_cache 還沒跑到)欄位回 null,前端會靜默不畫。
+不走 indicator_cache(已廢棄)。並行打 2 個 tech.sma call,失敗欄位回 null。
+富邦 daily SMA 用上一交易日的 close 算,當日盤中不變,前端不必加 cache 也夠。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from services.indicator_cache_job import get_latest_done_run
-from services.supabase_client import SupabaseStatus, get_supabase
+from services.fubon_client import FubonStatus, get_fubon
+from services.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _extract_latest(result: Any) -> tuple[float | None, str | None]:
+    """從富邦 tech.sma 回應拿最後一筆 (sma_value, date)。"""
+    if not isinstance(result, dict):
+        return None, None
+    data = result.get("data")
+    if not isinstance(data, list) or not data:
+        return None, None
+    last = data[-1]
+    if not isinstance(last, dict):
+        return None, None
+    v = last.get("sma")
+    d = last.get("date")
+    try:
+        return (float(v) if v is not None else None, d if isinstance(d, str) else None)
+    except (TypeError, ValueError):
+        return None, d if isinstance(d, str) else None
+
+
+async def _fetch_sma(sdk: Any, symbol: str, period: int) -> tuple[float | None, str | None]:
+    """單一 period 的 SMA fetch — 失敗回 (None, None)。"""
+    try:
+        await asyncio.to_thread(get_rate_limiter().acquire)
+        res = await asyncio.to_thread(
+            sdk.marketdata.rest_client.stock.technical.sma,
+            symbol=symbol,
+            period=period,
+        )
+        return _extract_latest(res)
+    except Exception as e:
+        logger.warning("ma fetch failed: %s period=%d — %s: %s",
+                       symbol, period, type(e).__name__, e)
+        return None, None
+
+
 @router.get("/api/ma/{symbol}")
 async def get_ma(symbol: str) -> dict:
-    sb = get_supabase()
-    if sb.status != SupabaseStatus.OK or sb.client is None:
+    fubon = get_fubon()
+    if fubon.status != FubonStatus.OK or fubon.sdk is None:
         raise HTTPException(
             503,
-            detail={"error": "supabase_unavailable", "last_error": sb.last_error},
+            detail={"error": "fubon_unavailable", "last_error": fubon.last_error},
         )
 
-    latest = await asyncio.to_thread(get_latest_done_run, sb.client)
-    if latest is None:
-        # cache_runs 是空的(初次部署 / 沒跑過 cache job)
-        return {"symbol": symbol, "sma_5": None, "sma_20": None, "as_of_date": None}
-
-    run_date = latest["run_date"]
-    # 用 limit(1) 而不是 maybe_single() — 跟 codebase 其他地方(cdp.py 等)一致,
-    # 避免 supabase-py 在「沒 row」時行為跨版本不一致
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("indicator_cache")
-        .select("sma_5, sma_20")
-        .eq("symbol", symbol)
-        .eq("date", run_date)
-        .limit(1)
-        .execute()
+    (sma_5, date_5), (sma_20, date_20) = await asyncio.gather(
+        _fetch_sma(fubon.sdk, symbol, 5),
+        _fetch_sma(fubon.sdk, symbol, 20),
     )
-    rows = res.data or []
-    row = rows[0] if rows else {}
+
+    # as_of_date 取兩邊都有的那個(通常相同);都沒有就 None
+    as_of_date = date_5 or date_20
+
     return {
         "symbol": symbol,
-        "sma_5": row.get("sma_5"),
-        "sma_20": row.get("sma_20"),
-        "as_of_date": run_date,
+        "sma_5": sma_5,
+        "sma_20": sma_20,
+        "as_of_date": as_of_date,
     }

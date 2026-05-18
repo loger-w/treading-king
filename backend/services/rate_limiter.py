@@ -1,12 +1,9 @@
-"""Thread-safe token bucket — throttles Fubon REST calls from worker threads.
-
-indicator_cache_job 用 ThreadPoolExecutor(max_workers=8) 並行打富邦 technical API。
-沒有 limiter = 8 worker × 100ms = 80 req/s 直接被 IP ban。
+"""Thread-safe token bucket — throttles Fubon REST calls.
 
 Token bucket：每秒補 N 個 token，每次 acquire() 消耗 1 個；不夠就 sleep 到夠。
-從 sync ThreadPoolExecutor 內呼叫 → 用 threading 原語（不是 asyncio）。
+Sync 版可從 thread 內呼叫 → 用 threading 原語(不是 asyncio)。
 
-調率：環境變數 FUBON_RATE_LIMIT_PER_SEC，預設 5。實測 ~2363 檔 × 5 indicator 後再依需求調。
+調率：環境變數 FUBON_RATE_LIMIT_PER_SEC，預設 5。
 """
 from __future__ import annotations
 

@@ -1,7 +1,6 @@
 """System alert dispatch via Discord webhook.
 
 Use for critical conditions only:
-- cache_job 失敗
 - WS 連續 5 次重連失敗（circuit open）
 - evaluator_lag > 5s 連續 30s
 - supabase 連線失敗

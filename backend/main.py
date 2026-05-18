@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, cache, candles, cdp as cdp_route,
+    active_signals, candles, cdp as cdp_route,
     ma,
     preview, quote, signals_history, symbols,
     watchlist, ws,
@@ -27,7 +27,7 @@ from services.overnight import overnight_loop  # noqa: E402
 from services.signal_engine import get_signal_engine  # noqa: E402
 from services.supabase_client import get_supabase  # noqa: E402
 from services.supabase_writer import get_supabase_writer  # noqa: E402
-from services.user_context import get_user_label, is_cache_job_owner  # noqa: E402
+from services.user_context import get_user_label  # noqa: E402
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -41,8 +41,7 @@ async def lifespan(app: FastAPI):
 
     # Fail-fast: 壞 label 不讓 backend 起來
     label = get_user_label()
-    cache_owner = is_cache_job_owner()
-    logger.info("USER_LABEL=%s, cache_job_owner=%s", label, cache_owner)
+    logger.info("USER_LABEL=%s", label)
 
     fubon = get_fubon()
     await fubon.init()
@@ -75,21 +74,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("startup watchlist sub failed: %s", e)
 
-    # 啟動 overnight 8:25 cron — 只在 CACHE_JOB_OWNER == USER_LABEL 的 instance 跑
-    if cache_owner:
-        overnight_task = asyncio.create_task(overnight_loop())
-        logger.info("overnight loop started (this instance is the cache owner)")
-    else:
-        overnight_task = None
-        logger.info("cache job skipped (CACHE_JOB_OWNER != USER_LABEL=%s)", label)
+    # 啟動 overnight 8:25 cron — 每個 instance 自己重 login + 重訂閱 ws
+    overnight_task = asyncio.create_task(overnight_loop())
+    logger.info("overnight loop started")
 
     logger.info("Startup done — fubon=%s, supabase=%s, ws_pool=%s",
                 fubon.status.value, supabase.status.value, pool.status.value)
     yield
 
     logger.info("Shutting down…")
-    if overnight_task is not None:
-        overnight_task.cancel()
+    overnight_task.cancel()
     await engine.shutdown()
     await writer.shutdown()
     await pool.shutdown()
@@ -117,7 +111,6 @@ app.add_middleware(APIKeyMiddleware)
 app.include_router(quote.router)
 app.include_router(preview.router)
 app.include_router(symbols.router)
-app.include_router(cache.router)
 app.include_router(watchlist.router)
 app.include_router(active_signals.router)
 app.include_router(signals_history.router)

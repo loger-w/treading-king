@@ -3,11 +3,9 @@
 Filter 的 JSON 形式存在 active_signals.filter_json,前端條件編輯器
 (ActiveSignalEditor) 生成,signal_engine 評估時讀取。
 
-v1 限制：
-- operator 不含 cross_above/cross_below(indicator_cache 表無歷史)
-- days_ago 保留但目前只支援 0(同上)
-
-未來 v2 cache 改保留 N 天歷史時,把 cross_above/cross_below 跟 days_ago>0 接回。
+限制:
+- operator 不含 cross_above/cross_below(未保留歷史 series)
+- days_ago 保留但目前只支援 0
 """
 from __future__ import annotations
 
@@ -15,24 +13,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# 即時訊號可用的 21 個欄位(16 個 indicator_cache + 5 個 CDP 線)
+# 即時訊號可用的 6 個欄位(1 個即時 close + 5 個 CDP 線)
 ConditionField = Literal[
     "close",
-    "change_pct",
-    "volume",
-    "amount",
-    "rsi_14",
-    "macd",
-    "macd_signal",
-    "kdj_k",
-    "kdj_d",
-    "kdj_j",
-    "sma_5",
-    "sma_20",
-    "sma_60",
-    "bbands_upper",
-    "bbands_middle",
-    "bbands_lower",
     # 從 daily_ohlc 算出的 5 線
     "cdp_ah",
     "cdp_nh",
@@ -41,15 +24,10 @@ ConditionField = Literal[
     "cdp_al",
 ]
 
-# v1 不含 cross_above/cross_below
 ConditionOperator = Literal["gt", "gte", "lt", "lte", "eq"]
 
 ALL_FIELDS: tuple[ConditionField, ...] = (
-    "close", "change_pct", "volume", "amount",
-    "rsi_14", "macd", "macd_signal",
-    "kdj_k", "kdj_d", "kdj_j",
-    "sma_5", "sma_20", "sma_60",
-    "bbands_upper", "bbands_middle", "bbands_lower",
+    "close",
     "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
 )
 
@@ -57,8 +35,8 @@ ALL_FIELDS: tuple[ConditionField, ...] = (
 class Condition(BaseModel):
     """單一條件。
 
-    value 是 float 時:跟常數比較(譬如 rsi_14 < 30)
-    value 是 str 時:跟其他欄位比較(譬如 close > sma_20, value="sma_20")
+    value 是 float 時:跟常數比較(譬如 close < 100)
+    value 是 str 時:跟其他欄位比較(譬如 cdp_ah eq close, value="close")
         — str 必須是 ALL_FIELDS 之一
     """
 
