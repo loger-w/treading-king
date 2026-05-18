@@ -10,9 +10,10 @@ import react from "@vitejs/plugin-react";
 const SILENT_PROXY_ERRORS = new Set(["ECONNREFUSED", "ECONNRESET", "EPIPE"]);
 
 function silentProxy(label: string) {
-  return (proxy: { on: (ev: string, fn: (err: Error) => void) => void }) => {
-    proxy.on("error", (err) => {
-      const code = (err as NodeJS.ErrnoException).code;
+  // vite 給的 proxy 是 http-proxy Server instance（沒 export type,用 any 接）
+  return (proxy: any) => {
+    proxy.on("error", (err: Error & { code?: string }) => {
+      const code = err.code;
       if (code && SILENT_PROXY_ERRORS.has(code)) return;
       console.error(`[vite proxy ${label}]`, err);
     });
