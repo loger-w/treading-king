@@ -30,6 +30,9 @@ export default {
         // 台股慣例：上漲紅、下跌綠（與美股相反）
         bull: "#e85a4f",       // 上漲紅（跟 accent 同色）
         bear: "#7fc99a",       // 下跌綠
+        // 均線色（跟 accent/bull/bear 區分）
+        ma5: "#f0b429",        // MA5 黃 — 琥珀色
+        ma20: "#b794f4",       // MA20 紫 — 柔和淡紫
       },
       fontFamily: {
         serif: ['"Source Serif 4"', 'Georgia', 'serif'],

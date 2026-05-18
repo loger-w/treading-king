@@ -6,11 +6,7 @@ import {
 } from "../lib/api";
 
 const FIELD_LABEL: Record<ConditionField, string> = {
-  close: "即時價", change_pct: "漲跌幅 %", volume: "成交量", amount: "成交金額",
-  rsi_14: "RSI(14)", macd: "MACD", macd_signal: "MACD signal",
-  kdj_k: "KDJ K", kdj_d: "KDJ D", kdj_j: "KDJ J",
-  sma_5: "5 日均線", sma_20: "20 日均線", sma_60: "60 日均線",
-  bbands_upper: "BB 上軌", bbands_middle: "BB 中軌", bbands_lower: "BB 下軌",
+  close: "即時價",
   cdp_ah: "CDP AH (最高值)", cdp_nh: "CDP NH (近高)", cdp: "CDP 中軸",
   cdp_nl: "CDP NL (近低)", cdp_al: "CDP AL (最低值)",
 };
@@ -195,7 +191,7 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
                     onClick={() => updateCond(i, { ...c, value: 0 })}
                     className={`px-2 py-1 text-xs ${!valIsField ? "bg-accent/20 text-accent" : "text-ink-dim"}`}>常數</button>
                   <button type="button"
-                    onClick={() => updateCond(i, { ...c, value: "sma_20" })}
+                    onClick={() => updateCond(i, { ...c, value: "close" })}
                     className={`px-2 py-1 text-xs border-l border-line ${valIsField ? "bg-accent/20 text-accent" : "text-ink-dim"}`}>欄位</button>
                 </div>
                 {!valIsField ? (

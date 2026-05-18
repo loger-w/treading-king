@@ -44,11 +44,7 @@ export interface QuoteResponse {
 // ---------------------------------------------------------------------------
 
 export const ALL_FIELDS = [
-  "close", "change_pct", "volume", "amount",
-  "rsi_14", "macd", "macd_signal",
-  "kdj_k", "kdj_d", "kdj_j",
-  "sma_5", "sma_20", "sma_60",
-  "bbands_upper", "bbands_middle", "bbands_lower",
+  "close",
   "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
 ] as const;
 export type ConditionField = typeof ALL_FIELDS[number];

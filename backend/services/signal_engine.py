@@ -106,16 +106,15 @@ class SignalEngine:
         )
 
     async def _refill_field_cache(self) -> None:
-        """為每個 active 涉及的 (symbol, field) 載入最新值進 cache。
-        - indicator 欄位 → 從 indicator_cache 讀最後成功 date 的 row
-        - cdp_* 欄位 → 從 cdp service 讀
+        """為每個 active 涉及的 symbol 載入 cdp_* 值進 cache。
+
+        close 走即時 tick.price(由 _eval_filter_cond 處理),不進 field_cache。
         """
-        from services.indicator_cache_job import get_latest_done_run
         sb = get_supabase()
         if sb.client is None:
             return
 
-        # 蒐集所有 active 涉及的 symbol 跟 fields
+        # 蒐集所有 active 涉及的 symbol
         symbols_needed: set[str] = set()
         watchlist_fetched = False  # 只查一次 watchlist
         for a in self._active:
@@ -140,21 +139,6 @@ class SignalEngine:
                 for row in (res.data or []):
                     symbols_needed.add(row["symbol"])
                 watchlist_fetched = True
-
-        # indicator_cache 最後 done date
-        latest = await asyncio.to_thread(get_latest_done_run, sb.client)
-        if latest:
-            target_date = latest["run_date"]
-            ic_res = await asyncio.to_thread(
-                lambda: sb.client.table("indicator_cache")
-                .select("symbol, close, change_pct, volume, amount, rsi_14, macd, macd_signal, kdj_k, kdj_d, kdj_j, sma_5, sma_20, sma_60, bbands_upper, bbands_middle, bbands_lower")
-                .eq("date", target_date)
-                .in_("symbol", list(symbols_needed))
-                .execute()
-            )
-            for row in (ic_res.data or []):
-                sym = row.pop("symbol")
-                self._field_cache[sym] = {k: v for k, v in row.items() if v is not None}
 
         # cdp 5 值
         cdp = get_cdp_service()
@@ -188,7 +172,7 @@ class SignalEngine:
         但沒有新成交時，原本要等下一筆 tick 才被偵測。cooldown 沿用既有機制，不重複觸發。
 
         同時負責每日 field_cache refill：跨午夜後第一個 heartbeat 觸發
-        _refill_field_cache，確保 cdp_* / indicator 欄位用最新一日的值。
+        _refill_field_cache，確保 cdp_* 用最新一日的值。
         """
         rb = get_ring_buffer()
         while True:
