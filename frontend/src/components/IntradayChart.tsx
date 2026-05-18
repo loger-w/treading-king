@@ -294,14 +294,16 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             </>
           )}
 
-          {/* MA5 / MA20 兩條水平線(超出 ±10% 的隱藏) */}
+          {/* MA5(黃) / MA20(紫) 兩條水平線(超出 ±10% 的隱藏,沿用 CDP 過濾邏輯)
+              MA 從富邦 tech.sma 拿到 raw 算術平均(可能非合法 tick),snap 到最近 tick
+              再畫,跟 CDP 一致(避免顯示永遠不會成交的價格) */}
           {showMa && ma && visibleMaKeys.length > 0 && (
             <>
               {visibleMaKeys.map((k) => {
-                const v = ma[k]!;  // visibleMaKeys 已過濾過 non-null
+                const v = roundToNearestTick(ma[k]!);  // visibleMaKeys 已過濾 non-null
                 const isShort = k === "sma_5";
-                const colorCls = isShort ? "stroke-bull" : "stroke-ink-dim";
-                const labelCls = isShort ? "fill-bull" : "fill-ink-dim";
+                const colorCls = isShort ? "stroke-ma5" : "stroke-ma20";
+                const labelCls = isShort ? "fill-ma5" : "fill-ma20";
                 return (
                   <g key={k}>
                     <line x1={PAD_L} y1={scaleY(v)} x2={CHART_W - PAD_R} y2={scaleY(v)}
