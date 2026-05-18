@@ -294,9 +294,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             </>
           )}
 
-          {/* MA5(黃) / MA20(紫) 兩條水平線(超出 ±10% 的隱藏,沿用 CDP 過濾邏輯)
-              MA 從富邦 tech.sma 拿到 raw 算術平均(可能非合法 tick),snap 到最近 tick
-              再畫,跟 CDP 一致(避免顯示永遠不會成交的價格) */}
+          {/* MA5(黃) / MA20(紫) 兩條水平線。
+              raw SMA 是算術平均,常落在非合法 tick — snap 到最近 tick 再畫,避免
+              顯示永遠不會成交的價格。visibleMaKeys 已把 ±10% 範圍外的過濾掉
+              (漲跌停外不可能觸到)。 */}
           {showMa && ma && visibleMaKeys.length > 0 && (
             <>
               {visibleMaKeys.map((k) => {
