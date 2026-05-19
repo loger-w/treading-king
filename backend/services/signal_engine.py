@@ -255,7 +255,7 @@ class SignalEngine:
         return False
 
     def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
-        # WindowCondition + Filter.conditions + CdpProximity
+        # WindowCondition + Filter.conditions + CdpProximity + MAProximity
         f = active.filter_json
         results: list[bool] = []
         for wc in (f.get("window_conditions") if isinstance(f, dict) else getattr(f, "window_conditions", [])):
@@ -265,14 +265,20 @@ class SignalEngine:
         cdp_prox = (f.get("cdp_proximity") if isinstance(f, dict)
                     else getattr(f, "cdp_proximity", None))
         if cdp_prox is not None:
-            results.append(self._eval_cdp_proximity(symbol, tick, cdp_prox))
+            ok, _ = self._eval_cdp_proximity(symbol, tick, cdp_prox)
+            results.append(ok)
+        ma_prox = (f.get("ma_proximity") if isinstance(f, dict)
+                   else getattr(f, "ma_proximity", None))
+        if ma_prox is not None:
+            ok, _ = self._eval_ma_proximity(symbol, tick, ma_prox)
+            results.append(ok)
         if not results:
             return False
         logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
         return all(results) if logic == "AND" else any(results)
 
-    def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> bool:
-        """tick.price 落在所選 CDP 線的 ±N tick 範圍內就 true。
+    def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
+        """tick.price 落在所選 CDP 線的 ±N tick 範圍內 → (True, 哪條觸發)。
 
         prox 可以是 dict(從 filter_json JSON 讀)或 Pydantic CdpProximityCondition。
         """
@@ -293,8 +299,29 @@ class SignalEngine:
                 continue
             tol = tol_ticks * tick_size(v)
             if abs(tick.price - v) <= tol:
-                return True
-        return False
+                return True, level
+        return False, None
+
+    def _eval_ma_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
+        """tick.price 落在所選 MA 線的 ±N tick 範圍內 → (True, 哪條觸發)。
+
+        cache 內 sma 是 raw 算術平均,常落在非合法 tick;tolerance=0 實務上很難命中。
+        """
+        from services.cdp import tick_size
+
+        cache = self._field_cache.get(symbol, {})
+        levels = prox.get("levels") if isinstance(prox, dict) else prox.levels
+        tol_ticks = (prox.get("tolerance_ticks") if isinstance(prox, dict)
+                     else prox.tolerance_ticks)
+
+        for level in levels:  # "sma_5" or "sma_20"
+            v = cache.get(level)
+            if v is None:
+                continue
+            tol = tol_ticks * tick_size(v)
+            if abs(tick.price - v) <= tol:
+                return True, level
+        return False, None
 
     def _eval_window(self, symbol: str, tick: Tick, wc) -> bool:
         wc_type = wc.get("type") if isinstance(wc, dict) else wc.type
