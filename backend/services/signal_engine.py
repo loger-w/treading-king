@@ -10,7 +10,7 @@ from typing import Any
 from models.condition import (
     ActiveSignalOut, Condition, Filter, WindowCondition,
 )
-from services import alerts
+from services import alerts, ma_service
 from services.cdp import get_cdp_service
 from services.ring_buffer import Tick, get_ring_buffer
 from services.supabase_client import get_supabase
@@ -106,13 +106,12 @@ class SignalEngine:
         )
 
     async def _refill_field_cache(self) -> None:
-        """為每個 active 涉及的 symbol 載入 cdp_* 值進 cache。
+        """為每個 active 涉及的 symbol 載入 cdp_* + sma 值進 cache。
 
         close 走即時 tick.price(由 _eval_filter_cond 處理),不進 field_cache。
+        sb.client 為 None 時只 skip watchlist scope 解析,CDP/MA refill 仍跑。
         """
         sb = get_supabase()
-        if sb.client is None:
-            return
 
         # 蒐集所有 active 涉及的 symbol
         symbols_needed: set[str] = set()
@@ -128,7 +127,7 @@ class SignalEngine:
                 scope_symbols = getattr(scope, "symbols", [])
             if scope_type == "symbols":
                 symbols_needed.update(scope_symbols)
-            elif scope_type == "watchlist" and not watchlist_fetched:
+            elif scope_type == "watchlist" and not watchlist_fetched and sb.client is not None:
                 # watchlist 全部（限定本 instance 的 user_label）
                 res = await asyncio.to_thread(
                     lambda: sb.client.table("watchlist")
@@ -151,6 +150,14 @@ class SignalEngine:
                 d["cdp"] = levels["cdp"]
                 d["cdp_nl"] = levels["nl"]
                 d["cdp_al"] = levels["al"]
+
+        # sma 5 / 20(失敗欄位回 None,不寫 cache)
+        for sym in symbols_needed:
+            sma_5, sma_20 = await ma_service.fetch_sma_5_20(sym)
+            if sma_5 is not None or sma_20 is not None:
+                d = self._field_cache.setdefault(sym, {})
+                if sma_5  is not None: d["sma_5"]  = sma_5
+                if sma_20 is not None: d["sma_20"] = sma_20
 
         self._last_field_refill_date = date.today()
 
