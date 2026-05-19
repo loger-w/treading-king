@@ -37,6 +37,10 @@ export class ApiError extends Error {
 export interface QuoteResponse {
   bids?: Array<{ price: number; size: number }>;
   asks?: Array<{ price: number; size: number }>;
+  is_limit_up_bid?: boolean;
+  is_limit_up_ask?: boolean;
+  is_limit_down_bid?: boolean;
+  is_limit_down_ask?: boolean;
 }
 
 // ---------------------------------------------------------------------------
