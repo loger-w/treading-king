@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# 即時訊號可用的 6 個欄位(1 個即時 close + 5 個 CDP 線)
+# 即時訊號可用的欄位(1 個即時 close + 5 個 CDP 線 + 2 條 MA)
 ConditionField = Literal[
     "close",
     # 從 daily_ohlc 算出的 5 線
@@ -22,6 +22,9 @@ ConditionField = Literal[
     "cdp",
     "cdp_nl",
     "cdp_al",
+    # 富邦 tech.sma 拉的 MA(每日 refill 進 field_cache)
+    "sma_5",
+    "sma_20",
 ]
 
 ConditionOperator = Literal["gt", "gte", "lt", "lte", "eq"]
@@ -29,6 +32,7 @@ ConditionOperator = Literal["gt", "gte", "lt", "lte", "eq"]
 ALL_FIELDS: tuple[ConditionField, ...] = (
     "close",
     "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
+    "sma_5", "sma_20",
 )
 
 
