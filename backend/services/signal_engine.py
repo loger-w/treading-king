@@ -198,6 +198,7 @@ class SignalEngine:
             if self._last_field_refill_date != today:
                 try:
                     await self._refill_field_cache()
+                    self._gc_touch_counts()  # 順便清舊 date 的 touch_count
                     logger.info("signal_engine: daily field_cache refilled for %s", today)
                 except Exception as e:
                     # refill 失敗不影響 heartbeat — 下個 heartbeat 會再試
@@ -387,6 +388,16 @@ class SignalEngine:
             return False
         logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
         return all(results) if logic == "AND" else any(results)
+
+    def _gc_touch_counts(self) -> None:
+        """清掉非當天的 touch_count key — 跨午夜 heartbeat 呼叫。"""
+        today = date.today()
+        self._cdp_touch_count = {
+            k: v for k, v in self._cdp_touch_count.items() if k[2] == today
+        }
+        self._ma_touch_count = {
+            k: v for k, v in self._ma_touch_count.items() if k[2] == today
+        }
 
     @staticmethod
     def _direction_of_touch(prev: Tick | None, curr: Tick, threshold: float) -> str:
