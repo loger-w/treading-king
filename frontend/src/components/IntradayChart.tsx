@@ -312,7 +312,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
                       strokeDasharray="2 4" opacity="0.7" />
                     <text x={CHART_W - PAD_R + 4} y={scaleY(v) + 3} textAnchor="start"
                       className={`${labelCls} text-[12px] tabular-nums`}>
-                      {isShort ? "MA5" : "MA20"} {formatTickPrice(v)}
+                      {formatTickPrice(v)}
                     </text>
                   </g>
                 );
