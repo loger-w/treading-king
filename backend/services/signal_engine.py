@@ -10,7 +10,7 @@ from typing import Any
 from models.condition import (
     ActiveSignalOut, Condition, Filter, WindowCondition,
 )
-from services import alerts
+from services import alerts, ma_service
 from services.cdp import get_cdp_service
 from services.ring_buffer import Tick, get_ring_buffer
 from services.supabase_client import get_supabase
@@ -39,6 +39,11 @@ class SignalEngine:
         # 上次 refill field_cache 的本地日期 — heartbeat 跨午夜時自動重 refill
         # 解 24/7 backend 不重啟時 cdp_* 永遠停在前一天的 stale 問題
         self._last_field_refill_date: date | None = None
+        # 上一筆 tick per-symbol,供 _direction_of_touch 判方向(壓力 / 支撐)
+        self._prev_tick: dict[str, Tick] = {}
+        # 當天觸碰次數計數 (symbol, level, date) → count,跨日 GC
+        self._cdp_touch_count: dict[tuple[str, str, date], int] = {}
+        self._ma_touch_count:  dict[tuple[str, str, date], int] = {}
         # metrics
         self._dropped_today = 0
         self._last_lag_ms = 0.0
@@ -106,13 +111,12 @@ class SignalEngine:
         )
 
     async def _refill_field_cache(self) -> None:
-        """為每個 active 涉及的 symbol 載入 cdp_* 值進 cache。
+        """為每個 active 涉及的 symbol 載入 cdp_* + sma 值進 cache。
 
         close 走即時 tick.price(由 _eval_filter_cond 處理),不進 field_cache。
+        sb.client 為 None 時只 skip watchlist scope 解析,CDP/MA refill 仍跑。
         """
         sb = get_supabase()
-        if sb.client is None:
-            return
 
         # 蒐集所有 active 涉及的 symbol
         symbols_needed: set[str] = set()
@@ -128,7 +132,7 @@ class SignalEngine:
                 scope_symbols = getattr(scope, "symbols", [])
             if scope_type == "symbols":
                 symbols_needed.update(scope_symbols)
-            elif scope_type == "watchlist" and not watchlist_fetched:
+            elif scope_type == "watchlist" and not watchlist_fetched and sb.client is not None:
                 # watchlist 全部（限定本 instance 的 user_label）
                 res = await asyncio.to_thread(
                     lambda: sb.client.table("watchlist")
@@ -151,6 +155,14 @@ class SignalEngine:
                 d["cdp"] = levels["cdp"]
                 d["cdp_nl"] = levels["nl"]
                 d["cdp_al"] = levels["al"]
+
+        # sma 5 / 20(失敗欄位回 None,不寫 cache)
+        for sym in symbols_needed:
+            sma_5, sma_20 = await ma_service.fetch_sma_5_20(sym)
+            if sma_5 is not None or sma_20 is not None:
+                d = self._field_cache.setdefault(sym, {})
+                if sma_5  is not None: d["sma_5"]  = sma_5
+                if sma_20 is not None: d["sma_20"] = sma_20
 
         self._last_field_refill_date = date.today()
 
@@ -186,6 +198,7 @@ class SignalEngine:
             if self._last_field_refill_date != today:
                 try:
                     await self._refill_field_cache()
+                    self._gc_touch_counts()  # 順便清舊 date 的 touch_count
                     logger.info("signal_engine: daily field_cache refilled for %s", today)
                 except Exception as e:
                     # refill 失敗不影響 heartbeat — 下個 heartbeat 會再試
@@ -217,20 +230,126 @@ class SignalEngine:
         return []
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
-        """對每個涉及這 symbol 的 active_signal 跑條件。"""
-        for active in self._active:
-            if not self._scope_includes(active, symbol):
-                continue
-            if not self._eval_conditions(active, symbol, tick):
-                continue
-            # cooldown 檢查
-            key = (active.id, symbol)
-            now = time.time()
-            last_ts = self._cooldown.get(key, 0)
-            if now - last_ts < active.cooldown_seconds:
-                continue
-            self._cooldown[key] = now
-            await self._fanout(active, symbol, tick)
+        """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
+        prev = self._prev_tick.get(symbol)
+        try:
+            for active in self._active:
+                if not self._scope_includes(active, symbol):
+                    continue
+
+                cdp_touch, ma_touch = self._eval_with_touch_meta(active, symbol, tick, prev)
+                non_prox_ok = self._eval_non_proximity(active, symbol, tick)
+
+                # 邏輯結合(AND/OR)— 任一觸發機制成立才往下走
+                ok = self._combine_results(active, cdp_touch, ma_touch, non_prox_ok)
+                if not ok:
+                    continue
+
+                # cooldown 檢查
+                key = (active.id, symbol)
+                now = time.time()
+                last_ts = self._cooldown.get(key, 0)
+                if now - last_ts < active.cooldown_seconds:
+                    continue
+                self._cooldown[key] = now
+
+                # touch_count(僅 proximity 觸發才計次)
+                today = date.today()
+                if cdp_touch is not None:
+                    count_key = (symbol, cdp_touch["level"], today)
+                    self._cdp_touch_count[count_key] = self._cdp_touch_count.get(count_key, 0) + 1
+                    cdp_touch["touch_index"] = self._cdp_touch_count[count_key]
+                if ma_touch is not None:
+                    count_key = (symbol, ma_touch["level"], today)
+                    self._ma_touch_count[count_key] = self._ma_touch_count.get(count_key, 0) + 1
+                    ma_touch["touch_index"] = self._ma_touch_count[count_key]
+
+                await self._fanout(active, symbol, tick, cdp_touch, ma_touch)
+        finally:
+            # 用 finally 保證每次 evaluate 都更新 prev,避免下次方向算錯
+            self._prev_tick[symbol] = tick
+
+    def _eval_with_touch_meta(
+        self, active: ActiveSignalOut, symbol: str, tick: Tick, prev: Tick | None,
+    ) -> tuple[dict | None, dict | None]:
+        """跑 cdp/ma proximity,回 (cdp_touch_dict, ma_touch_dict) 含方向 + role。
+
+        None 表示該 proximity 沒設或沒命中。
+        """
+        f = active.filter_json
+
+        cdp_prox = (f.get("cdp_proximity") if isinstance(f, dict)
+                    else getattr(f, "cdp_proximity", None))
+        cdp_touch: dict | None = None
+        if cdp_prox is not None:
+            ok, level = self._eval_cdp_proximity(symbol, tick, cdp_prox)
+            if ok and level is not None:
+                field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp",
+                             "nl": "cdp_nl", "al": "cdp_al"}
+                v = self._field_cache.get(symbol, {}).get(field_map[level])
+                direction = self._direction_of_touch(prev, tick, v) if v is not None else "horizontal"
+                role = {"from_below": "resistance", "from_above": "support"}.get(direction, "touch")
+                cdp_touch = {"level": level, "direction": direction, "role": role}
+
+        ma_prox = (f.get("ma_proximity") if isinstance(f, dict)
+                   else getattr(f, "ma_proximity", None))
+        ma_touch: dict | None = None
+        if ma_prox is not None:
+            ok, level = self._eval_ma_proximity(symbol, tick, ma_prox)
+            if ok and level is not None:
+                v = self._field_cache.get(symbol, {}).get(level)
+                direction = self._direction_of_touch(prev, tick, v) if v is not None else "horizontal"
+                role = {"from_below": "resistance", "from_above": "support"}.get(direction, "touch")
+                ma_touch = {"level": level, "direction": direction, "role": role}
+
+        return cdp_touch, ma_touch
+
+    def _eval_non_proximity(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool | None:
+        """跑非 proximity 的條件(window + cross-field)。
+
+        回 None 表示沒設這類條件;True/False 表示有設且整體 logic 通不通過。
+        """
+        f = active.filter_json
+        results: list[bool] = []
+        for wc in (f.get("window_conditions") if isinstance(f, dict) else getattr(f, "window_conditions", [])):
+            results.append(self._eval_window(symbol, tick, wc))
+        for c in (f.get("conditions") if isinstance(f, dict) else getattr(f, "conditions", [])):
+            results.append(self._eval_filter_cond(symbol, tick, c))
+        if not results:
+            return None
+        logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
+        return all(results) if logic == "AND" else any(results)
+
+    def _combine_results(
+        self, active: ActiveSignalOut,
+        cdp_touch: dict | None, ma_touch: dict | None, non_prox_ok: bool | None,
+    ) -> bool:
+        """把 non-proximity / cdp_proximity / ma_proximity 結果合在一起。
+
+        - 完全沒設任何條件 → False(filter 不可能空,但保險)
+        - 用 AND:全部「有設且 True」才 True
+        - 用 OR :任一「有設且 True」就 True
+        """
+        f = active.filter_json
+        logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
+
+        # 子條件結果(None = 沒設、True/False = 有設且結果)
+        sub_results: list[bool] = []
+        if non_prox_ok is not None:
+            sub_results.append(non_prox_ok)
+        # proximity:有設(prox 物件 not None)就一定有 None/dict 結果
+        cdp_prox_set = ((f.get("cdp_proximity") if isinstance(f, dict)
+                         else getattr(f, "cdp_proximity", None)) is not None)
+        if cdp_prox_set:
+            sub_results.append(cdp_touch is not None)
+        ma_prox_set = ((f.get("ma_proximity") if isinstance(f, dict)
+                        else getattr(f, "ma_proximity", None)) is not None)
+        if ma_prox_set:
+            sub_results.append(ma_touch is not None)
+
+        if not sub_results:
+            return False
+        return all(sub_results) if logic == "AND" else any(sub_results)
 
     def _scope_includes(self, active: ActiveSignalOut, symbol: str) -> bool:
         s = active.scope
@@ -248,7 +367,7 @@ class SignalEngine:
         return False
 
     def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
-        # WindowCondition + Filter.conditions + CdpProximity
+        # WindowCondition + Filter.conditions + CdpProximity + MAProximity
         f = active.filter_json
         results: list[bool] = []
         for wc in (f.get("window_conditions") if isinstance(f, dict) else getattr(f, "window_conditions", [])):
@@ -258,14 +377,44 @@ class SignalEngine:
         cdp_prox = (f.get("cdp_proximity") if isinstance(f, dict)
                     else getattr(f, "cdp_proximity", None))
         if cdp_prox is not None:
-            results.append(self._eval_cdp_proximity(symbol, tick, cdp_prox))
+            ok, _ = self._eval_cdp_proximity(symbol, tick, cdp_prox)
+            results.append(ok)
+        ma_prox = (f.get("ma_proximity") if isinstance(f, dict)
+                   else getattr(f, "ma_proximity", None))
+        if ma_prox is not None:
+            ok, _ = self._eval_ma_proximity(symbol, tick, ma_prox)
+            results.append(ok)
         if not results:
             return False
         logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
         return all(results) if logic == "AND" else any(results)
 
-    def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> bool:
-        """tick.price 落在所選 CDP 線的 ±N tick 範圍內就 true。
+    def _gc_touch_counts(self) -> None:
+        """清掉非當天的 touch_count key — 跨午夜 heartbeat 呼叫。"""
+        today = date.today()
+        self._cdp_touch_count = {
+            k: v for k, v in self._cdp_touch_count.items() if k[2] == today
+        }
+        self._ma_touch_count = {
+            k: v for k, v in self._ma_touch_count.items() if k[2] == today
+        }
+
+    @staticmethod
+    def _direction_of_touch(prev: Tick | None, curr: Tick, threshold: float) -> str:
+        """判斷 curr.price 相對 threshold 從哪個方向跨越過來。
+
+        回傳 "from_below" / "from_above" / "horizontal"。
+        """
+        if prev is None:
+            return "horizontal"
+        if prev.price < threshold and curr.price >= threshold:
+            return "from_below"
+        if prev.price > threshold and curr.price <= threshold:
+            return "from_above"
+        return "horizontal"
+
+    def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
+        """tick.price 落在所選 CDP 線的 ±N tick 範圍內 → (True, 哪條觸發)。
 
         prox 可以是 dict(從 filter_json JSON 讀)或 Pydantic CdpProximityCondition。
         """
@@ -286,8 +435,29 @@ class SignalEngine:
                 continue
             tol = tol_ticks * tick_size(v)
             if abs(tick.price - v) <= tol:
-                return True
-        return False
+                return True, level
+        return False, None
+
+    def _eval_ma_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
+        """tick.price 落在所選 MA 線的 ±N tick 範圍內 → (True, 哪條觸發)。
+
+        cache 內 sma 是 raw 算術平均,常落在非合法 tick;tolerance=0 實務上很難命中。
+        """
+        from services.cdp import tick_size
+
+        cache = self._field_cache.get(symbol, {})
+        levels = prox.get("levels") if isinstance(prox, dict) else prox.levels
+        tol_ticks = (prox.get("tolerance_ticks") if isinstance(prox, dict)
+                     else prox.tolerance_ticks)
+
+        for level in levels:  # "sma_5" or "sma_20"
+            v = cache.get(level)
+            if v is None:
+                continue
+            tol = tol_ticks * tick_size(v)
+            if abs(tick.price - v) <= tol:
+                return True, level
+        return False, None
 
     def _eval_window(self, symbol: str, tick: Tick, wc) -> bool:
         wc_type = wc.get("type") if isinstance(wc, dict) else wc.type
@@ -338,28 +508,34 @@ class SignalEngine:
 
         return _cmp(lhs, op, rhs)
 
-    async def _fanout(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> None:
+    async def _fanout(
+        self, active: ActiveSignalOut, symbol: str, tick: Tick,
+        cdp_touch: dict | None = None, ma_touch: dict | None = None,
+    ) -> None:
         from services.supabase_writer import get_supabase_writer
-        payload = {
-            "event": "signal",
-            "data": {
-                "active_signal_id": active.id,
-                "active_signal_name": active.name,
-                "symbol": symbol,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-                "trigger_price": tick.price,
-                "trigger_volume": tick.size,
-            },
+        data: dict = {
+            "active_signal_id": active.id,
+            "active_signal_name": active.name,
+            "symbol": symbol,
+            "triggered_at": datetime.now(timezone.utc).isoformat(),
+            "trigger_price": tick.price,
+            "trigger_volume": tick.size,
         }
+        if cdp_touch: data["cdp_touch"] = cdp_touch
+        if ma_touch:  data["ma_touch"]  = ma_touch
+        payload = {"event": "signal", "data": data}
         # 1. 前端 WS broadcast
         await get_broadcaster().broadcast(payload)
         # 2. supabase writer
+        context: dict = {"latest_tick_time": tick.time}
+        if cdp_touch: context["cdp_touch"] = cdp_touch
+        if ma_touch:  context["ma_touch"]  = ma_touch
         get_supabase_writer().append({
             "active_signal_id": active.id,
             "symbol": symbol,
             "trigger_price": tick.price,
             "trigger_volume": tick.size,
-            "context_json": {"latest_tick_time": tick.time},
+            "context_json": context,
             "user_label": get_user_label(),
         })
 

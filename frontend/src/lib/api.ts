@@ -37,6 +37,10 @@ export class ApiError extends Error {
 export interface QuoteResponse {
   bids?: Array<{ price: number; size: number }>;
   asks?: Array<{ price: number; size: number }>;
+  is_limit_up_bid?: boolean;
+  is_limit_up_ask?: boolean;
+  is_limit_down_bid?: boolean;
+  is_limit_down_ask?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +50,7 @@ export interface QuoteResponse {
 export const ALL_FIELDS = [
   "close",
   "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
+  "sma_5", "sma_20",
 ] as const;
 export type ConditionField = typeof ALL_FIELDS[number];
 
@@ -99,10 +104,16 @@ export interface CdpProximity {
   tolerance_ticks: number;
 }
 
+export interface MAProximity {
+  levels: Array<"sma_5" | "sma_20">;
+  tolerance_ticks: number;
+}
+
 export interface ActiveFilter extends Filter {
   // schema_version 已從 Filter inherit,不重複宣告
   window_conditions?: WindowCondition[];
   cdp_proximity?: CdpProximity | null;
+  ma_proximity?: MAProximity | null;
 }
 
 export type Scope =
@@ -206,6 +217,13 @@ export interface TodayCountsResponse {
   counts: TodayCountsRow[];
 }
 
+export interface TouchMeta {
+  level: string;  // "ah" / "nh" / "cdp" / "nl" / "al" 或 "sma_5" / "sma_20"
+  direction: "from_below" | "from_above" | "horizontal";
+  role: "resistance" | "support" | "touch";
+  touch_index: number;
+}
+
 // Realtime WS payload
 export interface SignalEvent {
   event: "signal";
@@ -216,6 +234,8 @@ export interface SignalEvent {
     triggered_at: string;
     trigger_price: number;
     trigger_volume: number;
+    cdp_touch?: TouchMeta;
+    ma_touch?: TouchMeta;
   };
 }
 

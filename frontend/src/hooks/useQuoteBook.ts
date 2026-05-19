@@ -6,6 +6,8 @@ const POLL_MS = 1000;
 export interface QuoteBookData {
   bids: Array<{ price: number; size: number }>;
   asks: Array<{ price: number; size: number }>;
+  isLimitUp: boolean;
+  isLimitDown: boolean;
   error: string | null;
 }
 
@@ -22,6 +24,8 @@ export interface QuoteBookData {
 export function useQuoteBook(symbol: string | null): QuoteBookData {
   const [bids, setBids] = useState<QuoteBookData["bids"]>([]);
   const [asks, setAsks] = useState<QuoteBookData["asks"]>([]);
+  const [isLimitUp, setIsLimitUp] = useState(false);
+  const [isLimitDown, setIsLimitDown] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -30,6 +34,7 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
   useEffect(() => {
     if (!symbol) {
       setBids([]); setAsks([]);
+      setIsLimitUp(false); setIsLimitDown(false);
       setError(null);
       return;
     }
@@ -37,6 +42,7 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     // 切 symbol：清舊資料 + cancel pending
     abortRef.current?.abort();
     setBids([]); setAsks([]);
+    setIsLimitUp(false); setIsLimitDown(false);
     setError(null);
 
     async function fetchOnce() {
@@ -49,6 +55,8 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
         if (ctrl.signal.aborted) return;
         setBids(r.bids ?? []);
         setAsks(r.asks ?? []);
+        setIsLimitUp(Boolean(r.is_limit_up_bid || r.is_limit_up_ask));
+        setIsLimitDown(Boolean(r.is_limit_down_bid || r.is_limit_down_ask));
         setError(null);
       } catch (e) {
         if (ctrl.signal.aborted) return;
@@ -64,5 +72,5 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     };
   }, [symbol]);
 
-  return { bids, asks, error };
+  return { bids, asks, isLimitUp, isLimitDown, error };
 }

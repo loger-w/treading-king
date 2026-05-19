@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/api";
 import { useLocalToggle } from "../hooks/useLocalToggle";
 import { formatTickPrice, roundToNearestTick } from "../lib/tick";
+import { resolveCollisions, type LabelInput } from "../lib/chart-labels";
 
 interface Props {
   symbol: string;
@@ -62,6 +63,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
     polyClose, polyVwap, visibleCdpKeys, visibleMaKeys,
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
     maxVolume, scaleVolY, volBarW,
+    resolvedLabels,
   } = useMemo(() => {
     if (candles.length === 0) {
       return {
@@ -72,6 +74,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         visibleMaKeys: [] as Array<"sma_5" | "sma_20">,
         todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
         maxVolume: 0, scaleVolY: (_: number) => 0, volBarW: 0,
+        resolvedLabels: [] as ReturnType<typeof resolveCollisions>,
       };
     }
     const closes = candles.map((c) => c.close);
@@ -130,13 +133,50 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         })
       : [];
 
+    // 收集右邊 margin 所有 label,做碰撞撐開。
+    // 顏色用 hex 直填(Tailwind theme colors 沒當 CSS var 暴露,inline style 解析會失敗)
+    const labelInputs: LabelInput[] = [];
+    if (showCdp && cdp) {
+      for (const k of visibleCdpKeys) {
+        labelInputs.push({
+          originalY: scaleY(cdp[k]),
+          text: formatTickPrice(cdp[k]),
+          color: "#e85a4f",  // accent 紅
+        });
+      }
+    }
+    if (showMa && ma) {
+      for (const k of visibleMaKeys) {
+        const v = roundToNearestTick(ma[k]!);
+        labelInputs.push({
+          originalY: scaleY(v),
+          text: formatTickPrice(v),
+          color: k === "sma_5" ? "#f0b429" : "#b794f4",  // ma5 黃 / ma20 紫
+        });
+      }
+    }
+    if (showVwap && candles.length > 0) {
+      const lastAvg = candles[candles.length - 1].average;
+      labelInputs.push({
+        originalY: scaleY(lastAvg),
+        text: formatTickPrice(lastAvg),
+        color: "#8a8273",  // ink-dim
+      });
+    }
+    const resolvedLabels = resolveCollisions(
+      labelInputs,
+      16,
+      [PAD_T, CHART_H - PAD_B],
+    );
+
     return {
       yMin, yMax, scaleX, scaleY,
       polyClose, polyVwap, visibleCdpKeys, visibleMaKeys,
       todayHigh, todayHighIdx, todayLow, todayLowIdx,
       maxVolume, scaleVolY, volBarW,
+      resolvedLabels,
     };
-  }, [candles, cdp, showCdp, ma, showMa, prevClose]);
+  }, [candles, cdp, showCdp, ma, showMa, showVwap, prevClose]);
 
   // hover crosshair state — 只跟 candle idx 走（價位由 candle.close 決定）
   const [hover, setHover] = useState<{ idx: number } | null>(null);
@@ -276,65 +316,57 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             });
           })()}
 
-          {/* CDP 5 線（超出 ±10% 範圍的隱藏） */}
+          {/* CDP 5 線(超出 ±10% 範圍的隱藏)— label 留給統一 resolvedLabels render */}
           {showCdp && cdp && visibleCdpKeys.length > 0 && (
             <>
               {visibleCdpKeys.map((k) => (
-                <g key={k}>
-                  <line x1={PAD_L} y1={scaleY(cdp[k])} x2={CHART_W - PAD_R} y2={scaleY(cdp[k])}
-                    stroke="var(--color-accent, #e85a4f)" strokeWidth="0.6"
-                    strokeDasharray="4 3" opacity="0.6" />
-                  {/* label 放在 chart 右側 margin 外，避免被即時價線遮住 */}
-                  <text x={CHART_W - PAD_R + 4} y={scaleY(cdp[k]) + 3} textAnchor="start"
-                    className="fill-accent text-[12px] tabular-nums">
-                    {formatTickPrice(cdp[k])}
-                  </text>
-                </g>
+                <line key={k}
+                  x1={PAD_L} y1={scaleY(cdp[k])} x2={CHART_W - PAD_R} y2={scaleY(cdp[k])}
+                  stroke="var(--color-accent, #e85a4f)" strokeWidth="0.6"
+                  strokeDasharray="4 3" opacity="0.6" />
               ))}
             </>
           )}
 
-          {/* MA5(黃) / MA20(紫) 兩條水平線。
-              raw SMA 是算術平均,常落在非合法 tick — snap 到最近 tick 再畫,避免
-              顯示永遠不會成交的價格。visibleMaKeys 已把 ±10% 範圍外的過濾掉
-              (漲跌停外不可能觸到)。 */}
+          {/* MA5(黃) / MA20(紫) 兩條水平線。raw SMA 常落在非合法 tick — visibleMaKeys
+              已 snap 過,這裡只畫線(label 由 resolvedLabels 統一處理碰撞撐開)。 */}
           {showMa && ma && visibleMaKeys.length > 0 && (
             <>
               {visibleMaKeys.map((k) => {
-                const v = roundToNearestTick(ma[k]!);  // visibleMaKeys 已過濾 non-null
+                const v = roundToNearestTick(ma[k]!);
                 const isShort = k === "sma_5";
                 const colorCls = isShort ? "stroke-ma5" : "stroke-ma20";
-                const labelCls = isShort ? "fill-ma5" : "fill-ma20";
                 return (
-                  <g key={k}>
-                    <line x1={PAD_L} y1={scaleY(v)} x2={CHART_W - PAD_R} y2={scaleY(v)}
-                      className={colorCls} strokeWidth="0.6"
-                      strokeDasharray="2 4" opacity="0.7" />
-                    <text x={CHART_W - PAD_R + 4} y={scaleY(v) + 3} textAnchor="start"
-                      className={`${labelCls} text-[12px] tabular-nums`}>
-                      {isShort ? "MA5" : "MA20"} {formatTickPrice(v)}
-                    </text>
-                  </g>
+                  <line key={k}
+                    x1={PAD_L} y1={scaleY(v)} x2={CHART_W - PAD_R} y2={scaleY(v)}
+                    className={colorCls} strokeWidth="0.6"
+                    strokeDasharray="2 4" opacity="0.7" />
                 );
               })}
             </>
           )}
 
-          {/* VWAP */}
+          {/* VWAP 線(label 由 resolvedLabels 處理) */}
           {showVwap && polyVwap && (
             <polyline points={polyVwap} fill="none"
               stroke="var(--color-ink-dim, #8a8273)" strokeWidth="1" strokeDasharray="3 2" />
           )}
-          {showVwap && candles.length > 0 && (() => {
-            const lastIdx = candles.length - 1;
-            const lastAvg = candles[lastIdx].average;
-            return (
-              <text x={scaleX(lastIdx) + 4} y={scaleY(lastAvg) + 3} textAnchor="start"
-                className="fill-ink-dim text-[12px] tabular-nums">
-                {formatTickPrice(lastAvg)}
+
+          {/* 右邊 margin 統一 label render — 自動碰撞撐開,需要時加引導線 */}
+          {resolvedLabels.map((lbl, i) => (
+            <g key={`lbl-${i}`}>
+              {lbl.y !== lbl.originalY && (
+                <line x1={CHART_W - PAD_R} y1={lbl.originalY}
+                  x2={CHART_W - PAD_R + 4} y2={lbl.y}
+                  stroke={lbl.color} strokeWidth="0.7" opacity="0.5" />
+              )}
+              <text x={CHART_W - PAD_R + 6} y={lbl.y + 3} textAnchor="start"
+                style={{ fill: lbl.color }}
+                className="text-[12px] tabular-nums">
+                {lbl.text}
               </text>
-            );
-          })()}
+            </g>
+          ))}
 
           {/* 主價線 — 用 clipPath 切上下兩段,平盤上紅、平盤下綠(跟 fill 同步) */}
           {polyClose && baseline > 0 && (

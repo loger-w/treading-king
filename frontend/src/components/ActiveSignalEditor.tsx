@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   ALL_FIELDS, api, type ActiveFilter, type ActiveSignal, type CdpProximity,
   type Condition, type ConditionField, type ConditionOperator,
+  type MAProximity,
   type Scope, type WindowCondition, type WindowConditionType, type WindowSeconds,
 } from "../lib/api";
 
@@ -9,6 +10,7 @@ const FIELD_LABEL: Record<ConditionField, string> = {
   close: "即時價",
   cdp_ah: "CDP AH (最高值)", cdp_nh: "CDP NH (近高)", cdp: "CDP 中軸",
   cdp_nl: "CDP NL (近低)", cdp_al: "CDP AL (最低值)",
+  sma_5: "MA5 (5 日均線)", sma_20: "MA20 (20 日均線)",
 };
 
 const OP_LABEL: Record<ConditionOperator, string> = {
@@ -31,6 +33,12 @@ const CDP_LEVEL_LABEL: Record<"ah" | "nh" | "cdp" | "nl" | "al", string> = {
 };
 
 const ALL_CDP_LEVELS = ["ah", "nh", "cdp", "nl", "al"] as const;
+
+const ALL_MA_LEVELS = ["sma_5", "sma_20"] as const;
+
+const MA_LEVEL_LABEL: Record<typeof ALL_MA_LEVELS[number], string> = {
+  sma_5: "MA5", sma_20: "MA20",
+};
 
 interface Props {
   initial?: ActiveSignal;
@@ -110,11 +118,41 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
     setFilter({ ...filter, cdp_proximity: { ...prox, tolerance_ticks: clamped } });
   }
 
+  function enableMaProx() {
+    setFilter({
+      ...filter,
+      ma_proximity: { levels: [...ALL_MA_LEVELS], tolerance_ticks: 1 },
+    });
+  }
+  function disableMaProx() {
+    setFilter({ ...filter, ma_proximity: null });
+  }
+  function toggleMaLevel(level: typeof ALL_MA_LEVELS[number]) {
+    const prox = filter.ma_proximity;
+    if (!prox) return;
+    const checked = prox.levels.includes(level);
+    let next: MAProximity["levels"];
+    if (checked) {
+      if (prox.levels.length <= 1) return;  // 至少留 1 個
+      next = prox.levels.filter((l) => l !== level);
+    } else {
+      next = [...prox.levels, level];
+    }
+    setFilter({ ...filter, ma_proximity: { ...prox, levels: next } });
+  }
+  function updateMaTolerance(tol: number) {
+    const prox = filter.ma_proximity;
+    if (!prox) return;
+    const clamped = Math.max(0, Math.min(10, Math.round(tol)));
+    setFilter({ ...filter, ma_proximity: { ...prox, tolerance_ticks: clamped } });
+  }
+
   async function save() {
     if (!name.trim()) { setError("請輸入名稱"); return; }
     if (filter.conditions.length === 0
         && (filter.window_conditions ?? []).length === 0
-        && !filter.cdp_proximity) {
+        && !filter.cdp_proximity
+        && !filter.ma_proximity) {
       setError("至少要有一條條件"); return;
     }
     setSaving(true);
@@ -249,6 +287,48 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
                   onChange={(e) => updateCdpTolerance(Number(e.target.value))}
                   className="bg-bg-deep border border-line text-sm px-2 py-1 w-20 tabular-nums" />
                 <span className="text-xs text-ink-dim">tick (0 = 嚴格打到,&gt;0 = 接近也算)</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* MA 觸發區塊 */}
+        <div className="border-t border-line pt-3 mb-4">
+          <div className="label-tiny mb-2">MA 觸發</div>
+          <p className="text-2xs text-ink-dim mb-3 leading-relaxed">
+            價格打到(或接近)所選 MA 線即觸發。SMA raw 不在合法 tick 上,Tolerance 建議 ≥ 1。
+          </p>
+          {filter.ma_proximity === null || filter.ma_proximity === undefined ? (
+            <button type="button" onClick={enableMaProx}
+              className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">
+              + 啟用 MA 觸發
+            </button>
+          ) : (
+            <div className="border border-line p-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {ALL_MA_LEVELS.map((lv) => {
+                  const checked = filter.ma_proximity!.levels.includes(lv);
+                  const isLastChecked = checked && filter.ma_proximity!.levels.length === 1;
+                  return (
+                    <label key={lv} className={`text-sm flex items-center gap-1 ${isLastChecked ? "opacity-60" : "cursor-pointer"}`}>
+                      <input type="checkbox" checked={checked}
+                        disabled={isLastChecked}
+                        onChange={() => toggleMaLevel(lv)}
+                        className="accent-accent" />
+                      {MA_LEVEL_LABEL[lv]}
+                    </label>
+                  );
+                })}
+                <button type="button" onClick={disableMaProx}
+                  className="ml-auto text-ink-dim hover:text-bear text-xs">移除</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-ink-muted">Tolerance:</span>
+                <input type="number" min={0} max={10} step={1}
+                  value={filter.ma_proximity.tolerance_ticks}
+                  onChange={(e) => updateMaTolerance(Number(e.target.value))}
+                  className="bg-bg-deep border border-line text-sm px-2 py-1 w-20 tabular-nums" />
+                <span className="text-xs text-ink-dim">tick (SMA raw 不在合法 tick,建議 ≥ 1)</span>
               </div>
             </div>
           )}
