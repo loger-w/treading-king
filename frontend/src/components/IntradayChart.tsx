@@ -133,14 +133,15 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         })
       : [];
 
-    // 收集右邊 margin 所有 label,做碰撞撐開
+    // 收集右邊 margin 所有 label,做碰撞撐開。
+    // 顏色用 hex 直填(Tailwind theme colors 沒當 CSS var 暴露,inline style 解析會失敗)
     const labelInputs: LabelInput[] = [];
     if (showCdp && cdp) {
       for (const k of visibleCdpKeys) {
         labelInputs.push({
           originalY: scaleY(cdp[k]),
           text: formatTickPrice(cdp[k]),
-          color: "var(--color-accent, #e85a4f)",
+          color: "#e85a4f",  // accent 紅
         });
       }
     }
@@ -150,7 +151,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         labelInputs.push({
           originalY: scaleY(v),
           text: formatTickPrice(v),
-          color: k === "sma_5" ? "var(--color-ma5)" : "var(--color-ma20)",
+          color: k === "sma_5" ? "#f0b429" : "#b794f4",  // ma5 黃 / ma20 紫
         });
       }
     }
@@ -159,7 +160,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
       labelInputs.push({
         originalY: scaleY(lastAvg),
         text: formatTickPrice(lastAvg),
-        color: "var(--color-ink-dim, #8a8273)",
+        color: "#8a8273",  // ink-dim
       });
     }
     const resolvedLabels = resolveCollisions(
