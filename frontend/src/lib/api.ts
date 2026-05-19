@@ -104,10 +104,16 @@ export interface CdpProximity {
   tolerance_ticks: number;
 }
 
+export interface MAProximity {
+  levels: Array<"sma_5" | "sma_20">;
+  tolerance_ticks: number;
+}
+
 export interface ActiveFilter extends Filter {
   // schema_version 已從 Filter inherit,不重複宣告
   window_conditions?: WindowCondition[];
   cdp_proximity?: CdpProximity | null;
+  ma_proximity?: MAProximity | null;
 }
 
 export type Scope =

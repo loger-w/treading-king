@@ -118,24 +118,40 @@ class CdpProximityCondition(BaseModel):
     tolerance_ticks: int = Field(default=0, ge=0, le=10)
 
 
-class ActiveFilter(Filter):
-    """即時訊號專用 Filter — 在 Filter 之上加時窗條件 + CDP 觸發條件。
+class MAProximityCondition(BaseModel):
+    """MA 觸發條件 — tick price 落在所選 MA 線的 ±N tick 範圍內。
 
-    跟 Filter 的差異:允許 conditions=[] 當 window_conditions 或 cdp_proximity 非空
-    (即時訊號可單獨用其中任一種觸發機制)。
+    SMA raw 通常不在合法 tick 上(算術平均),tolerance=0 嚴格打到實務上很難命中;
+    UI 預設應 ≥ 1。
     """
 
-    schema_version: int = 2  # bump from 1 → 2 (加了 cdp_proximity 欄位)
+    levels: list[Literal["sma_5", "sma_20"]] = Field(
+        default_factory=lambda: ["sma_5", "sma_20"],
+        min_length=1,
+    )
+    tolerance_ticks: int = Field(default=0, ge=0, le=10)
+
+
+class ActiveFilter(Filter):
+    """即時訊號專用 Filter — 在 Filter 之上加時窗條件 + CDP/MA 觸發條件。
+
+    跟 Filter 的差異:允許 conditions=[] 當 window_conditions / cdp_proximity / ma_proximity
+    任一非空(即時訊號可單獨用其中任一種觸發機制)。
+    """
+
+    schema_version: int = 3  # 2→3,加 ma_proximity
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
+    ma_proximity:  MAProximityCondition  | None = None
 
     @model_validator(mode="after")
     def conditions_non_empty(self):
-        # 覆蓋 Filter.conditions_non_empty:允許 conditions=[] 當 window_conditions 或 cdp_proximity 非空
+        # 覆蓋 Filter.conditions_non_empty
         if (not self.conditions
                 and not self.window_conditions
-                and self.cdp_proximity is None):
-            raise ValueError("至少要有一個 condition / window_condition / cdp_proximity")
+                and self.cdp_proximity is None
+                and self.ma_proximity is None):
+            raise ValueError("至少要有一個 condition / window_condition / cdp_proximity / ma_proximity")
         return self
 
 
