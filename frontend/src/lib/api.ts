@@ -217,6 +217,13 @@ export interface TodayCountsResponse {
   counts: TodayCountsRow[];
 }
 
+export interface TouchMeta {
+  level: string;  // "ah" / "nh" / "cdp" / "nl" / "al" 或 "sma_5" / "sma_20"
+  direction: "from_below" | "from_above" | "horizontal";
+  role: "resistance" | "support" | "touch";
+  touch_index: number;
+}
+
 // Realtime WS payload
 export interface SignalEvent {
   event: "signal";
@@ -227,6 +234,8 @@ export interface SignalEvent {
     triggered_at: string;
     trigger_price: number;
     trigger_volume: number;
+    cdp_touch?: TouchMeta;
+    ma_touch?: TouchMeta;
   };
 }
 

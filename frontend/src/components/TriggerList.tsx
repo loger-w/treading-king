@@ -1,4 +1,5 @@
-import { type ActiveSignal, type SignalLogRow, type SignalEvent } from "../lib/api";
+import { type ActiveSignal, type SignalLogRow, type SignalEvent, type TouchMeta } from "../lib/api";
+import { formatTouch, extractTouch } from "../lib/signal-format";
 
 /**
  * 觸發歷史 — 單欄列表（適合 ≤ 300px 寬欄位）。
@@ -26,6 +27,8 @@ interface UnifiedRow {
   price: number;
   isoTime: string;
   isFresh: boolean;
+  cdpTouch?: TouchMeta;
+  maTouch?: TouchMeta;
 }
 
 function formatTime(iso: string): string {
@@ -48,6 +51,8 @@ export function TriggerList({
     price: e.trigger_price,
     isoTime: e.triggered_at,
     isFresh: true,
+    cdpTouch: e.cdp_touch,
+    maTouch: e.ma_touch,
   }));
 
   const historicalRows: UnifiedRow[] = historical.map((h) => ({
@@ -59,6 +64,8 @@ export function TriggerList({
     price: h.trigger_price ?? 0,
     isoTime: h.triggered_at,
     isFresh: false,
+    cdpTouch: extractTouch(h.context_json, "cdp_touch"),
+    maTouch: extractTouch(h.context_json, "ma_touch"),
   }));
 
   const seen = new Set<string>();
@@ -132,6 +139,16 @@ export function TriggerList({
                 );
               })()}
             </div>
+            {(r.cdpTouch || r.maTouch) && (
+              <div className="text-2xs text-ink-dim mt-1.5 tabular-nums">
+                {r.cdpTouch && (
+                  <span className="mr-3">{formatTouch(r.cdpTouch)}</span>
+                )}
+                {r.maTouch && (
+                  <span>{formatTouch(r.maTouch)}</span>
+                )}
+              </div>
+            )}
           </li>
         );
       })}
