@@ -277,6 +277,20 @@ class SignalEngine:
         logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
         return all(results) if logic == "AND" else any(results)
 
+    @staticmethod
+    def _direction_of_touch(prev: Tick | None, curr: Tick, threshold: float) -> str:
+        """判斷 curr.price 相對 threshold 從哪個方向跨越過來。
+
+        回傳 "from_below" / "from_above" / "horizontal"。
+        """
+        if prev is None:
+            return "horizontal"
+        if prev.price < threshold and curr.price >= threshold:
+            return "from_below"
+        if prev.price > threshold and curr.price <= threshold:
+            return "from_above"
+        return "horizontal"
+
     def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
         """tick.price 落在所選 CDP 線的 ±N tick 範圍內 → (True, 哪條觸發)。
 
