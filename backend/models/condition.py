@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# 即時訊號可用的欄位(1 個即時 close + 5 個 CDP 線 + 2 條 MA)
+# 即時訊號可用的欄位(1 個即時 close + 5 個 CDP 線 + 2 條 MA + 2 個日內)
 ConditionField = Literal[
     "close",
     # 從 daily_ohlc 算出的 5 線
@@ -25,6 +25,9 @@ ConditionField = Literal[
     # 富邦 tech.sma 拉的 MA(每日 refill 進 field_cache)
     "sma_5",
     "sma_20",
+    # 日內動態欄位 — 每 tick 重算
+    "day_change_pct",  # (tick.price - 昨日收盤) / 昨日收盤 * 100
+    "day_volume",      # backend 累積今日成交量(restart 後重算)
 ]
 
 ConditionOperator = Literal["gt", "gte", "lt", "lte", "eq"]
@@ -33,6 +36,7 @@ ALL_FIELDS: tuple[ConditionField, ...] = (
     "close",
     "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
     "sma_5", "sma_20",
+    "day_change_pct", "day_volume",
 )
 
 
@@ -139,7 +143,7 @@ class ActiveFilter(Filter):
     任一非空(即時訊號可單獨用其中任一種觸發機制)。
     """
 
-    schema_version: int = 3  # 2→3,加 ma_proximity
+    schema_version: int = 4  # 3→4,加 day_change_pct / day_volume field
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
     ma_proximity:  MAProximityCondition  | None = None

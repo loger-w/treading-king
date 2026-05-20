@@ -39,11 +39,26 @@ def test_ma_proximity_rejects_invalid_level():
         MAProximityCondition(levels=["sma_60"])  # type: ignore
 
 
-def test_active_filter_schema_bumps_to_3():
+def test_active_filter_schema_bumps_to_4():
     from models.condition import ActiveFilter
     f = ActiveFilter(conditions=[Condition(field="close", operator="gt", value=100)])
-    assert f.schema_version == 3
+    assert f.schema_version == 4
     assert f.ma_proximity is None
+
+
+def test_day_metric_fields_in_all_fields():
+    assert "day_change_pct" in ALL_FIELDS
+    assert "day_volume" in ALL_FIELDS
+
+
+def test_condition_accepts_day_change_pct():
+    c = Condition(field="day_change_pct", operator="gt", value=6)
+    assert c.field == "day_change_pct"
+
+
+def test_condition_value_can_reference_day_volume():
+    c = Condition(field="close", operator="gt", value="day_volume")
+    assert c.value == "day_volume"
 
 
 def test_active_filter_loads_old_schema_2_data():

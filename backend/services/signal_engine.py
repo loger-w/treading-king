@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from models.condition import (
@@ -23,6 +23,12 @@ QUEUE_MAXSIZE = 5000
 BACKPRESSURE_LAG_MS = 5000
 BACKPRESSURE_DURATION_S = 30
 HEARTBEAT_INTERVAL_S = 1.0
+
+# 試撮期間(08:30 ≤ t < 09:00,台北時間)是台股盤前模擬撮合,沒實際成交;
+# 期間 Fubon WS 若送任何 tick 都不該觸發訊號 / 計入今日總量。
+TAIPEI_TZ = timezone(timedelta(hours=8))
+PRE_OPEN_START = (8, 30)
+MARKET_OPEN    = (9, 0)
 
 
 class SignalEngine:
@@ -44,6 +50,8 @@ class SignalEngine:
         # 當天觸碰次數計數 (symbol, level, date) → count,跨日 GC
         self._cdp_touch_count: dict[tuple[str, str, date], int] = {}
         self._ma_touch_count:  dict[tuple[str, str, date], int] = {}
+        # 今日累積成交量 — backend 啟動後累積,daily refill 重置
+        self._day_volume: dict[str, int] = {}
         # metrics
         self._dropped_today = 0
         self._last_lag_ms = 0.0
@@ -144,7 +152,7 @@ class SignalEngine:
                     symbols_needed.add(row["symbol"])
                 watchlist_fetched = True
 
-        # cdp 5 值
+        # cdp 5 值 + 昨日收盤(供 day_change_pct 算式分母)
         cdp = get_cdp_service()
         for sym in symbols_needed:
             levels = await cdp.get(sym)
@@ -155,6 +163,7 @@ class SignalEngine:
                 d["cdp"] = levels["cdp"]
                 d["cdp_nl"] = levels["nl"]
                 d["cdp_al"] = levels["al"]
+                d["prev_close"] = levels["prev_close"]
 
         # sma 5 / 20(失敗欄位回 None,不寫 cache)
         for sym in symbols_needed:
@@ -164,6 +173,8 @@ class SignalEngine:
                 if sma_5  is not None: d["sma_5"]  = sma_5
                 if sma_20 is not None: d["sma_20"] = sma_20
 
+        # 跨午夜後重新累積今日成交量(跟 _gc_touch_counts 一樣的 daily reset 邏輯)
+        self._day_volume.clear()
         self._last_field_refill_date = date.today()
 
     async def _consume_loop(self) -> None:
@@ -231,6 +242,15 @@ class SignalEngine:
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
+        if self._in_pre_open_period(time.time()):
+            # 試撮期間(08:30-09:00)沒實際成交,直接 return — 不評估 / 不累積量 /
+            # 不更新 prev_tick。用 wall-clock(time.time)而非 tick.time,
+            # heartbeat path 拿到昨日 stale tick 時也能正確擋下。
+            return
+
+        # 09:00 後才累積今日總量,避免試撮 indicative tick 污染
+        self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
+
         prev = self._prev_tick.get(symbol)
         try:
             for active in self._active:
@@ -400,6 +420,18 @@ class SignalEngine:
         }
 
     @staticmethod
+    def _in_pre_open_period(now_ts: float) -> bool:
+        """現在時間是否在試撮期間(08:30 ≤ t < 09:00,台北時間,週末除外)。
+
+        caller 應傳 wall-clock(time.time())而非 tick.time — heartbeat path 的
+        latest tick 可能是昨日 stale tick,用 tick.time 會誤判。
+        """
+        dt = datetime.fromtimestamp(now_ts, tz=TAIPEI_TZ)
+        if dt.weekday() >= 5:  # 週末不開盤
+            return False
+        return PRE_OPEN_START <= (dt.hour, dt.minute) < MARKET_OPEN
+
+    @staticmethod
     def _direction_of_touch(prev: Tick | None, curr: Tick, threshold: float) -> str:
         """判斷 curr.price 相對 threshold 從哪個方向跨越過來。
 
@@ -487,26 +519,32 @@ class SignalEngine:
         op = c.get("operator") if isinstance(c, dict) else c.operator
         value = c.get("value") if isinstance(c, dict) else c.value
 
-        # field 'close' 用即時 tick.price，其他從 cache
-        if field == "close":
-            lhs = tick.price
-        else:
-            lhs = self._field_cache.get(symbol, {}).get(field)
+        lhs = self._resolve_field(symbol, tick, field)
         if lhs is None:
             return False
 
         if isinstance(value, str):
-            # 跨欄位（含 cdp_*）
-            if value == "close":
-                rhs = tick.price
-            else:
-                rhs = self._field_cache.get(symbol, {}).get(value)
+            # 跨欄位比較
+            rhs = self._resolve_field(symbol, tick, value)
             if rhs is None:
                 return False
         else:
             rhs = float(value)
 
         return _cmp(lhs, op, rhs)
+
+    def _resolve_field(self, symbol: str, tick: Tick, field: str) -> float | None:
+        """欄位 → 數值。close / day_* 動態算,其他走 _field_cache。"""
+        if field == "close":
+            return tick.price
+        if field == "day_change_pct":
+            prev = self._field_cache.get(symbol, {}).get("prev_close")
+            if prev is None or prev == 0:
+                return None
+            return (tick.price - prev) / prev * 100.0
+        if field == "day_volume":
+            return float(self._day_volume.get(symbol, 0))
+        return self._field_cache.get(symbol, {}).get(field)
 
     async def _fanout(
         self, active: ActiveSignalOut, symbol: str, tick: Tick,

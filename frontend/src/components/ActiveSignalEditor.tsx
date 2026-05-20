@@ -11,6 +11,7 @@ const FIELD_LABEL: Record<ConditionField, string> = {
   cdp_ah: "CDP AH (最高值)", cdp_nh: "CDP NH (近高)", cdp: "CDP 中軸",
   cdp_nl: "CDP NL (近低)", cdp_al: "CDP AL (最低值)",
   sma_5: "MA5 (5 日均線)", sma_20: "MA20 (20 日均線)",
+  day_change_pct: "目前漲幅 %", day_volume: "目前總量 (張)",
 };
 
 const OP_LABEL: Record<ConditionOperator, string> = {
