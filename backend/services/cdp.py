@@ -64,6 +64,7 @@ class CdpLevels(TypedDict):
     nl: float
     al: float
     as_of_date: str  # 昨日 ISO date string
+    prev_close: float  # 昨日收盤 — 日內漲幅算式分母
 
 
 def compute_cdp(h: float, l: float, c: float) -> dict[str, float]:
@@ -154,6 +155,7 @@ class CdpService:
                 "ah": levels["ah"], "nh": levels["nh"], "cdp": levels["cdp"],
                 "nl": levels["nl"], "al": levels["al"],
                 "as_of_date": row["date"],
+                "prev_close": float(row["close"]),
             }
             logger.debug("cdp cached %s: %s", symbol, self._cache[symbol])
         except (ValueError, TypeError) as e:

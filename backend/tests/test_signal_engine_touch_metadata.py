@@ -1,4 +1,5 @@
 """驗 fanout payload 帶 cdp_touch / ma_touch 含 direction、role、touch_index。"""
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +9,9 @@ from models.condition import (
 )
 from services.ring_buffer import Tick
 from services.signal_engine import SignalEngine
+
+# 固定 wall-clock 在試撮外、9:00 後,避免 gate 隨真實時間 flaky
+POST_OPEN = datetime(2026, 5, 20, 10, 0, tzinfo=timezone(timedelta(hours=8))).timestamp()
 
 
 def _make_active() -> ActiveSignalOut:
@@ -34,7 +38,8 @@ async def test_fanout_payload_includes_cdp_touch_from_below():
     async def fake_broadcast(payload):
         captured.update(payload)
 
-    with patch("services.signal_engine.get_broadcaster") as mock_bc, \
+    with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
+         patch("services.signal_engine.get_broadcaster") as mock_bc, \
          patch("services.supabase_writer.get_supabase_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         sw = MagicMock()
@@ -61,7 +66,8 @@ async def test_touch_index_increments_on_repeat_trigger():
     async def fake_broadcast(payload):
         captured_indices.append(payload["data"]["cdp_touch"]["touch_index"])
 
-    with patch("services.signal_engine.get_broadcaster") as mock_bc, \
+    with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
+         patch("services.signal_engine.get_broadcaster") as mock_bc, \
          patch("services.supabase_writer.get_supabase_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()

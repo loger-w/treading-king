@@ -51,6 +51,7 @@ export const ALL_FIELDS = [
   "close",
   "cdp_ah", "cdp_nh", "cdp", "cdp_nl", "cdp_al",
   "sma_5", "sma_20",
+  "day_change_pct", "day_volume",
 ] as const;
 export type ConditionField = typeof ALL_FIELDS[number];
 
