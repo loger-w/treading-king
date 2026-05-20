@@ -30,6 +30,13 @@ function formatVolume(v: number): string {
   return String(v);
 }
 
+// 台股慣例:平盤上紅、平盤下綠、剛好平盤中性
+function priceColorClass(price: number, baseline: number): string {
+  if (price > baseline) return "fill-bull";
+  if (price < baseline) return "fill-bear";
+  return "fill-ink";
+}
+
 export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, onAddToWatchlist }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
@@ -385,35 +392,43 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
               stroke="var(--color-ink, #ede4d3)" strokeWidth="1" />
           )}
 
-          {/* 今日最高 / 最低 標記 + 數字 */}
-          {todayHighIdx >= 0 && (
-            <g>
-              <circle cx={scaleX(todayHighIdx)} cy={scaleY(todayHigh)} r="2.5"
-                className="fill-bull" />
-              <text
-                x={scaleX(todayHighIdx)}
-                y={scaleY(todayHigh) - 6}
-                textAnchor="middle"
-                className="fill-bull text-[12px] tabular-nums font-medium"
-              >
-                {formatTickPrice(todayHigh)}
-              </text>
-            </g>
-          )}
-          {todayLowIdx >= 0 && (
-            <g>
-              <circle cx={scaleX(todayLowIdx)} cy={scaleY(todayLow)} r="2.5"
-                className="fill-bear" />
-              <text
-                x={scaleX(todayLowIdx)}
-                y={scaleY(todayLow) + 13}
-                textAnchor="middle"
-                className="fill-bear text-[12px] tabular-nums font-medium"
-              >
-                {formatTickPrice(todayLow)}
-              </text>
-            </g>
-          )}
+          {/* 今日最高 / 最低 標記 + 數字
+              顏色跟著漲跌走 — 高/低點在平盤上紅、平盤下綠、剛好等於平盤中性
+              (例:低點若仍在平盤上,代表整天都漲,低點也用紅色) */}
+          {todayHighIdx >= 0 && (() => {
+            const cls = priceColorClass(todayHigh, baseline);
+            return (
+              <g>
+                <circle cx={scaleX(todayHighIdx)} cy={scaleY(todayHigh)} r="2.5"
+                  className={cls} />
+                <text
+                  x={scaleX(todayHighIdx)}
+                  y={scaleY(todayHigh) - 6}
+                  textAnchor="middle"
+                  className={`${cls} text-[12px] tabular-nums font-medium`}
+                >
+                  {formatTickPrice(todayHigh)}
+                </text>
+              </g>
+            );
+          })()}
+          {todayLowIdx >= 0 && (() => {
+            const cls = priceColorClass(todayLow, baseline);
+            return (
+              <g>
+                <circle cx={scaleX(todayLowIdx)} cy={scaleY(todayLow)} r="2.5"
+                  className={cls} />
+                <text
+                  x={scaleX(todayLowIdx)}
+                  y={scaleY(todayLow) + 13}
+                  textAnchor="middle"
+                  className={`${cls} text-[12px] tabular-nums font-medium`}
+                >
+                  {formatTickPrice(todayLow)}
+                </text>
+              </g>
+            );
+          })()}
 
           {/* 成交量子圖 — bar 顏色用 candle 本身的方向（close vs open） */}
           {showVolume && candles.length > 0 && (
