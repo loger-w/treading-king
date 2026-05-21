@@ -58,3 +58,78 @@ def test_compute_camarilla_zero_range_collapses_to_close():
     levels = compute_camarilla(h=100.0, l=100.0, c=100.0)
     for key in ("h4", "h3", "h2", "h1", "l1", "l2", "l3", "l4"):
         assert levels[key] == 100.0
+
+
+"""Service tests — refresh / backfill / cache."""
+from datetime import date
+from unittest.mock import MagicMock
+
+import pytest
+
+from services import camarilla as cam_module
+
+
+@pytest.mark.asyncio
+async def test_service_refresh_caches_levels(monkeypatch):
+    """mock daily_ohlc 回一筆 row → refresh → cache 命中 → has() True、_cache 回值。"""
+    fake_supabase = MagicMock()
+    fake_supabase.client = MagicMock()
+    fake_supabase.client.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [
+        {"date": "2026-05-21", "high": 110.0, "low": 90.0, "close": 100.0}
+    ]
+    monkeypatch.setattr(cam_module, "get_supabase", lambda: fake_supabase)
+
+    svc = cam_module.CamarillaService()
+    await svc.refresh("2330")
+    assert svc.has("2330")
+    levels = svc._cache["2330"]
+    assert levels["h4"] == 111.0
+    assert levels["l4"] == 89.0
+    assert levels["as_of_date"] == "2026-05-21"
+    assert levels["prev_close"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_service_get_triggers_daily_backfill_once(monkeypatch):
+    """同一 symbol 同一日,get() 只 trigger backfill 一次。"""
+    svc = cam_module.CamarillaService()
+    backfill_calls = []
+
+    async def fake_backfill(symbol):
+        backfill_calls.append(symbol)
+        return True
+
+    svc.backfill_from_fubon = fake_backfill  # type: ignore[method-assign]
+
+    async def fake_refresh(symbol):
+        svc._cache[symbol] = {
+            "h4": 0, "h3": 0, "h2": 0, "h1": 0,
+            "l1": 0, "l2": 0, "l3": 0, "l4": 0,
+            "as_of_date": "2026-05-21", "prev_close": 0.0,
+        }
+
+    svc.refresh = fake_refresh  # type: ignore[method-assign]
+
+    await svc.get("2330")
+    await svc.get("2330")
+    assert backfill_calls == ["2330"]
+
+
+@pytest.mark.asyncio
+async def test_service_refresh_missing_row_returns_silently(monkeypatch):
+    """daily_ohlc 沒這 symbol 的 row → refresh 不 raise、cache 不命中。"""
+    fake_supabase = MagicMock()
+    fake_supabase.client = MagicMock()
+    fake_supabase.client.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+    monkeypatch.setattr(cam_module, "get_supabase", lambda: fake_supabase)
+
+    svc = cam_module.CamarillaService()
+    await svc.refresh("UNKNOWN")
+    assert not svc.has("UNKNOWN")
+
+
+def test_get_camarilla_service_singleton():
+    """get_camarilla_service() 回相同 instance(module-level singleton)。"""
+    a = cam_module.get_camarilla_service()
+    b = cam_module.get_camarilla_service()
+    assert a is b
