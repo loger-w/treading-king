@@ -78,6 +78,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
     maxVolume, scaleVolY, volBarW,
     resolvedLabels,
     minutesByIdx,
+    filteredCandles,
   } = useMemo(() => {
     // 擋試撮 / 盤後 candle:只留正盤時段(9:00 ≤ 分鐘 ≤ 13:30)
     const filteredCandles: IntradayCandle[] = candles.filter((c) => {
@@ -96,6 +97,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         maxVolume: 0, scaleVolY: (_: number) => 0, volBarW: 0,
         resolvedLabels: [] as ReturnType<typeof resolveCollisions>,
         minutesByIdx: [] as number[],
+        filteredCandles: [] as IntradayCandle[],
       };
     }
     const closes = filteredCandles.map((c) => c.close);
@@ -201,6 +203,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
       maxVolume, scaleVolY, volBarW,
       resolvedLabels,
       minutesByIdx,
+      filteredCandles,
     };
   }, [candles, cdp, showCdp, ma, showMa, showVwap, prevClose]);
 
@@ -240,8 +243,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
     setHover(null);
   }
 
-  const latest = candles[candles.length - 1];
-  const first = candles[0];
+  const latest = filteredCandles[filteredCandles.length - 1];
+  const first = filteredCandles[0];
   // 漲跌基準：昨日收盤；prev_close 沒拿到時 fallback 今日開盤
   const baseline = prevClose ?? (first ? first.open : 0);
   const change = latest && baseline ? latest.close - baseline : 0;
@@ -284,7 +287,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         </button>
       </div>
 
-      {candles.length === 0 ? (
+      {filteredCandles.length === 0 ? (
         <div className="h-[360px] flex items-center justify-center text-ink-dim font-serif italic">
           載入中…
         </div>
@@ -299,10 +302,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
               一個多邊形(走勢→baseline 封閉區),clipPath 切上下兩半分別塗色 */}
           {baseline > 0 && (() => {
             const baselineY = scaleY(baseline);
-            const lastIdx = candles.length - 1;
+            const lastIdx = filteredCandles.length - 1;
             const points = [
               `${scaleX(minutesByIdx[0])},${baselineY}`,
-              ...candles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`),
+              ...filteredCandles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`),
               `${scaleX(minutesByIdx[lastIdx])},${baselineY}`,
             ].join(" ");
             return (
@@ -463,7 +466,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
           })()}
 
           {/* 成交量子圖 — bar 顏色用 candle 本身的方向（close vs open） */}
-          {showVolume && candles.length > 0 && (
+          {showVolume && filteredCandles.length > 0 && (
             <g>
               {/* 分隔線：主圖底部與成交量 pane 之間 */}
               <line x1={PAD_L} y1={CHART_H + VOL_GAP / 2}
@@ -480,7 +483,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
                 Vol
               </text>
               {/* bars */}
-              {candles.map((c, i) => {
+              {filteredCandles.map((c, i) => {
                 const x = scaleX(minutesByIdx[i]) - volBarW / 2;
                 const y = scaleVolY(c.volume);
                 const h = TOTAL_H - y;
@@ -513,7 +516,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
 
           {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）*/}
           {hover && (() => {
-            const candle = candles[hover.idx];
+            const candle = filteredCandles[hover.idx];
             const m = minutesByIdx[hover.idx];
             const lineX = scaleX(m);
             const lineY = scaleY(candle.close);
