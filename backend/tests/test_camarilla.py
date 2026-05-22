@@ -116,6 +116,48 @@ async def test_service_get_triggers_daily_backfill_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_service_get_retriggers_backfill_after_date_rollover(monkeypatch):
+    """日期跨日後 get() 應該再次觸發 backfill — 驗 _last_backfill_attempt 不是「永不過期」。"""
+    from datetime import date as date_real
+
+    svc = cam_module.CamarillaService()
+    backfill_calls = []
+
+    async def fake_backfill(symbol):
+        backfill_calls.append(symbol)
+        return True
+
+    svc.backfill_from_fubon = fake_backfill  # type: ignore[method-assign]
+
+    async def fake_refresh(symbol):
+        svc._cache[symbol] = {
+            "h4": 0, "h3": 0, "h2": 0, "h1": 0,
+            "l1": 0, "l2": 0, "l3": 0, "l4": 0,
+            "as_of_date": "x", "prev_close": 0.0,
+        }
+
+    svc.refresh = fake_refresh  # type: ignore[method-assign]
+
+    # Day 1 — first call triggers backfill
+    class FakeDateDay1:
+        @staticmethod
+        def today():
+            return date_real(2026, 5, 21)
+    monkeypatch.setattr(cam_module, "date", FakeDateDay1)
+    await svc.get("2330")
+
+    # Day 2 — should retrigger
+    class FakeDateDay2:
+        @staticmethod
+        def today():
+            return date_real(2026, 5, 22)
+    monkeypatch.setattr(cam_module, "date", FakeDateDay2)
+    await svc.get("2330")
+
+    assert backfill_calls == ["2330", "2330"]  # 兩天各 backfill 一次
+
+
+@pytest.mark.asyncio
 async def test_service_refresh_missing_row_returns_silently(monkeypatch):
     """daily_ohlc 沒這 symbol 的 row → refresh 不 raise、cache 不命中。"""
     fake_supabase = MagicMock()
@@ -130,6 +172,7 @@ async def test_service_refresh_missing_row_returns_silently(monkeypatch):
 
 def test_get_camarilla_service_singleton():
     """get_camarilla_service() 回相同 instance(module-level singleton)。"""
+    cam_module._service = None  # reset for isolation
     a = cam_module.get_camarilla_service()
     b = cam_module.get_camarilla_service()
     assert a is b

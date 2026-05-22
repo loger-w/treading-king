@@ -61,6 +61,8 @@ class CamarillaService:
 
     def __init__(self) -> None:
         self._cache: dict[str, CamarillaLevels] = {}
+        # _lock kept for future use; current upsert+cache writes are idempotent
+        # so concurrent get() calls converge correctly without acquiring
         self._lock = asyncio.Lock()
         self._last_backfill_attempt: dict[str, date] = {}
 
