@@ -3,14 +3,19 @@ import { api, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/
 import { useLocalToggle } from "../hooks/useLocalToggle";
 import { formatTickPrice, roundToNearestTick } from "../lib/tick";
 import { resolveCollisions, type LabelInput } from "../lib/chart-labels";
+import {
+  MARKET_OPEN_MIN,
+  TRADING_MINUTES,
+  minuteOfDay,
+} from "../lib/intraday-time";
 
 interface Props {
   symbol: string;
   name: string | null;
   candles: IntradayCandle[];
   prevClose: number | null;  // 昨日收盤，給漲跌% / Y 軸 ±10% 用
-  inWatchlist: boolean;
-  onAddToWatchlist: () => void;
+  inAnyBookmark: boolean;
+  onOpenBookmarkDialog: () => void;
 }
 
 const CHART_W = 820;
@@ -37,7 +42,7 @@ function priceColorClass(price: number, baseline: number): string {
   return "fill-ink";
 }
 
-export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, onAddToWatchlist }: Props) {
+export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark, onOpenBookmarkDialog }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [showVolume, setShowVolume] = useLocalToggle("tk:chart:volume", true);
@@ -71,6 +76,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
     maxVolume, scaleVolY, volBarW,
     resolvedLabels,
+    minutesByIdx,
   } = useMemo(() => {
     if (candles.length === 0) {
       return {
@@ -82,6 +88,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
         maxVolume: 0, scaleVolY: (_: number) => 0, volBarW: 0,
         resolvedLabels: [] as ReturnType<typeof resolveCollisions>,
+        minutesByIdx: [] as number[],
       };
     }
     const closes = candles.map((c) => c.close);
@@ -116,10 +123,13 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
 
     const xRange = CHART_W - PAD_L - PAD_R;
     const yRange = CHART_H - PAD_T - PAD_B;
-    const scaleX = (i: number) => PAD_L + (i / Math.max(candles.length - 1, 1)) * xRange;
+    // X 軸固定 9:00~13:30(分鐘 540~810);scaleX 吃「分鐘 of day」非 candle index
+    const minutesByIdx = candles.map((c) => minuteOfDay(c.date));
+    const scaleX = (m: number) =>
+      PAD_L + ((m - MARKET_OPEN_MIN) / TRADING_MINUTES) * xRange;
     const scaleY = (v: number) => PAD_T + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
-    const polyClose = candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`).join(" ");
-    const polyVwap = candles.map((c, i) => `${scaleX(i)},${scaleY(c.average)}`).join(" ");
+    const polyClose = candles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`).join(" ");
+    const polyVwap = candles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.average)}`).join(" ");
 
     // 成交量子圖 scale：0 到 maxVolume，pane 範圍 [volTop, volBottom]
     const maxVolume = Math.max(1, ...candles.map((c) => c.volume));
@@ -128,7 +138,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
     const scaleVolY = (v: number) =>
       volTop + (1 - v / maxVolume) * (volBottom - volTop);
     // bar 寬度：每根 candle 在 x 軸佔的格子寬 * 0.7（留間隙）；最少 1px
-    const slotW = xRange / Math.max(candles.length, 1);
+    // 固定 slot 寬 = xRange / 270 分;不隨 candle 數量伸縮
+    const slotW = xRange / TRADING_MINUTES;
     const volBarW = Math.max(1, slotW * 0.7);
 
     // MA 可見性過濾(超出 ±10% 範圍的不畫,沿用 CDP 同邏輯)
@@ -182,6 +193,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
       todayHigh, todayHighIdx, todayLow, todayLowIdx,
       maxVolume, scaleVolY, volBarW,
       resolvedLabels,
+      minutesByIdx,
     };
   }, [candles, cdp, showCdp, ma, showMa, showVwap, prevClose]);
 
@@ -218,7 +230,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
 
   return (
     <div>
-      {/* 股票資訊 header — 名稱 · 代號 + 大字股價 + 漲跌百分比 + 加入自選按鈕 */}
+      {/* 股票資訊 header — 名稱 · 代號 + 大字股價 + 漲跌百分比 + 加入書籤按鈕 */}
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <div className="font-serif text-[22px] tracking-tight text-ink leading-tight">
@@ -238,17 +250,16 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
         </div>
         <button
           type="button"
-          onClick={onAddToWatchlist}
-          disabled={inWatchlist}
+          onClick={onOpenBookmarkDialog}
           className={[
-            "shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 text-2xs uppercase tracking-[1.5px] transition-all duration-150",
-            inWatchlist
-              ? "border border-line text-ink-dim cursor-default"
-              : "border border-ink-dim text-ink-muted hover:border-accent hover:text-accent cursor-pointer",
+            "shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 text-2xs uppercase tracking-[1.5px] transition-all duration-150 cursor-pointer",
+            inAnyBookmark
+              ? "border border-bear/40 text-bear hover:border-bear"
+              : "border border-ink-dim text-ink-muted hover:border-accent hover:text-accent",
           ].join(" ")}
-          aria-label={inWatchlist ? "已在自選清單" : "加入自選清單"}
+          aria-label="加入或編輯書籤"
         >
-          {inWatchlist ? "已在自選 ✓" : "+ 加入自選"}
+          {inAnyBookmark ? "✎ 編輯書籤" : "+ 加入書籤"}
         </button>
       </div>
 
@@ -269,9 +280,9 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             const baselineY = scaleY(baseline);
             const lastIdx = candles.length - 1;
             const points = [
-              `${scaleX(0)},${baselineY}`,
-              ...candles.map((c, i) => `${scaleX(i)},${scaleY(c.close)}`),
-              `${scaleX(lastIdx)},${baselineY}`,
+              `${scaleX(minutesByIdx[0])},${baselineY}`,
+              ...candles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`),
+              `${scaleX(minutesByIdx[lastIdx])},${baselineY}`,
             ].join(" ");
             return (
               <>
@@ -399,10 +410,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             const cls = priceColorClass(todayHigh, baseline);
             return (
               <g>
-                <circle cx={scaleX(todayHighIdx)} cy={scaleY(todayHigh)} r="2.5"
+                <circle cx={scaleX(minutesByIdx[todayHighIdx])} cy={scaleY(todayHigh)} r="2.5"
                   className={cls} />
                 <text
-                  x={scaleX(todayHighIdx)}
+                  x={scaleX(minutesByIdx[todayHighIdx])}
                   y={scaleY(todayHigh) - 6}
                   textAnchor="middle"
                   className={`${cls} text-[12px] tabular-nums font-medium`}
@@ -416,10 +427,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             const cls = priceColorClass(todayLow, baseline);
             return (
               <g>
-                <circle cx={scaleX(todayLowIdx)} cy={scaleY(todayLow)} r="2.5"
+                <circle cx={scaleX(minutesByIdx[todayLowIdx])} cy={scaleY(todayLow)} r="2.5"
                   className={cls} />
                 <text
-                  x={scaleX(todayLowIdx)}
+                  x={scaleX(minutesByIdx[todayLowIdx])}
                   y={scaleY(todayLow) + 13}
                   textAnchor="middle"
                   className={`${cls} text-[12px] tabular-nums font-medium`}
@@ -449,7 +460,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
               </text>
               {/* bars */}
               {candles.map((c, i) => {
-                const x = scaleX(i) - volBarW / 2;
+                const x = scaleX(minutesByIdx[i]) - volBarW / 2;
                 const y = scaleVolY(c.volume);
                 const h = TOTAL_H - y;
                 const cls = c.close > c.open
@@ -465,24 +476,24 @@ export function IntradayChart({ symbol, name, candles, prevClose, inWatchlist, o
             </g>
           )}
 
-          {/* X 軸時間 label */}
-          {[0, 0.25, 0.5, 0.75, 1].map((p) => {
-            if (candles.length === 0) return null;
-            const idx = Math.floor((candles.length - 1) * p);
-            const x = scaleX(idx);
-            const t = new Date(candles[idx].date);
-            const hh = String(t.getHours()).padStart(2, "0");
-            const mm = String(t.getMinutes()).padStart(2, "0");
-            return (
-              <text key={p} x={x} y={CHART_H - 8} textAnchor="middle"
-                className="fill-ink-dim text-[12px] tabular-nums">{hh}:{mm}</text>
-            );
-          })}
+          {/* X 軸時間 label — 固定 6 個整點(9/10/11/12/13/13:30),
+              不隨 candle 數量變動 */}
+          {[
+            { min: 540, label: "9:00" },
+            { min: 600, label: "10:00" },
+            { min: 660, label: "11:00" },
+            { min: 720, label: "12:00" },
+            { min: 780, label: "13:00" },
+            { min: 810, label: "13:30" },
+          ].map(({ min, label }) => (
+            <text key={min} x={scaleX(min)} y={CHART_H - 8} textAnchor="middle"
+              className="fill-ink-dim text-[12px] tabular-nums">{label}</text>
+          ))}
 
           {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）*/}
           {hover && (() => {
             const candle = candles[hover.idx];
-            const lineX = scaleX(hover.idx);
+            const lineX = scaleX(minutesByIdx[hover.idx]);
             const lineY = scaleY(candle.close);
             const t = new Date(candle.date);
             const hh = String(t.getHours()).padStart(2, "0");
