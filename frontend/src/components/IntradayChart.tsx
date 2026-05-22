@@ -507,10 +507,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
           {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）*/}
           {hover && (() => {
             const candle = candles[hover.idx];
-            const lineX = scaleX(minutesByIdx[hover.idx]);
+            const m = minutesByIdx[hover.idx];
+            const lineX = scaleX(m);
             const lineY = scaleY(candle.close);
             // 直接從 minutesByIdx 拆出小時分鐘，不依賴 runtime locale
-            const m = minutesByIdx[hover.idx];
             const hh = String(Math.floor(m / 60)).padStart(2, "0");
             const mm = String(m % 60).padStart(2, "0");
             return (
