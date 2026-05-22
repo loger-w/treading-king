@@ -5,6 +5,7 @@ import { formatTickPrice, roundToNearestTick } from "../lib/tick";
 import { resolveCollisions, type LabelInput } from "../lib/chart-labels";
 import {
   MARKET_OPEN_MIN,
+  MARKET_CLOSE_MIN,
   TRADING_MINUTES,
   minuteOfDay,
 } from "../lib/intraday-time";
@@ -78,7 +79,13 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
     resolvedLabels,
     minutesByIdx,
   } = useMemo(() => {
-    if (candles.length === 0) {
+    // 擋試撮 / 盤後 candle:只留正盤時段(9:00 ≤ 分鐘 ≤ 13:30)
+    const filteredCandles: IntradayCandle[] = candles.filter((c) => {
+      const m = minuteOfDay(c.date);
+      return m >= MARKET_OPEN_MIN && m <= MARKET_CLOSE_MIN;
+    });
+
+    if (filteredCandles.length === 0) {
       return {
         yMin: 0, yMax: 0,
         scaleX: () => 0, scaleY: () => 0,
@@ -91,11 +98,11 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         minutesByIdx: [] as number[],
       };
     }
-    const closes = candles.map((c) => c.close);
-    const vwaps = candles.map((c) => c.average);
+    const closes = filteredCandles.map((c) => c.close);
+    const vwaps = filteredCandles.map((c) => c.average);
 
     // 基準價 = 昨日收盤（台股漲跌停以昨收為基準）；prev_close 沒有時 fallback 今日開盤
-    const refPrice = prevClose ?? candles[0].open;
+    const refPrice = prevClose ?? filteredCandles[0].open;
     const refMin = refPrice * 0.9;
     const refMax = refPrice * 1.1;
 
@@ -112,27 +119,27 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
     const yMax = Math.max(refMax, priceMax) * 1.002;
 
     // 今日最高/最低 — 用 candle.high/low（聚合，含同分鐘 tick 波動），不是 close
-    let todayHigh = candles[0].high;
+    let todayHigh = filteredCandles[0].high;
     let todayHighIdx = 0;
-    let todayLow = candles[0].low;
+    let todayLow = filteredCandles[0].low;
     let todayLowIdx = 0;
-    for (let i = 1; i < candles.length; i++) {
-      if (candles[i].high > todayHigh) { todayHigh = candles[i].high; todayHighIdx = i; }
-      if (candles[i].low < todayLow) { todayLow = candles[i].low; todayLowIdx = i; }
+    for (let i = 1; i < filteredCandles.length; i++) {
+      if (filteredCandles[i].high > todayHigh) { todayHigh = filteredCandles[i].high; todayHighIdx = i; }
+      if (filteredCandles[i].low < todayLow) { todayLow = filteredCandles[i].low; todayLowIdx = i; }
     }
 
     const xRange = CHART_W - PAD_L - PAD_R;
     const yRange = CHART_H - PAD_T - PAD_B;
     // X 軸固定 9:00~13:30(分鐘 540~810);scaleX 吃「分鐘 of day」非 candle index
-    const minutesByIdx = candles.map((c) => minuteOfDay(c.date));
+    const minutesByIdx = filteredCandles.map((c) => minuteOfDay(c.date));
     const scaleX = (m: number) =>
       PAD_L + ((m - MARKET_OPEN_MIN) / TRADING_MINUTES) * xRange;
     const scaleY = (v: number) => PAD_T + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
-    const polyClose = candles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`).join(" ");
-    const polyVwap = candles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.average)}`).join(" ");
+    const polyClose = filteredCandles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`).join(" ");
+    const polyVwap = filteredCandles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.average)}`).join(" ");
 
     // 成交量子圖 scale：0 到 maxVolume，pane 範圍 [volTop, volBottom]
-    const maxVolume = Math.max(1, ...candles.map((c) => c.volume));
+    const maxVolume = Math.max(1, ...filteredCandles.map((c) => c.volume));
     const volTop = CHART_H + VOL_GAP + VOL_PAD_T;
     const volBottom = TOTAL_H;
     const scaleVolY = (v: number) =>
@@ -173,8 +180,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         });
       }
     }
-    if (showVwap && candles.length > 0) {
-      const lastAvg = candles[candles.length - 1].average;
+    if (showVwap && filteredCandles.length > 0) {
+      const lastAvg = filteredCandles[filteredCandles.length - 1].average;
       labelInputs.push({
         originalY: scaleY(lastAvg),
         text: formatTickPrice(lastAvg),
