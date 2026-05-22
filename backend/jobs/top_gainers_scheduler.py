@@ -30,6 +30,7 @@ from datetime import datetime, time as dtime
 from typing import Any
 
 from services.fubon_client import FubonStatus, get_fubon
+from services.fubon_ws import get_ws_pool
 from services.supabase_client import SupabaseStatus, get_supabase
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,13 @@ SYMBOL_RE = re.compile(r"^\d{4}$")  # 4 位純數字
 MARKET_OPEN  = dtime(9, 0)
 MARKET_CLOSE = dtime(13, 30)
 SCHEDULE_INTERVAL_S = 60.0
+
+# WS subscription owner — refcount 機制下,同檔股票若同時也在 user 自選,
+# unsubscribe 此 owner 不會影響 user 的訂閱。
+TOP_GAINERS_OWNER = "system:top_gainers"
+
+# Module-level state — 上一輪 refresh 訂閱的 symbol set,用來 diff
+_subscribed_symbols: set[str] = set()
 
 
 def _in_market_hours(now: datetime | None = None) -> bool:
@@ -104,6 +112,7 @@ async def refresh_top_gainers() -> dict:
         logger.info("top_gainers: nothing passes filters")
         # 仍然清空 snapshot(讓前端看到空 state、而不是 stale)
         await _replace_snapshot(sb, [])
+        await _sync_subscriptions(set())
         return {"status": "ok", "count": 0}
 
     # 確認在 symbols 表(top_gainers_snapshot 對 symbols 有 FK、不在則 insert 失敗)
@@ -128,8 +137,35 @@ async def refresh_top_gainers() -> dict:
         for i, (s, pct, vol_lots, mkt) in enumerate(top)
     ]
     await _replace_snapshot(sb, rows)
+    await _sync_subscriptions({r["symbol"] for r in rows})
     logger.info("top_gainers: refreshed %d entries", len(rows))
     return {"status": "ok", "count": len(rows)}
+
+
+async def _sync_subscriptions(new_set: set[str]) -> None:
+    """Diff 上輪訂閱 vs 本輪新 set,對 WSPool 增訂 / 退訂。
+
+    refcount 機制保證:若新增 symbol 同時在 user 自選,只是多加一個 owner;
+    退訂同理 — 不影響 user 自選的 owner。
+    """
+    global _subscribed_symbols
+    pool = get_ws_pool()
+    to_add = new_set - _subscribed_symbols
+    to_remove = _subscribed_symbols - new_set
+    for s in to_add:
+        try:
+            await pool.subscribe(s, owner_id=TOP_GAINERS_OWNER)
+        except RuntimeError as e:
+            logger.warning("top_gainers: ws sub %s failed: %s", s, e)
+    for s in to_remove:
+        try:
+            await pool.unsubscribe(s, owner_id=TOP_GAINERS_OWNER)
+        except Exception as e:
+            logger.warning("top_gainers: ws unsub %s failed: %s", s, e)
+    if to_add or to_remove:
+        logger.info("top_gainers: ws sync +%d -%d (total=%d)",
+                    len(to_add), len(to_remove), len(new_set))
+    _subscribed_symbols = new_set
 
 
 async def _replace_snapshot(sb, rows: list[dict]) -> None:
