@@ -205,6 +205,19 @@ export interface CdpLevels {
   as_of_date: string;
 }
 
+export interface CamarillaLevels {
+  h4: number;
+  h3: number;
+  h2: number;
+  h1: number;
+  l1: number;
+  l2: number;
+  l3: number;
+  l4: number;
+  as_of_date: string;
+  prev_close: number;
+}
+
 export interface MaLevels {
   symbol: string;
   sma_5: number | null;
@@ -382,6 +395,9 @@ export const api = {
 
   cdp: (symbol: string) =>
     fetchJSON<CdpLevels>(`/api/cdp/${encodeURIComponent(symbol)}`),
+
+  camarilla: (symbol: string) =>
+    fetchJSON<CamarillaLevels>(`/api/camarilla/${encodeURIComponent(symbol)}`),
 
   ma: (symbol: string) =>
     fetchJSON<MaLevels>(`/api/ma/${encodeURIComponent(symbol)}`),

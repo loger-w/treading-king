@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/api";
+import { api, type CamarillaLevels, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/api";
 import { useLocalToggle } from "../hooks/useLocalToggle";
 import { formatTickPrice, roundToNearestTick } from "../lib/tick";
 import { resolveCollisions, type LabelInput } from "../lib/chart-labels";
@@ -46,10 +46,13 @@ function priceColorClass(price: number, baseline: number): string {
 export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark, onOpenBookmarkDialog }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
+  const [showCamarilla, setShowCamarilla] = useLocalToggle("tk:chart:camarilla", false);
   const [showVolume, setShowVolume] = useLocalToggle("tk:chart:volume", true);
   const [showMa, setShowMa] = useLocalToggle("tk:chart:ma", false);
   const [cdp, setCdp] = useState<CdpLevels | null>(null);
   const [cdpError, setCdpError] = useState<string | null>(null);
+  const [camarilla, setCamarilla] = useState<CamarillaLevels | null>(null);
+  const [camarillaError, setCamarillaError] = useState<string | null>(null);
   const [ma, setMa] = useState<MaLevels | null>(null);
 
   useEffect(() => {
@@ -63,6 +66,16 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
   }, [symbol, showCdp]);
 
   useEffect(() => {
+    // 切 symbol 時先清舊 Camarilla — 避免新圖上殘留舊線
+    setCamarilla(null);
+    setCamarillaError(null);
+    if (!showCamarilla) return;
+    api.camarilla(symbol).then(setCamarilla).catch((e) =>
+      setCamarillaError(e instanceof Error ? e.message : String(e))
+    );
+  }, [symbol, showCamarilla]);
+
+  useEffect(() => {
     // 切 symbol 時先清舊 MA — 避免新圖上殘留舊值
     setMa(null);
     if (!showMa) return;
@@ -73,7 +86,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
 
   const {
     yMin, yMax, scaleX, scaleY,
-    polyClose, polyVwap, visibleCdpKeys, visibleMaKeys,
+    polyClose, polyVwap, visibleCdpKeys, visibleCamKeys, visibleMaKeys,
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
     maxVolume, scaleVolY, volBarW,
     resolvedLabels,
@@ -92,6 +105,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         scaleX: () => 0, scaleY: () => 0,
         polyClose: "", polyVwap: "",
         visibleCdpKeys: [] as Array<"ah" | "nh" | "cdp" | "nl" | "al">,
+        visibleCamKeys: [] as Array<"h4" | "h3" | "h2" | "h1" | "l1" | "l2" | "l3" | "l4">,
         visibleMaKeys: [] as Array<"sma_5" | "sma_20">,
         todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
         maxVolume: 0, scaleVolY: (_: number) => 0, volBarW: 0,
@@ -113,6 +127,16 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
     const visibleCdpKeys: Array<typeof allCdpKeys[number]> = (showCdp && cdp)
       ? allCdpKeys.filter((k) => cdp[k] >= refMin && cdp[k] <= refMax)
       : [];
+
+    // Camarilla 8 線:過濾掉超出 ±10% 的 key
+    const allCamKeys = ["h4", "h3", "h2", "h1", "l1", "l2", "l3", "l4"] as const;
+    const visibleCamKeys: Array<typeof allCamKeys[number]> = (showCamarilla && camarilla)
+      ? allCamKeys.filter((k) => camarilla[k] >= refMin && camarilla[k] <= refMax)
+      : [];
+    // 只顯示 4 條主 level 的 label(H3/L3/H4/L4),H1/H2/L1/L2 不顯示 label 避免擠
+    const labeledCamKeys: Array<typeof allCamKeys[number]> = visibleCamKeys.filter(
+      (k) => k === "h3" || k === "h4" || k === "l3" || k === "l4"
+    );
 
     // Y 軸：±10% 為最小範圍，價格超出就拉大（隱藏的 CDP 不算）
     const priceMin = Math.min(...closes, ...vwaps);
@@ -172,6 +196,15 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         });
       }
     }
+    if (showCamarilla && camarilla) {
+      for (const k of labeledCamKeys) {
+        labelInputs.push({
+          originalY: scaleY(camarilla[k]),
+          text: formatTickPrice(camarilla[k]),
+          color: "#3b82f6",  // Camarilla 藍
+        });
+      }
+    }
     if (showMa && ma) {
       for (const k of visibleMaKeys) {
         const v = roundToNearestTick(ma[k]!);
@@ -198,14 +231,14 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
 
     return {
       yMin, yMax, scaleX, scaleY,
-      polyClose, polyVwap, visibleCdpKeys, visibleMaKeys,
+      polyClose, polyVwap, visibleCdpKeys, visibleCamKeys, visibleMaKeys,
       todayHigh, todayHighIdx, todayLow, todayLowIdx,
       maxVolume, scaleVolY, volBarW,
       resolvedLabels,
       minutesByIdx,
       filteredCandles,
     };
-  }, [candles, cdp, showCdp, ma, showMa, showVwap, prevClose]);
+  }, [candles, cdp, showCdp, camarilla, showCamarilla, ma, showMa, showVwap, prevClose]);
 
   // hover crosshair state — 只跟 candle idx 走（價位由 candle.close 決定）
   const [hover, setHover] = useState<{ idx: number } | null>(null);
@@ -367,6 +400,23 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
                   stroke="var(--color-accent, #e85a4f)" strokeWidth="0.6"
                   strokeDasharray="4 3" opacity="0.6" />
               ))}
+            </>
+          )}
+
+          {/* Camarilla 8 線 — H3/L3/H4/L4 主反轉/突破位較粗、H1/H2/L1/L2 弱化 */}
+          {showCamarilla && camarilla && visibleCamKeys.length > 0 && (
+            <>
+              {visibleCamKeys.map((k) => {
+                const isMain = k === "h3" || k === "h4" || k === "l3" || k === "l4";
+                return (
+                  <line key={`cam-${k}`}
+                    x1={PAD_L} y1={scaleY(camarilla[k])} x2={CHART_W - PAD_R} y2={scaleY(camarilla[k])}
+                    stroke="#3b82f6"
+                    strokeWidth={isMain ? "0.8" : "0.6"}
+                    strokeDasharray="2 4"
+                    opacity={isMain ? "0.75" : "0.4"} />
+                );
+              })}
             </>
           )}
 
@@ -582,6 +632,11 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
         >{showCdp ? "✓" : ""} CDP</button>
         <button
           type="button"
+          onClick={() => setShowCamarilla((v) => !v)}
+          className={`px-2 py-1 border ${showCamarilla ? "border-accent text-accent" : "border-line text-ink-dim"}`}
+        >{showCamarilla ? "✓" : ""} CAM</button>
+        <button
+          type="button"
           onClick={() => setShowVolume((v) => !v)}
           className={`px-2 py-1 border ${showVolume ? "border-accent text-accent" : "border-line text-ink-dim"}`}
         >{showVolume ? "✓" : ""} VOL</button>
@@ -593,6 +648,9 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
       </div>
       {showCdp && cdpError && (
         <div className="mt-1 text-xs text-bear">CDP 無資料：{cdpError}</div>
+      )}
+      {showCamarilla && camarillaError && (
+        <div className="mt-1 text-xs text-bear">Camarilla 無資料:{camarillaError}</div>
       )}
     </div>
   );

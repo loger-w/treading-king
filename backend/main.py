@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, bookmarks, candles, cdp as cdp_route,
+    active_signals, bookmarks, camarilla, candles, cdp as cdp_route,
     ma,
     preview, quote, signals_history, symbols,
     watchlist, ws,
@@ -133,5 +133,6 @@ app.include_router(active_signals.router)
 app.include_router(signals_history.router)
 app.include_router(candles.router)
 app.include_router(cdp_route.router)
+app.include_router(camarilla.router)
 app.include_router(ma.router)
 app.include_router(ws.router)
