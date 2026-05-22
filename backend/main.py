@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     await engine.start()
 
     # 訂閱 user 所有書籤內的 symbols(每個 group 一個 owner_id = "bookmark:{gid}")
-    # 系統書籤不訂閱(top_gainers 由排程更新、不走 WS tick)
+    # 系統書籤(大漲股)由 top_gainers_scheduler 在每次 refresh 時自行 sync 訂閱
     if supabase.client is not None:
         try:
             groups_res = await asyncio.to_thread(
