@@ -201,7 +201,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
   const [hover, setHover] = useState<{ idx: number } | null>(null);
 
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    if (candles.length === 0) return;
+    if (candles.length === 0 || minutesByIdx.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
     const svgY = ((e.clientY - rect.top) / rect.height) * CHART_H;
@@ -210,9 +210,23 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
       setHover(null);
       return;
     }
+    // svgX → 對應的分鐘 of day
     const ratio = (svgX - PAD_L) / (CHART_W - PAD_L - PAD_R);
-    const idx = Math.max(0, Math.min(candles.length - 1, Math.round(ratio * (candles.length - 1))));
-    setHover({ idx });
+    const mAtCursor = MARKET_OPEN_MIN + ratio * TRADING_MINUTES;
+    // 超過最新 candle 的時間(未來區) → 不顯示 crosshair
+    const latestM = minutesByIdx[minutesByIdx.length - 1];
+    if (mAtCursor > latestM) {
+      setHover(null);
+      return;
+    }
+    // 找時間最接近的 candle(線性 scan 270 筆 OK)
+    let bestIdx = 0;
+    let bestDist = Math.abs(minutesByIdx[0] - mAtCursor);
+    for (let i = 1; i < minutesByIdx.length; i++) {
+      const d = Math.abs(minutesByIdx[i] - mAtCursor);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    setHover({ idx: bestIdx });
   }
 
   function handleMouseLeave() {
@@ -495,9 +509,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
             const candle = candles[hover.idx];
             const lineX = scaleX(minutesByIdx[hover.idx]);
             const lineY = scaleY(candle.close);
-            const t = new Date(candle.date);
-            const hh = String(t.getHours()).padStart(2, "0");
-            const mm = String(t.getMinutes()).padStart(2, "0");
+            // 直接從 minutesByIdx 拆出小時分鐘，不依賴 runtime locale
+            const m = minutesByIdx[hover.idx];
+            const hh = String(Math.floor(m / 60)).padStart(2, "0");
+            const mm = String(m % 60).padStart(2, "0");
             return (
               <g>
                 {/* 垂直虛線（snap 到最近 candle）— 開啟成交量時延伸到子圖底部 */}
