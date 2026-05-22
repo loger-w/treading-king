@@ -15,7 +15,7 @@ interface Props {
   rulesCount: number;
   dialogOpen: boolean;
   onOpenRules: () => void;
-  onPickSymbol: (symbol: string) => void;
+  onPickSymbol: (symbol: string, name: string | null) => void;
 }
 
 function statusText(s: WSStatus): { text: string; color: string } {
@@ -49,7 +49,7 @@ export function TopToolbar({ wsStatus, rulesCount, dialogOpen, onOpenRules, onPi
     <div className="bg-transparent">
       <div
         className="mx-auto max-w-[1960px] px-9 pt-[26px] pb-2.5 grid items-center gap-6 max-md:px-6 max-md:grid-cols-1"
-        style={{ gridTemplateColumns: "300px 340px 1fr 300px" }}
+        style={{ gridTemplateColumns: "300px 460px 1fr 300px" }}
       >
         <span
           className="inline-flex items-baseline gap-2 text-2xs uppercase tracking-[1.5px] text-ink-dim"

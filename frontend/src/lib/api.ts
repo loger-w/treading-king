@@ -149,6 +149,36 @@ export interface WatchlistResponse {
   count: number;
 }
 
+// ---------------------------------------------------------------------------
+// Bookmarks(取代單一 watchlist)
+// ---------------------------------------------------------------------------
+
+export interface BookmarkGroup {
+  id: string;
+  name: string;
+  sort_order: number;
+  is_system: boolean;
+  source_type: string | null;   // 'top_gainers' for 大漲股
+  count: number;
+}
+
+export interface BookmarksResponse {
+  groups: BookmarkGroup[];
+  count: number;
+}
+
+export interface BookmarkItem extends WatchlistRow {
+  // 系統書籤(大漲股)的額外欄位
+  change_pct?: number | null;
+  volume_lots?: number | null;
+  captured_at?: string | null;
+}
+
+export interface BookmarkItemsResponse {
+  items: BookmarkItem[];
+  count: number;
+}
+
 export interface IntradayCandle {
   date: string;       // ISO with offset, e.g. "2026-05-12T09:00:00.000+08:00"
   open: number;
@@ -269,6 +299,46 @@ export const api = {
     remove: (symbol: string) =>
       fetchJSON<void>(`/api/watchlist/${encodeURIComponent(symbol)}`, {
         method: "DELETE",
+      }),
+  },
+
+  bookmarks: {
+    list: () => fetchJSON<BookmarksResponse>("/api/bookmarks"),
+    create: (name: string) =>
+      fetchJSON<BookmarkGroup>("/api/bookmarks", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    patch: (id: string, payload: { name?: string; sort_order?: number }) =>
+      fetchJSON<BookmarkGroup>(`/api/bookmarks/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    delete: (id: string) =>
+      fetchJSON<void>(`/api/bookmarks/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    items: (id: string) =>
+      fetchJSON<BookmarkItemsResponse>(`/api/bookmarks/${encodeURIComponent(id)}/items`),
+    addItems: (id: string, symbols: string[]) =>
+      fetchJSON<{added: string[]; skipped: string[]; count: number}>(
+        `/api/bookmarks/${encodeURIComponent(id)}/items`,
+        { method: "POST", body: JSON.stringify({ symbols }) },
+      ),
+    removeItem: (id: string, symbol: string) =>
+      fetchJSON<void>(
+        `/api/bookmarks/${encodeURIComponent(id)}/items/${encodeURIComponent(symbol)}`,
+        { method: "DELETE" },
+      ),
+    move: (payload: {
+      symbols: string[];
+      from_group_id: string;
+      to_group_ids: string[];
+      op: "move" | "copy";
+    }) =>
+      fetchJSON<{status: string}>("/api/bookmarks/items/move", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
       }),
   },
 

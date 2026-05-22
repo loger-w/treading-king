@@ -56,6 +56,16 @@ export default {
         tighter: '-0.025em',
         editorial: '-0.5px',
       },
+      keyframes: {
+        'bm-highlight': {
+          '0%':   { backgroundColor: 'rgba(232, 90, 79, 0.18)' },
+          '100%': { backgroundColor: 'transparent' },
+        },
+      },
+      animation: {
+        // 編輯模式內新加股票的淡紅光 highlight (fade 1.4s)
+        'bm-highlight': 'bm-highlight 1.4s ease-out',
+      },
     },
   },
   plugins: [],

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type SymbolSearchRow } from "../lib/api";
 
 interface Props {
-  onPick: (symbol: string) => void;
+  onPick: (symbol: string, name: string | null) => void;
   placeholder?: string;
 }
 
@@ -39,12 +39,12 @@ export function SymbolSearch({ onPick, placeholder = "搜尋代號或名稱..." 
             <button
               key={r.symbol}
               type="button"
-              onClick={() => { onPick(r.symbol); setQ(""); setResults([]); setOpen(false); }}
+              onClick={() => { onPick(r.symbol, r.name || null); setQ(""); setResults([]); setOpen(false); }}
               className="w-full text-left px-3 py-2 hover:bg-bg-deep flex items-baseline justify-between"
             >
               <span className="text-sm">
                 <span className="font-medium text-ink">{r.symbol}</span>
-                <span className="ml-2 text-ink-muted">{r.name}</span>
+                <span className="ml-2 text-ink-muted">{r.name || "(無名稱)"}</span>
               </span>
               <span className="text-2xs text-ink-dim">{r.market}</span>
             </button>

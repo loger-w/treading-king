@@ -24,11 +24,15 @@ BACKPRESSURE_LAG_MS = 5000
 BACKPRESSURE_DURATION_S = 30
 HEARTBEAT_INTERVAL_S = 1.0
 
-# 試撮期間(08:30 ≤ t < 09:00,台北時間)是台股盤前模擬撮合,沒實際成交;
-# 期間 Fubon WS 若送任何 tick 都不該觸發訊號 / 計入今日總量。
+# 正盤定義為週一~五 09:00 ≤ t < 13:30(台北時間),半開區間跟 PRE_OPEN/MARKET_OPEN
+# 對稱。試撮 / 盤後 / 隔夜 / 週末皆不評估訊號:
+#   - 試撮(08:30-09:00):Fubon WS 推 indicative tick,實際沒成交
+#   - 盤後(>= 13:30):heartbeat 用 ring_buffer.latest 重評估,但 latest 永遠停
+#     在收盤那筆 stale tick — 收盤價落在 proximity tolerance 內時每 cooldown
+#     會重複觸發訊號(直到隔日 8:30 試撮 gate 才再擋,中間有 19 小時假訊號窗)
 TAIPEI_TZ = timezone(timedelta(hours=8))
-PRE_OPEN_START = (8, 30)
-MARKET_OPEN    = (9, 0)
+MARKET_OPEN  = (9, 0)
+MARKET_CLOSE = (13, 30)
 
 
 class SignalEngine:
@@ -242,13 +246,13 @@ class SignalEngine:
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
-        if self._in_pre_open_period(time.time()):
-            # 試撮期間(08:30-09:00)沒實際成交,直接 return — 不評估 / 不累積量 /
+        if not self._in_trading_session(time.time()):
+            # 非正盤時段(試撮 / 盤後 / 隔夜 / 週末)直接 return — 不評估 / 不累積量 /
             # 不更新 prev_tick。用 wall-clock(time.time)而非 tick.time,
-            # heartbeat path 拿到昨日 stale tick 時也能正確擋下。
+            # heartbeat path 拿到收盤 stale tick 時也能正確擋下。
             return
 
-        # 09:00 後才累積今日總量,避免試撮 indicative tick 污染
+        # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染
         self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
         prev = self._prev_tick.get(symbol)
@@ -420,16 +424,16 @@ class SignalEngine:
         }
 
     @staticmethod
-    def _in_pre_open_period(now_ts: float) -> bool:
-        """現在時間是否在試撮期間(08:30 ≤ t < 09:00,台北時間,週末除外)。
+    def _in_trading_session(now_ts: float) -> bool:
+        """現在時間是否在正盤(週一~五 09:00 ≤ t < 13:30,台北時間)。
 
         caller 應傳 wall-clock(time.time())而非 tick.time — heartbeat path 的
-        latest tick 可能是昨日 stale tick,用 tick.time 會誤判。
+        latest tick 可能是收盤 / 昨日 stale tick,用 tick.time 會誤把盤後算成盤中。
         """
         dt = datetime.fromtimestamp(now_ts, tz=TAIPEI_TZ)
         if dt.weekday() >= 5:  # 週末不開盤
             return False
-        return PRE_OPEN_START <= (dt.hour, dt.minute) < MARKET_OPEN
+        return MARKET_OPEN <= (dt.hour, dt.minute) < MARKET_CLOSE
 
     @staticmethod
     def _direction_of_touch(prev: Tick | None, curr: Tick, threshold: float) -> str:

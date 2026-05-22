@@ -15,11 +15,12 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, candles, cdp as cdp_route,
+    active_signals, bookmarks, candles, cdp as cdp_route,
     ma,
     preview, quote, signals_history, symbols,
     watchlist, ws,
 )  # noqa: E402
+from jobs.top_gainers_scheduler import top_gainers_loop  # noqa: E402
 from services.fubon_client import get_fubon  # noqa: E402
 from services.fubon_ws import get_ws_pool  # noqa: E402
 from services.logging_config import configure_logging  # noqa: E402
@@ -57,26 +58,40 @@ async def lifespan(app: FastAPI):
     engine = get_signal_engine()
     await engine.start()
 
-    # 訂閱 watchlist 內所有 symbols（用 watchlist owner）
+    # 訂閱 user 所有書籤內的 symbols(每個 group 一個 owner_id = "bookmark:{gid}")
+    # 系統書籤不訂閱(top_gainers 由排程更新、不走 WS tick)
     if supabase.client is not None:
         try:
-            res = await asyncio.to_thread(
-                lambda: supabase.client.table("watchlist")
-                .select("symbol")
+            groups_res = await asyncio.to_thread(
+                lambda: supabase.client.table("bookmark_groups")
+                .select("id")
                 .eq("user_label", label)
+                .eq("is_system", False)
                 .execute()
             )
-            for r in (res.data or []):
-                try:
-                    await pool.subscribe(r["symbol"], owner_id="watchlist")
-                except RuntimeError as e:
-                    logger.warning("startup ws sub %s failed: %s", r["symbol"], e)
+            for g in (groups_res.data or []):
+                gid = g["id"]
+                items_res = await asyncio.to_thread(
+                    lambda group_id=gid: supabase.client.table("watchlist_items")
+                    .select("symbol")
+                    .eq("group_id", group_id)
+                    .execute()
+                )
+                owner = f"bookmark:{gid}"
+                for r in (items_res.data or []):
+                    try:
+                        await pool.subscribe(r["symbol"], owner_id=owner)
+                    except RuntimeError as e:
+                        logger.warning("startup ws sub %s failed: %s", r["symbol"], e)
         except Exception as e:
-            logger.error("startup watchlist sub failed: %s", e)
+            logger.error("startup bookmarks sub failed: %s", e)
 
     # 啟動 overnight 8:25 cron — 每個 instance 自己重 login + 重訂閱 ws
     overnight_task = asyncio.create_task(overnight_loop())
     logger.info("overnight loop started")
+
+    # 大漲股排程 — 盤中每 1 分鐘 refresh top_gainers_snapshot
+    top_gainers_task = asyncio.create_task(top_gainers_loop())
 
     logger.info("Startup done — fubon=%s, supabase=%s, ws_pool=%s",
                 fubon.status.value, supabase.status.value, pool.status.value)
@@ -84,6 +99,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down…")
     overnight_task.cancel()
+    top_gainers_task.cancel()
     await engine.shutdown()
     await writer.shutdown()
     await pool.shutdown()
@@ -112,6 +128,7 @@ app.include_router(quote.router)
 app.include_router(preview.router)
 app.include_router(symbols.router)
 app.include_router(watchlist.router)
+app.include_router(bookmarks.router)
 app.include_router(active_signals.router)
 app.include_router(signals_history.router)
 app.include_router(candles.router)

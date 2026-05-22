@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AddToBookmarksDialog } from "../components/AddToBookmarksDialog";
+import { BookmarksPanel } from "../components/BookmarksPanel";
 import { IntradayChart } from "../components/IntradayChart";
 import { QuoteBook } from "../components/QuoteBook";
 import { SignalRulesDialog } from "../components/SignalRulesDialog";
 import { TopToolbar } from "../components/TopToolbar";
 import { TradeTape } from "../components/TradeTape";
 import { TriggerList } from "../components/TriggerList";
-import { WatchlistWithChips } from "../components/WatchlistWithChips";
 import { useActiveSignals } from "../hooks/useActiveSignals";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
 import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
-import { useWatchlist } from "../hooks/useWatchlist";
 import { useSnapshotCache } from "../hooks/useSnapshotCache";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
@@ -27,22 +27,25 @@ import { api, type SignalLogRow } from "../lib/api";
  *           IntradayChart header 提供「+ 加入自選 / 已在自選 ✓」按鈕。
  */
 export function Monitor() {
-  const { items: watchlistItems, add, remove } = useWatchlist();
   const { items: rules, refresh: refreshRules } = useActiveSignals();
   const { counts, bump } = useTodayHits();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [historicalToday, setHistoricalToday] = useState<SignalLogRow[]>([]);
+  const [bookmarkSymbols, setBookmarkSymbols] = useState<string[]>([]);  // 所有書籤的 union(去重)
+  const [bookmarkSymbolNames, setBookmarkSymbolNames] = useState<Record<string, string | null>>({});
+  const [addToBookmarksOpen, setAddToBookmarksOpen] = useState(false);
+  const [bookmarksRefreshKey, setBookmarksRefreshKey] = useState(0);
 
   const chartRef = useRef<HTMLDivElement | null>(null);
 
-  // Selected default：第一檔自選股
+  // Selected default:第一檔書籤股
   useEffect(() => {
-    if (!selected && watchlistItems.length > 0) {
-      setSelected(watchlistItems[0].symbol);
+    if (!selected && bookmarkSymbols.length > 0) {
+      setSelected(bookmarkSymbols[0]);
     }
-  }, [watchlistItems, selected]);
+  }, [bookmarkSymbols, selected]);
 
   // 拉 today 的 signals_log (給 history list 顯示)
   useEffect(() => {
@@ -70,23 +73,12 @@ export function Monitor() {
     onTick,
   });
 
-  const symbolNames = useMemo(() => {
-    const m: Record<string, string | null> = {};
-    for (const it of watchlistItems) m[it.symbol] = it.name;
-    return m;
-  }, [watchlistItems]);
-
-  const inWatchlist = useMemo(
-    () => selected !== null && watchlistItems.some((w) => w.symbol === selected),
-    [watchlistItems, selected]
+  const inAnyBookmark = useMemo(
+    () => selected !== null && bookmarkSymbols.includes(selected),
+    [bookmarkSymbols, selected]
   );
 
-  const watchlistSymbols = useMemo(
-    () => watchlistItems.map((w) => w.symbol),
-    [watchlistItems]
-  );
-
-  const watchlistQuotes = useWatchlistQuotes(watchlistSymbols);
+  const watchlistQuotes = useWatchlistQuotes(bookmarkSymbols);
 
   const triggerSymbols = useMemo(() => {
     const set = new Set<string>();
@@ -101,8 +93,11 @@ export function Monitor() {
     return m;
   }, [triggerSymbols, triggerSnapshot]);
 
-  // 預覽訂閱：selected 不在 watchlist 時通知 backend 用 owner='preview' 訂閱該 symbol
-  usePreviewSubscribe(selected, watchlistSymbols);
+  // 預覽訂閱:selected 不在任何書籤時通知 backend 用 owner='preview' 訂閱該 symbol
+  usePreviewSubscribe(selected, bookmarkSymbols);
+
+  // BookmarksPanel 回報的 symbol → name 映射(觸發歷史用)
+  const symbolNames = bookmarkSymbolNames;
 
   function handleSelect(sym: string) {
     setSelected(sym);
@@ -112,18 +107,26 @@ export function Monitor() {
     }
   }
 
-  function handleSearchPick(sym: string) {
-    // 搜尋現在「先預覽」：只 setSelected，不 add。
+  function handleSearchPick(sym: string, name: string | null) {
+    // 搜尋現在「先預覽」:只 setSelected,不 add。
     setSelected(sym);
+    // 把搜尋帶來的 name 寫進 cache,讓 chart header 即使該股不在書籤也有名稱
+    setBookmarkSymbolNames((prev) => ({ ...prev, [sym]: name }));
     if (chartRef.current) {
       chartRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
 
-  async function handleAddCurrent() {
+  function handleOpenBookmarkDialog() {
     if (!selected) return;
-    try { await add(selected); } catch (e) { console.warn("add failed:", e); }
+    setAddToBookmarksOpen(true);
   }
+
+  const handleBookmarkItemsChanged = useCallback((symbols: string[], names: Record<string, string | null>) => {
+    setBookmarkSymbols(symbols);
+    // Merge:書籤的 names 蓋上,但保留之前 search preview 寫進的 entries
+    setBookmarkSymbolNames((prev) => ({ ...prev, ...names }));
+  }, []);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -141,7 +144,7 @@ export function Monitor() {
         <div className="mx-auto w-full max-w-[1960px] px-9 pt-3 pb-6 max-md:px-6 flex-1 min-h-0">
           <div
             className="grid items-stretch gap-6 max-[1200px]:grid-cols-1 h-full"
-            style={{ gridTemplateColumns: "300px 340px 1fr 300px" }}
+            style={{ gridTemplateColumns: "300px 460px 1fr 300px" }}
           >
 
             {/* COL 1: 觸發歷史 */}
@@ -167,27 +170,17 @@ export function Monitor() {
               </div>
             </section>
 
-            {/* COL 2: 自選清單 */}
+            {/* COL 2: 書籤 */}
             <section className="flex flex-col min-w-0 min-h-0">
-              <div className="flex items-baseline gap-2.5 mb-4 flex-shrink-0">
-                <h2 className="font-serif font-bold text-2xl tracking-[-0.5px] leading-[1.05]">
-                  自選清單
-                </h2>
-                <span className="font-sans font-normal text-sm text-ink-dim">
-                  ({watchlistItems.length})
-                </span>
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 scroll-editorial">
-                <WatchlistWithChips
-                  items={watchlistItems}
-                  rules={rules}
-                  hitCounts={counts}
-                  quotes={watchlistQuotes}
-                  selectedSymbol={selected}
-                  onSelect={setSelected}
-                  onRemove={remove}
-                />
-              </div>
+              <BookmarksPanel
+                key={bookmarksRefreshKey}
+                rules={rules}
+                hitCounts={counts}
+                quotes={watchlistQuotes}
+                selectedSymbol={selected}
+                onSelectSymbol={setSelected}
+                onItemsChanged={handleBookmarkItemsChanged}
+              />
             </section>
 
             {/* COL 3: 分時走勢 + 五檔 */}
@@ -209,8 +202,8 @@ export function Monitor() {
                       name={symbolNames[selected] ?? null}
                       candles={candles}
                       prevClose={prevClose}
-                      inWatchlist={inWatchlist}
-                      onAddToWatchlist={handleAddCurrent}
+                      inAnyBookmark={inAnyBookmark}
+                      onOpenBookmarkDialog={handleOpenBookmarkDialog}
                     />
                   </div>
                 )}
@@ -240,6 +233,17 @@ export function Monitor() {
         onClose={() => setDialogOpen(false)}
         onChanged={refreshRules}
       />
+
+      {addToBookmarksOpen && selected && (
+        <AddToBookmarksDialog
+          symbol={selected}
+          onClose={() => setAddToBookmarksOpen(false)}
+          onChanged={async () => {
+            // 重新渲染 BookmarksPanel(讓它重新拉 groups + items)
+            setBookmarksRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

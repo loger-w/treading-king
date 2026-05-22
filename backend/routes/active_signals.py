@@ -29,18 +29,32 @@ def _ensure_supabase():
 
 
 async def _scope_symbols(scope: dict) -> list[str]:
-    """解析 scope dict → symbols list."""
+    """解析 scope dict → symbols list.
+
+    scope=watchlist 改用「自選」書籤(`bookmark_groups.name='自選'` + watchlist_items)。
+    這保留 active_signals 既有語意:scope=watchlist 仍是 user 的「自選清單」。
+    """
     sb = get_supabase()
     if scope.get("type") == "symbols":
         return list(scope.get("symbols", []))
     if scope.get("type") == "watchlist":
-        res = await asyncio.to_thread(
-            lambda: sb.client.table("watchlist")
-            .select("symbol")
+        bg_res = await asyncio.to_thread(
+            lambda: sb.client.table("bookmark_groups")
+            .select("id")
             .eq("user_label", get_user_label())
+            .eq("name", "自選")
+            .limit(1)
             .execute()
         )
-        return [r["symbol"] for r in (res.data or [])]
+        if not bg_res.data:
+            return []
+        items_res = await asyncio.to_thread(
+            lambda gid=bg_res.data[0]["id"]: sb.client.table("watchlist_items")
+            .select("symbol")
+            .eq("group_id", gid)
+            .execute()
+        )
+        return [r["symbol"] for r in (items_res.data or [])]
     return []
 
 
