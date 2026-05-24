@@ -50,3 +50,44 @@ def dt(s: str) -> datetime:
 )
 def test_determine_current_session(iso: str, expected: str):
     assert determine_current_session(dt(iso)) == expected
+
+
+from services.fubon_futures import merge_candles, MXFCandleDict
+
+
+def c(ts: str, **kw) -> MXFCandleDict:
+    base: MXFCandleDict = {
+        "date": ts, "open": 17000.0, "high": 17010.0, "low": 16990.0,
+        "close": 17005.0, "volume": 100, "average": 17000.0,
+    }
+    base.update(kw)
+    return base
+
+
+def test_merge_candles_orders_night_first():
+    # 夜盤 5/24 15:00、5/24 23:00、日盤 5/25 09:00、5/25 12:00
+    night = [c("2026-05-24T23:00:00+08:00"), c("2026-05-24T15:00:00+08:00")]
+    day = [c("2026-05-25T12:00:00+08:00"), c("2026-05-25T09:00:00+08:00")]
+    out = merge_candles(day=day, night=night)
+    assert [x["date"] for x in out] == [
+        "2026-05-24T15:00:00+08:00",
+        "2026-05-24T23:00:00+08:00",
+        "2026-05-25T09:00:00+08:00",
+        "2026-05-25T12:00:00+08:00",
+    ]
+
+
+def test_merge_candles_dedupes_by_date_keeping_last():
+    # 同個 ts 出現在兩段(理論上不該,防呆) — 取後到的(close 不同)
+    night = [c("2026-05-25T08:45:00+08:00", close=17000.0)]
+    day = [c("2026-05-25T08:45:00+08:00", close=17050.0)]
+    out = merge_candles(day=day, night=night)
+    assert len(out) == 1
+    assert out[0]["close"] == 17050.0  # day(後加)蓋掉 night
+
+
+def test_merge_candles_empty_inputs():
+    assert merge_candles(day=[], night=[]) == []
+    assert merge_candles(day=[c("2026-05-25T09:00:00+08:00")], night=[]) == [
+        c("2026-05-25T09:00:00+08:00")
+    ]
