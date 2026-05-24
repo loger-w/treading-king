@@ -1,10 +1,96 @@
 """MXF 期貨服務 — symbol 解析、candles 合併、session 邏輯。"""
 from __future__ import annotations
 
-from datetime import datetime, time
-from typing import Literal, TypedDict
+import asyncio
+import logging
+import re
+from datetime import datetime, time, timedelta
+from typing import Literal, Optional, TypedDict
+
+logger = logging.getLogger(__name__)
 
 Session = Literal["day", "night", "closed"]
+
+
+class ProductRow(TypedDict):
+    symbol: str
+    expiry: str  # "YYYY-MM-DD"
+
+
+# 精準匹配「MXF + 月碼一碼(A-L)+ 年碼一碼」, 排除 MX1, MXR, TXF 等其他系列
+MXF_SYMBOL_RE = re.compile(r"^MXF[A-L][0-9]$")
+
+
+def filter_active_mxf_symbol(products: list[ProductRow], *, today: str) -> Optional[str]:
+    """從 products 清單挑出近月 MXF。
+
+    規則:symbol 嚴格匹配 ^MXF[A-L][0-9]$、expiry > today、取最近一個。
+    expiry == today 視為已結算(當日結算後即下市),排除。
+    """
+    candidates = [
+        p for p in products
+        if MXF_SYMBOL_RE.match(p["symbol"]) and p["expiry"] > today
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda p: p["expiry"])["symbol"]
+
+
+_ACTIVE_SYMBOL_CACHE: dict[str, tuple[str, datetime]] = {}
+_ACTIVE_SYMBOL_TTL = timedelta(hours=1)
+
+
+async def resolve_active_symbol() -> Optional[str]:
+    """查富邦近月 MXF symbol,1h cache。
+
+    換月一個月一次,1h TTL 足夠安全。
+    回傳 None 代表 SDK 未初始化或找不到符合的 MXF 合約。
+    """
+    # lazy import 避免測試環境在 module 載入時拉入 fubon_client 相依鏈
+    from services.fubon_client import get_fubon  # noqa: PLC0415
+
+    now = datetime.now()
+    cached = _ACTIVE_SYMBOL_CACHE.get("mxf")
+    if cached and (now - cached[1]) < _ACTIVE_SYMBOL_TTL:
+        return cached[0]
+
+    fubon = get_fubon()
+    if fubon.sdk is None:
+        logger.warning("Fubon SDK not initialized")
+        return None
+
+    try:
+        # lazy import 與 get_fubon 同理,避免 module 載入時拉入 httpx 相依鏈影響測試
+        from services.rate_limiter import get_rate_limiter  # noqa: PLC0415
+
+        # 期貨 tickers API:futopt.intraday.tickers(type='FUTURE', exchange='TAIFEX')
+        # 回傳欄位名實際以 settlement_date 為主,備用 expiry_date / expiry(待實測確認)
+        await asyncio.to_thread(get_rate_limiter().acquire)
+        raw = await asyncio.to_thread(
+            fubon.sdk.marketdata.rest_client.futopt.intraday.tickers,
+            type="FUTURE",
+            exchange="TAIFEX",
+        )
+    except Exception as e:
+        logger.warning("resolve_active_symbol fubon call failed: %s", e)
+        return None
+
+    products: list[ProductRow] = []
+    for row in raw.get("data", []):
+        symbol = row.get("symbol")
+        expiry = (
+            row.get("settlement_date")
+            or row.get("expiry_date")
+            or row.get("expiry")
+        )
+        if symbol and expiry:
+            products.append({"symbol": symbol, "expiry": expiry[:10]})
+
+    today_str = now.strftime("%Y-%m-%d")
+    sym = filter_active_mxf_symbol(products, today=today_str)
+    if sym:
+        _ACTIVE_SYMBOL_CACHE["mxf"] = (sym, now)
+    return sym
 
 
 class MXFCandleDict(TypedDict):

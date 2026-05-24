@@ -91,3 +91,38 @@ def test_merge_candles_empty_inputs():
     assert merge_candles(day=[c("2026-05-25T09:00:00+08:00")], night=[]) == [
         c("2026-05-25T09:00:00+08:00")
     ]
+
+
+from services.fubon_futures import filter_active_mxf_symbol, ProductRow
+
+
+def test_filter_active_mxf_picks_nearest_unexpired():
+    # 模擬富邦回傳的 products 清單(精簡欄位)
+    today = "2026-05-24"
+    products: list[ProductRow] = [
+        {"symbol": "MXFD6", "expiry": "2026-04-15"},  # 已過期
+        {"symbol": "MXFE6", "expiry": "2026-05-20"},  # 已過期(同月但結算已過)
+        {"symbol": "MXFF6", "expiry": "2026-06-17"},  # 未過期、最近
+        {"symbol": "MXFG6", "expiry": "2026-07-15"},  # 次月
+        {"symbol": "MXFI6", "expiry": "2026-09-16"},  # 季月
+        {"symbol": "TXFF6", "expiry": "2026-06-17"},  # 大台,要排除
+        {"symbol": "MX1F6", "expiry": "2026-06-17"},  # 微小台,要排除
+    ]
+    assert filter_active_mxf_symbol(products, today=today) == "MXFF6"
+
+
+def test_filter_active_mxf_returns_none_if_no_active():
+    products: list[ProductRow] = [
+        {"symbol": "MXFA5", "expiry": "2025-01-15"},  # 都過期
+        {"symbol": "TXFF6", "expiry": "2026-06-17"},  # 大台
+    ]
+    assert filter_active_mxf_symbol(products, today="2026-05-24") is None
+
+
+def test_filter_active_mxf_excludes_expiry_equal_today():
+    # 結算日當天視為已過期(strict greater-than 語意)
+    products: list[ProductRow] = [
+        {"symbol": "MXFE6", "expiry": "2026-05-24"},  # 今天結算,排除
+        {"symbol": "MXFF6", "expiry": "2026-06-17"},  # 次月,保留
+    ]
+    assert filter_active_mxf_symbol(products, today="2026-05-24") == "MXFF6"
