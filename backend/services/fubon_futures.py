@@ -153,3 +153,47 @@ def determine_current_session(now: datetime) -> Session:
 
     # 其他(05:00-08:44, 13:45-14:59)= closed
     return "closed"
+
+
+SUPPORTED_TIMEFRAMES = (1, 5, 10, 15, 30, 60)
+
+
+async def fetch_candles(symbol: str, timeframe: int) -> list[MXFCandleDict]:
+    """拉日盤 + 夜盤 candles 並合併,夜盤在前。
+
+    參數:timeframe ∈ {1, 5, 10, 15, 30, 60}。
+    依賴 merge_candles 假設 date 字串可字典序排序 — 後續實測若富邦回傳
+    tz 格式不一致(如混 `+0800` 無冒號)需先正規化。
+    """
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        raise ValueError(f"unsupported timeframe: {timeframe}")
+
+    # Lazy imports 避免 test env httpx 缺失
+    from services.fubon_client import get_fubon  # noqa: PLC0415
+    from services.rate_limiter import get_rate_limiter  # noqa: PLC0415
+
+    fubon = get_fubon()
+    if fubon.sdk is None:
+        return []
+
+    tf_str = str(timeframe)
+
+    async def _fetch(session: Optional[str]) -> list[MXFCandleDict]:
+        kwargs: dict = {"symbol": symbol, "timeframe": tf_str}
+        if session:
+            kwargs["session"] = session
+        try:
+            await asyncio.to_thread(get_rate_limiter().acquire)
+            raw = await asyncio.to_thread(
+                fubon.sdk.marketdata.rest_client.futopt.intraday.candles,
+                **kwargs,
+            )
+        except ValueError:
+            raise  # 呼叫方 bug 不要吞
+        except Exception as e:
+            logger.warning("fetch_candles session=%s failed: %s", session, e)
+            return []
+        return list(raw.get("data") or [])
+
+    day, night = await asyncio.gather(_fetch(None), _fetch("afterhours"))
+    return merge_candles(day=day, night=night)
