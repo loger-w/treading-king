@@ -195,3 +195,14 @@ def get_futures_ws_pool() -> FuturesWSPool:
     if _pool is None:
         _pool = FuturesWSPool()
     return _pool
+
+
+async def session_reconcile_loop() -> None:
+    """每分鐘檢查 session,跨邊界時切訂閱。Startup 後 fire-and-forget 跑。"""
+    pool = get_futures_ws_pool()
+    while True:
+        try:
+            await pool.reconcile_session()
+        except Exception as e:
+            logger.warning("session_reconcile_loop error: %s", e)
+        await asyncio.sleep(60)
