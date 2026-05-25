@@ -1,14 +1,22 @@
+import { MXFIntradayChart } from "../components/MXFIntradayChart";
+
 export function MXFBacktest() {
   return (
-    <div className="h-full flex flex-col items-center justify-center px-8">
-      <span className="label-tiny mb-3">Module · Upcoming</span>
-      <h1 className="h-display text-4xl text-ink mb-4">小台指策略回測 (MXF)</h1>
-      <p className="text-ink-muted max-w-md text-center leading-relaxed">
-        策略回測引擎開發中。
-        <br />
-        多週期 K 線(1m–D)、視覺化策略編輯、波段為主+量化條件當沖、績效報表 — 後續實作。
-      </p>
-      <div className="mt-12 label-small">待規劃</div>
+    <div className="h-full flex flex-col gap-6 px-8 py-6">
+      <header>
+        <span className="label-tiny mb-1">Module · Live + Backtest</span>
+        <h1 className="h-display text-2xl text-ink">小台指(MXF)</h1>
+      </header>
+
+      <section className="rounded-lg border border-line p-4">
+        <div className="label mb-3">即時分時走勢</div>
+        <MXFIntradayChart />
+      </section>
+
+      <section className="rounded-lg border border-line p-4 text-ink-muted">
+        <div className="label mb-3">回測介面</div>
+        <p>策略回測引擎開發中 — 多週期 K 線、視覺化策略編輯、績效報表。</p>
+      </section>
     </div>
   );
 }
