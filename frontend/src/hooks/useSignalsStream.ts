@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type SignalEvent } from "../lib/api";
+import { type SignalEvent, type MXFCandle } from "../lib/api";
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
 
@@ -24,6 +24,24 @@ export function subscribeTicks(handler: (t: TickEvent) => void): () => void {
   const fn = (ev: Event) => handler((ev as CustomEvent<TickEvent>).detail);
   tickBus.addEventListener("tick", fn);
   return () => tickBus.removeEventListener("tick", fn);
+}
+
+export interface MXFCandleEvent {
+  symbol: string;
+  candle: MXFCandle;
+}
+
+// Module-level EventTarget — 跨 hook instance 共用同一個 WS mxf_candle stream
+const mxfCandleBus = new EventTarget();
+
+/**
+ * 任意元件可 import 此 helper 訂閱 MXF K 棒推送。
+ * 回傳 unsubscribe function（呼叫即 detach）。
+ */
+export function subscribeMxfCandles(handler: (e: MXFCandleEvent) => void): () => void {
+  const fn = (ev: Event) => handler((ev as CustomEvent<MXFCandleEvent>).detail);
+  mxfCandleBus.addEventListener("mxf_candle", fn);
+  return () => mxfCandleBus.removeEventListener("mxf_candle", fn);
 }
 
 interface ManagedWS {
@@ -80,6 +98,9 @@ export function useSignalsStream(opts?: {
           };
           onTickRef.current?.(tick.symbol, tick.price);
           tickBus.dispatchEvent(new CustomEvent<TickEvent>("tick", { detail: tick }));
+        } else if (msg.event === "mxf_candle") {
+          const evt: MXFCandleEvent = { symbol: msg.data.symbol, candle: msg.data.candle };
+          mxfCandleBus.dispatchEvent(new CustomEvent<MXFCandleEvent>("mxf_candle", { detail: evt }));
         }
       } catch { /* ignore */ }
     };
