@@ -36,6 +36,23 @@ def filter_active_mxf_symbol(products: list[ProductRow], *, today: str) -> Optio
     return min(candidates, key=lambda p: p["expiry"])["symbol"]
 
 
+def parse_tickers_response(raw: dict) -> list[ProductRow]:
+    """從富邦 futopt.intraday.tickers 回應抽出 (symbol, expiry) 對。
+
+    富邦真實欄位名為 camelCase:`endDate`(下市日)、`settlementDate`(最後結算日)。
+    台指期貨兩者通常同日。expiry 取 endDate 為主、settlementDate 為輔。
+    `expiry[:10]` 截到 date(若是 ISO datetime,只取 YYYY-MM-DD 那 10 字元)。
+    Schema 參考:docs/market-data-future/http-api/intraday/tickers.txt
+    """
+    out: list[ProductRow] = []
+    for row in raw.get("data") or []:
+        symbol = row.get("symbol")
+        expiry = row.get("endDate") or row.get("settlementDate")
+        if symbol and expiry:
+            out.append({"symbol": symbol, "expiry": expiry[:10]})
+    return out
+
+
 _ACTIVE_SYMBOL_CACHE: dict[str, tuple[str, datetime]] = {}
 _ACTIVE_SYMBOL_TTL = timedelta(hours=1)
 
@@ -64,7 +81,7 @@ async def resolve_active_symbol() -> Optional[str]:
         from services.rate_limiter import get_rate_limiter  # noqa: PLC0415
 
         # 期貨 tickers API:futopt.intraday.tickers(type='FUTURE', exchange='TAIFEX')
-        # 回傳欄位名實際以 settlement_date 為主,備用 expiry_date / expiry(待實測確認)
+        # 回傳欄位是 camelCase:data[].symbol / endDate / settlementDate
         await asyncio.to_thread(get_rate_limiter().acquire)
         raw = await asyncio.to_thread(
             fubon.sdk.marketdata.rest_client.futopt.intraday.tickers,
@@ -75,19 +92,18 @@ async def resolve_active_symbol() -> Optional[str]:
         logger.warning("resolve_active_symbol fubon call failed: %s", e)
         return None
 
-    products: list[ProductRow] = []
-    for row in raw.get("data", []):
-        symbol = row.get("symbol")
-        expiry = (
-            row.get("settlement_date")
-            or row.get("expiry_date")
-            or row.get("expiry")
-        )
-        if symbol and expiry:
-            products.append({"symbol": symbol, "expiry": expiry[:10]})
-
+    products = parse_tickers_response(raw)
     today_str = now.strftime("%Y-%m-%d")
+    mxf_candidates = [p for p in products if MXF_SYMBOL_RE.match(p["symbol"])]
+    logger.info(
+        "resolve_active_symbol: %d total products, %d MXF candidates: %s",
+        len(products),
+        len(mxf_candidates),
+        [p["symbol"] for p in mxf_candidates[:6]],
+    )
+
     sym = filter_active_mxf_symbol(products, today=today_str)
+    logger.info("resolve_active_symbol(today=%s) → %s", today_str, sym)
     if sym:
         _ACTIVE_SYMBOL_CACHE["mxf"] = (sym, now)
     return sym

@@ -126,3 +126,61 @@ def test_filter_active_mxf_excludes_expiry_equal_today():
         {"symbol": "MXFF6", "expiry": "2026-06-17"},  # 次月,保留
     ]
     assert filter_active_mxf_symbol(products, today="2026-05-24") == "MXFF6"
+
+
+# ---- parse_tickers_response: Fubon futopt.intraday.tickers 回應解析 ----
+# 富邦真實欄位用 camelCase(endDate / settlementDate),非 snake_case。
+# Schema 參考:https://www.fbs.com.tw/TradeAPI/docs/market-data-future/http-api/intraday/tickers.txt
+
+from services.fubon_futures import parse_tickers_response
+
+
+def test_parse_tickers_response_extracts_symbol_and_endDate():
+    raw = {
+        "type": "FUTURE",
+        "exchange": "TAIFEX",
+        "data": [
+            {"symbol": "MXFF6", "endDate": "2026-06-17", "settlementDate": "2026-06-17"},
+            {"symbol": "MXFG6", "endDate": "2026-07-15", "settlementDate": "2026-07-15"},
+        ],
+    }
+    out = parse_tickers_response(raw)
+    assert out == [
+        {"symbol": "MXFF6", "expiry": "2026-06-17"},
+        {"symbol": "MXFG6", "expiry": "2026-07-15"},
+    ]
+
+
+def test_parse_tickers_response_falls_back_to_settlementDate_when_endDate_missing():
+    raw = {"data": [{"symbol": "MXFF6", "settlementDate": "2026-06-17"}]}
+    out = parse_tickers_response(raw)
+    assert out == [{"symbol": "MXFF6", "expiry": "2026-06-17"}]
+
+
+def test_parse_tickers_response_skips_rows_without_expiry():
+    raw = {
+        "data": [
+            {"symbol": "MXFF6", "endDate": "2026-06-17"},
+            {"symbol": "ORPHAN"},                         # 沒到期日,丟棄
+            {"endDate": "2026-07-15"},                    # 沒 symbol,丟棄
+            {"symbol": "MXFG6", "endDate": "2026-07-15"},
+        ],
+    }
+    out = parse_tickers_response(raw)
+    assert out == [
+        {"symbol": "MXFF6", "expiry": "2026-06-17"},
+        {"symbol": "MXFG6", "expiry": "2026-07-15"},
+    ]
+
+
+def test_parse_tickers_response_handles_empty_or_missing_data():
+    assert parse_tickers_response({}) == []
+    assert parse_tickers_response({"data": []}) == []
+    assert parse_tickers_response({"data": None}) == []  # null-safe
+
+
+def test_parse_tickers_response_truncates_datetime_to_date():
+    # 若富邦回傳 ISO datetime 而非純 date,只取前 10 字(YYYY-MM-DD)
+    raw = {"data": [{"symbol": "MXFF6", "endDate": "2026-06-17T13:45:00+08:00"}]}
+    out = parse_tickers_response(raw)
+    assert out == [{"symbol": "MXFF6", "expiry": "2026-06-17"}]
