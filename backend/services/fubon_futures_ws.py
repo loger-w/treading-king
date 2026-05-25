@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 TPE = ZoneInfo("Asia/Taipei")
 RECONNECT_DELAYS = [1, 2, 4, 8, 16, 30, 60]
+MAX_RECONNECT_ATTEMPTS = 8  # 用完後放棄,直到下一次 session boundary 重置
 
 
 def target_after_hours_flag(now: datetime) -> Optional[bool]:
@@ -58,8 +59,14 @@ class FuturesWSPool:
             self._symbol = None
 
     async def reconcile_session(self) -> None:
-        """供 scheduler 在 session 邊界呼叫,確認訂閱對齊現況。"""
+        """供 scheduler 在 session 邊界呼叫,確認訂閱對齊現況。
+
+        每次 reconcile 都重置 reconnect 計數 — 讓「之前放棄的 transient 故障」
+        每分鐘獲得一次完整重試的機會;若是不可恢復的 config 錯誤,也只會持續
+        每分鐘看到一輪錯誤、不會 hot loop。
+        """
         async with self._lock:
+            self._reconnect_attempt = 0
             await self._ensure_subscribed_for_now()
 
     # ---------------- internals ----------------
@@ -176,6 +183,13 @@ class FuturesWSPool:
             return
         if self._reconnecting:
             return  # 已有進行中的 reconnect task,別累積
+        if self._reconnect_attempt >= MAX_RECONNECT_ATTEMPTS:
+            # 達上限 — 不再 hot retry,等下次 reconcile_session(60s 排程)重置計數
+            logger.error(
+                "futures_ws giving up after %d failed attempts; will retry on next session reconcile",
+                self._reconnect_attempt,
+            )
+            return
         self._reconnecting = True
         try:
             delay = RECONNECT_DELAYS[min(self._reconnect_attempt, len(RECONNECT_DELAYS) - 1)]

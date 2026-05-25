@@ -91,7 +91,7 @@ class FubonClient:
 
     def _do_login_sync(self) -> None:
         """Sync SDK login — must run in thread."""
-        from fubon_neo.sdk import FubonSDK  # type: ignore[import-not-found]
+        from fubon_neo.sdk import FubonSDK, Mode  # type: ignore[import-not-found]
 
         personal_id = (
             os.getenv("FUBON_PERSONAL_ID", "").strip()
@@ -115,7 +115,9 @@ class FubonClient:
             logger.info("Using apikey_dma_login (DMA mode, no cert)")
             sdk.apikey_dma_login(personal_id, api_key)
 
-        sdk.init_realtime()
+        # Normal 模式:Speed 預設不支援 candles / aggregates channel (期貨即時 K 需要)。
+        # Stock trades / 各 REST 端點兩模式都可用,切 Normal 不破壞既有股票功能。
+        sdk.init_realtime(Mode.Normal)
         self._sdk = sdk
 
     async def _background_retry(self) -> None:
