@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, test, expect } from "vitest";
 import { dayOpenBaseline } from "./mxf-chart";
 import type { MXFCandle } from "../lib/api";
 
@@ -9,16 +9,16 @@ function makeCandle(date: string, open: number): MXFCandle {
 describe("dayOpenBaseline", () => {
   const now = new Date("2026-05-26T10:00:00+08:00");
 
-  it("returns null for empty candles", () => {
+  test("returns null for empty candles", () => {
     expect(dayOpenBaseline([], now)).toBeNull();
   });
 
-  it("returns null when no candle at or after 08:45 today", () => {
+  test("returns null when no candle at or after 08:45 today", () => {
     const candles = [makeCandle("2026-05-26T03:00:00+08:00", 100)];
     expect(dayOpenBaseline(candles, now)).toBeNull();
   });
 
-  it("returns first 08:45+ candle.open for today", () => {
+  test("returns first 08:45+ candle.open for today", () => {
     const candles = [
       makeCandle("2026-05-26T03:00:00+08:00", 100),
       makeCandle("2026-05-26T08:45:00+08:00", 105),
@@ -27,7 +27,7 @@ describe("dayOpenBaseline", () => {
     expect(dayOpenBaseline(candles, now)).toBe(105);
   });
 
-  it("returns today's day open, ignores yesterday's", () => {
+  test("returns today's day open, ignores yesterday's", () => {
     const candles = [
       makeCandle("2026-05-25T08:45:00+08:00", 95),
       makeCandle("2026-05-26T08:45:00+08:00", 105),
