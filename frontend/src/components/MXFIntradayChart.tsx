@@ -356,6 +356,23 @@ export function MXFIntradayChart() {
           </g>
         ))}
 
+        {/* Session boundary markers: 第一個 session + 每個 gap 之後的新 session */}
+        {visibleSessions.map((s, i) => {
+          const startX = i === 0
+            ? sx(visibleCandles[0]?.date ?? s.startIso)
+            : PAD_L + sessionBoundaries(visibleSessions, innerW)[i - 1].gapEndPx;
+          if (Number.isNaN(startX)) return null;
+          const d = new Date(s.startIso);
+          const hour = d.getHours();
+          const sessionType = (hour < 8 || hour >= 14) ? "夜盤" : "日盤";
+          return (
+            <text key={`sm-${i}`} x={startX + 4} y={PAD_T - 4} textAnchor="start"
+              className="fill-ink-dim text-[10px]">
+              {`${d.getMonth() + 1}/${d.getDate()} ${sessionType}`}
+            </text>
+          );
+        })}
+
         {/* 主圖 */}
         <CandlestickSeries candles={visibleCandles} scaleX={sx} scaleY={sy} width={innerW} />
 
