@@ -34,31 +34,14 @@ export function MXFIntradayChart() {
 
   const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf);
 
-  const { sessions, yMin, yMax, ma5, ma20, todayHigh, todayLow, maxVolume } = useMemo(() => {
+  const { ma5, ma20 } = useMemo(() => {
     if (candles.length === 0) {
-      return {
-        sessions: [] as ChartSession[],
-        yMin: 0, yMax: 0,
-        ma5: [] as number[], ma20: [] as number[],
-        todayHigh: 0, todayLow: 0,
-        maxVolume: 1,
-      };
+      return { ma5: [] as number[], ma20: [] as number[] };
     }
-    const sess: ChartSession[] = inferSessions(candles);
-
-    const lows = candles.map((c) => c.low);
-    const highs = candles.map((c) => c.high);
-    const yMin = Math.min(...lows) * 0.998;
-    const yMax = Math.max(...highs) * 1.002;
-
     const closes = candles.map((c) => c.close);
     const ma5 = computeMA(closes, 5);
     const ma20 = computeMA(closes, 20);
-
-    const todayHigh = Math.max(...highs);
-    const todayLow = Math.min(...lows);
-    const maxVolume = Math.max(1, ...candles.map((c) => c.volume));
-    return { sessions: sess, yMin, yMax, ma5, ma20, todayHigh, todayLow, maxVolume };
+    return { ma5, ma20 };
   }, [candles]);
 
   const innerW = CHART_W - PAD_L - PAD_R;
@@ -79,6 +62,56 @@ export function MXFIntradayChart() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles.length, innerW]);
 
+  const {
+    visibleCandles, visibleSessions, visibleMa5, visibleMa20,
+    yMinView, yMaxView, todayHighInView, todayLowInView, maxVolumeInView,
+  } = useMemo(() => {
+    if (!viewRange || candles.length === 0) {
+      return {
+        visibleCandles: [] as typeof candles,
+        visibleSessions: [] as ChartSession[],
+        visibleMa5: [] as number[],
+        visibleMa20: [] as number[],
+        yMinView: 0, yMaxView: 0,
+        todayHighInView: { value: 0, idx: -1 },
+        todayLowInView: { value: 0, idx: -1 },
+        maxVolumeInView: 1,
+      };
+    }
+    const start = viewRange.startIdx;
+    const end = viewRange.endIdx + 1;
+    const visibleCandles = candles.slice(start, end);
+    const visibleSessions = inferSessions(visibleCandles);
+    const visibleMa5 = ma5.slice(start, end);
+    const visibleMa20 = ma20.slice(start, end);
+
+    const lows = visibleCandles.map((c) => c.low);
+    const highs = visibleCandles.map((c) => c.high);
+    const yMinView = Math.min(...lows) * 0.998;
+    const yMaxView = Math.max(...highs) * 1.002;
+
+    // 今日高低 marker — 從完整 candles 算，但只在 idx 落在 viewRange 內時才顯示
+    let todayHighIdx = 0;
+    let todayLowIdx = 0;
+    for (let i = 1; i < candles.length; i++) {
+      if (candles[i].high > candles[todayHighIdx].high) todayHighIdx = i;
+      if (candles[i].low < candles[todayLowIdx].low) todayLowIdx = i;
+    }
+    const todayHighInView = todayHighIdx >= start && todayHighIdx < end
+      ? { value: candles[todayHighIdx].high, idx: todayHighIdx - start }
+      : { value: 0, idx: -1 };
+    const todayLowInView = todayLowIdx >= start && todayLowIdx < end
+      ? { value: candles[todayLowIdx].low, idx: todayLowIdx - start }
+      : { value: 0, idx: -1 };
+
+    const maxVolumeInView = Math.max(1, ...visibleCandles.map((c) => c.volume));
+
+    return {
+      visibleCandles, visibleSessions, visibleMa5, visibleMa20,
+      yMinView, yMaxView, todayHighInView, todayLowInView, maxVolumeInView,
+    };
+  }, [candles, viewRange, ma5, ma20]);
+
   const baselineOpen = dayOpenBaseline(candles, new Date());
   const latest = candles.length > 0 ? candles[candles.length - 1] : null;
   const change = latest && baselineOpen ? latest.close - baselineOpen : 0;
@@ -86,8 +119,8 @@ export function MXFIntradayChart() {
   const isUp = change > 0;
   const dirCls = isUp ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
 
-  const sx = (iso: string) => PAD_L + scaleX_compressed(iso, sessions, innerW);
-  const sy = (v: number) => PAD_T + scaleY_clamped(v, yMin, yMax, innerH);
+  const sx = (iso: string) => PAD_L + scaleX_compressed(iso, visibleSessions, innerW);
+  const sy = (v: number) => PAD_T + scaleY_clamped(v, yMinView, yMaxView, innerH);
 
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     if (candles.length === 0) return;
@@ -219,7 +252,7 @@ export function MXFIntradayChart() {
         })}
 
         {/* session gap 虛線 */}
-        {sessionBoundaries(sessions, innerW).map((g, i) => (
+        {sessionBoundaries(visibleSessions, innerW).map((g, i) => (
           <g key={i}>
             <line x1={PAD_L + g.gapStartPx} x2={PAD_L + g.gapStartPx} y1={PAD_T} y2={PAD_T + innerH} stroke="#bbb" strokeDasharray="3 3" />
             <line x1={PAD_L + g.gapEndPx} x2={PAD_L + g.gapEndPx} y1={PAD_T} y2={PAD_T + innerH} stroke="#bbb" strokeDasharray="3 3" />
@@ -227,37 +260,47 @@ export function MXFIntradayChart() {
         ))}
 
         {/* 主圖 */}
-        <CandlestickSeries candles={candles} scaleX={sx} scaleY={sy} width={innerW} />
+        <CandlestickSeries candles={visibleCandles} scaleX={sx} scaleY={sy} width={innerW} />
 
         {/* VWAP */}
-        {showVwap && <LineSeries candles={candles} scaleX={sx} scaleY={sy} field="average" stroke="#9aa0a6" dashed />}
+        {showVwap && <LineSeries candles={visibleCandles} scaleX={sx} scaleY={sy} field="average" stroke="#9aa0a6" dashed />}
 
         {/* MA */}
         {showMa && (
           <>
-            <MALine candles={candles} maValues={ma5} scaleX={sx} scaleY={sy} stroke="#f59e0b" label="MA5" />
-            <MALine candles={candles} maValues={ma20} scaleX={sx} scaleY={sy} stroke="#3b82f6" label="MA20" />
+            <MALine candles={visibleCandles} maValues={visibleMa5} scaleX={sx} scaleY={sy} stroke="#f59e0b" label="MA5" />
+            <MALine candles={visibleCandles} maValues={visibleMa20} scaleX={sx} scaleY={sy} stroke="#3b82f6" label="MA20" />
           </>
         )}
 
         {/* 今日高低標記 */}
-        {showHighLow && candles.length > 0 && (
+        {showHighLow && todayHighInView.idx >= 0 && (
           <g>
-            <line x1={PAD_L} x2={CHART_W - PAD_R} y1={sy(todayHigh)} y2={sy(todayHigh)} stroke="#d9534f" strokeWidth={0.5} strokeDasharray="1 3" />
-            <text x={CHART_W - PAD_R + 4} y={sy(todayHigh) + 3} fontSize={10} fill="#d9534f">H {todayHigh}</text>
-            <line x1={PAD_L} x2={CHART_W - PAD_R} y1={sy(todayLow)} y2={sy(todayLow)} stroke="#2e7d32" strokeWidth={0.5} strokeDasharray="1 3" />
-            <text x={CHART_W - PAD_R + 4} y={sy(todayLow) + 3} fontSize={10} fill="#2e7d32">L {todayLow}</text>
+            <line x1={PAD_L} x2={CHART_W - PAD_R} y1={sy(todayHighInView.value)} y2={sy(todayHighInView.value)}
+              stroke="#d9534f" strokeWidth={0.5} strokeDasharray="1 3" />
+            <text x={CHART_W - PAD_R + 4} y={sy(todayHighInView.value) + 3} fontSize={10} fill="#d9534f">
+              H {todayHighInView.value}
+            </text>
+          </g>
+        )}
+        {showHighLow && todayLowInView.idx >= 0 && (
+          <g>
+            <line x1={PAD_L} x2={CHART_W - PAD_R} y1={sy(todayLowInView.value)} y2={sy(todayLowInView.value)}
+              stroke="#2e7d32" strokeWidth={0.5} strokeDasharray="1 3" />
+            <text x={CHART_W - PAD_R + 4} y={sy(todayLowInView.value) + 3} fontSize={10} fill="#2e7d32">
+              L {todayLowInView.value}
+            </text>
           </g>
         )}
 
         {/* 量子圖 */}
-        {showVolume && candles.length > 1 && (
+        {showVolume && visibleCandles.length > 1 && (
           <VolumeSubChart
-            candles={candles}
+            candles={visibleCandles}
             scaleX={sx}
             yTop={PAD_T + innerH + 8}
             height={VOL_H}
-            barWidth={Math.max(1, (innerW / candles.length) * 0.6)}
+            barWidth={Math.max(1, (innerW / visibleCandles.length) * 0.6)}
           />
         )}
 
@@ -273,7 +316,7 @@ export function MXFIntradayChart() {
           const d = new Date(c.date);
           const hh = String(d.getHours()).padStart(2, "0");
           const mm = String(d.getMinutes()).padStart(2, "0");
-          const volBarY = PAD_T + innerH + 8 + VOL_H - (c.volume / maxVolume) * VOL_H;
+          const volBarY = PAD_T + innerH + 8 + VOL_H - (c.volume / maxVolumeInView) * VOL_H;
           return (
             <g pointerEvents="none">
               <line x1={lineX} y1={PAD_T} x2={lineX} y2={verticalEndY}
