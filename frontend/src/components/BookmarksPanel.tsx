@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { type ActiveSignal, type BookmarkGroup, type BookmarkItem } from "../lib/api";
+import { type ActiveSignal, type BookmarkGroup, type BookmarkItem, type MonitorListItem } from "../lib/api";
 import { useBookmarks } from "../hooks/useBookmarks";
 import { useAllBookmarkItems, useBookmarkItems } from "../hooks/useBookmarkItems";
+import { useMonitorList } from "../hooks/useMonitorList";
 import { type HitCounts } from "../hooks/useTodayHits";
 import { type WatchlistQuote } from "../hooks/useWatchlistQuotes";
 import { BookmarkNewDialog } from "./BookmarkNewDialog";
@@ -17,6 +18,7 @@ import { SignalChip } from "./SignalChip";
  */
 
 const ALL_VIEW = "__all__";
+const MONITOR_VIEW = "__monitor__";
 
 interface Props {
   rules: ActiveSignal[];
@@ -45,6 +47,7 @@ export function BookmarksPanel({
   rules, hitCounts, quotes, selectedSymbol, onSelectSymbol, onItemsChanged,
 }: Props) {
   const { groups, refresh: refreshGroups, create, remove: removeGroup, rename } = useBookmarks();
+  const { items: monitorItems, remove: removeFromMonitor } = useMonitorList();
   const [selectedGroupId, setSelectedGroupId] = useState<string>(ALL_VIEW);
   const [newDialogOpen, setNewDialogOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -109,6 +112,13 @@ export function BookmarksPanel({
         {/* Sidebar */}
         <div className="border-r border-line py-2 overflow-y-auto scroll-editorial">
           <SidebarItem
+            label="監聽"
+            count={monitorItems.length}
+            selected={selectedGroupId === MONITOR_VIEW}
+            system={true}
+            onClick={() => pickGroup(MONITOR_VIEW)}
+          />
+          <SidebarItem
             label="全部"
             count={bySymbolFirst.size}
             selected={selectedGroupId === ALL_VIEW}
@@ -135,7 +145,17 @@ export function BookmarksPanel({
 
         {/* Main list */}
         <div className="overflow-y-auto scroll-editorial">
-          {selectedGroupId === ALL_VIEW ? (
+          {selectedGroupId === MONITOR_VIEW ? (
+            <MonitorListView
+              items={monitorItems}
+              quotes={quotes}
+              rules={rules}
+              hitCounts={hitCounts}
+              selectedSymbol={selectedSymbol}
+              onSelect={onSelectSymbol}
+              onRemove={removeFromMonitor}
+            />
+          ) : selectedGroupId === ALL_VIEW ? (
             <AllView
               groups={groups}
               byGroup={byGroup}
@@ -437,5 +457,108 @@ function EmptyState({ text }: { text: string }) {
     <div className="p-6 text-center text-ink-dim font-serif italic text-sm">
       {text}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 監聽清單 view
+// ---------------------------------------------------------------------------
+
+function MonitorListView({
+  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove,
+}: {
+  items: MonitorListItem[];
+  quotes: Record<string, WatchlistQuote>;
+  rules: ActiveSignal[];
+  hitCounts: HitCounts;
+  selectedSymbol: string | null;
+  onSelect: (s: string) => void;
+  onRemove: (s: string) => void;
+}) {
+  if (items.length === 0) {
+    return <EmptyState text="監聽清單還是空的 — 上方搜尋或從書籤加入" />;
+  }
+  return (
+    <ul>
+      {items.map((it) => (
+        <MonitorRow
+          key={it.symbol}
+          symbol={it.symbol}
+          name={it.name}
+          quote={quotes[it.symbol]}
+          rules={rules}
+          hitCounts={hitCounts}
+          selectedSymbol={selectedSymbol}
+          onSelect={onSelect}
+          onRemove={onRemove}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function MonitorRow({
+  symbol, name, quote, rules, hitCounts, selectedSymbol, onSelect, onRemove,
+}: {
+  symbol: string;
+  name: string | null;
+  quote: WatchlistQuote | undefined;
+  rules: ActiveSignal[];
+  hitCounts: HitCounts;
+  selectedSymbol: string | null;
+  onSelect: (s: string) => void;
+  onRemove: (s: string) => void;
+}) {
+  const symRules = rulesForSymbol(symbol, rules);
+  const isSel = symbol === selectedSymbol;
+  const totalHits = totalHitsForSymbol(symbol, hitCounts);
+  const hasHit = totalHits > 0;
+
+  const price = quote?.price;
+  const pct = quote?.changePct ?? null;
+  const priceCls = pct == null ? "text-ink-dim"
+    : pct > 0 ? "text-bull"
+    : pct < 0 ? "text-bear" : "text-ink-dim";
+  const isDown = pct != null && pct < 0;
+  const markerBg = isDown ? "bg-bear" : "bg-accent";
+  const markerBorder = isDown ? "border-l-bear" : "border-l-accent";
+
+  return (
+    <li
+      className={[
+        "relative px-3.5 py-4 border-b border-line cursor-pointer transition-colors duration-200",
+        isSel ? `bg-bg-card border-l-2 ${markerBorder} pl-3` : "hover:bg-bg-card/40",
+      ].join(" ")}
+      onClick={() => onSelect(symbol)}
+    >
+      {hasHit && !isSel && (
+        <span className={`absolute left-0 top-4 w-[3px] h-[22px] ${markerBg}`} aria-hidden />
+      )}
+      <div className="flex items-baseline gap-2 min-w-0 mb-2.5 pr-7">
+        <span className="text-[19px] font-medium shrink-0 text-ink">{symbol}</span>
+        <span className="text-sm text-ink-muted truncate">{name ?? "(無名稱)"}</span>
+        <span className={`shrink-0 text-sm tabular-nums ${priceCls}`}>
+          {price != null ? price.toFixed(2) : "—"}
+          {pct != null && (
+            <span className="ml-1 text-xs">
+              {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {symRules.map((r) => (
+          <SignalChip key={r.id} ruleName={r.name} count={hitCounts[symbol]?.[r.id] ?? 0} />
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onRemove(symbol); }}
+        className="absolute right-2.5 top-3 text-base text-ink-dim hover:text-accent px-1"
+        aria-label={`從監聽清單移除 ${symbol}`}
+      >
+        ×
+      </button>
+    </li>
   );
 }

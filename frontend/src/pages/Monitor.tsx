@@ -9,6 +9,7 @@ import { TradeTape } from "../components/TradeTape";
 import { TriggerList } from "../components/TriggerList";
 import { useActiveSignals } from "../hooks/useActiveSignals";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
+import { useMonitorList } from "../hooks/useMonitorList";
 import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
@@ -78,7 +79,13 @@ export function Monitor() {
     [bookmarkSymbols, selected]
   );
 
-  const watchlistQuotes = useWatchlistQuotes(bookmarkSymbols);
+  const { items: monitorItems } = useMonitorList();
+  const allWatchSymbols = useMemo(
+    () => Array.from(new Set([...bookmarkSymbols, ...monitorItems.map((m) => m.symbol)])),
+    [bookmarkSymbols, monitorItems]
+  );
+
+  const watchlistQuotes = useWatchlistQuotes(allWatchSymbols);
 
   const triggerSymbols = useMemo(() => {
     const set = new Set<string>();
