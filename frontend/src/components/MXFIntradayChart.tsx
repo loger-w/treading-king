@@ -67,7 +67,7 @@ export function MXFIntradayChart() {
   const change = latest && baselineOpen ? latest.close - baselineOpen : 0;
   const changePct = latest && baselineOpen ? (change / baselineOpen) * 100 : 0;
   const isUp = change > 0;
-  const dirCls = change > 0 ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
+  const dirCls = isUp ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
 
   const sx = (iso: string) => PAD_L + scaleX_compressed(iso, sessions, innerW);
   const sy = (v: number) => PAD_T + scaleY_clamped(v, yMin, yMax, innerH);
@@ -107,15 +107,15 @@ export function MXFIntradayChart() {
       {/* Top-left header — symbol + 大字現價 + 漲跌% */}
       <div className="mb-4">
         <div className="font-serif text-[22px] tracking-tight text-ink leading-tight font-medium">
-          {symbol ?? "—"}
+          {symbol}
         </div>
         <div className="flex items-baseline gap-4 mt-1">
           <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
-            {latest ? latest.close : "—"}
+            {latest ? latest.close.toFixed(0) : "—"}
           </span>
           {latest && baselineOpen && (
             <span className={`text-[18px] tabular-nums ${dirCls}`}>
-              {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+              {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change).toFixed(0)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
             </span>
           )}
         </div>
