@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMXFCandles } from "../hooks/useMXFCandles";
 import {
   scaleX_compressed,
@@ -11,7 +11,7 @@ import {
   VolumeSubChart,
   type ChartSession,
 } from "../lib/chart-svg";
-import { dayOpenBaseline } from "../lib/mxf-chart";
+import { dayOpenBaseline, computeNewViewRange, type ViewRange } from "../lib/mxf-chart";
 
 const TIMEFRAMES = [1, 5, 10, 15, 30, 60];
 const CHART_W = 1000;
@@ -21,6 +21,10 @@ const PAD_L = 56;
 const PAD_R = 56;
 const PAD_T = 12;
 const PAD_B = 28;
+const MIN_CANDLE_PX = 6;
+
+// Suppress unused import warning — computeNewViewRange used in Task 5
+void computeNewViewRange;
 
 export function MXFIntradayChart() {
   const [tf, setTf] = useState(5);
@@ -29,6 +33,7 @@ export function MXFIntradayChart() {
   const [showVolume, setShowVolume] = useState(true);
   const [showHighLow, setShowHighLow] = useState(true);
   const [hover, setHover] = useState<{ idx: number } | null>(null);
+  const [viewRange, setViewRange] = useState<ViewRange | null>(null);
 
   const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf);
 
@@ -61,6 +66,21 @@ export function MXFIntradayChart() {
 
   const innerW = CHART_W - PAD_L - PAD_R;
   const innerH = CHART_H - PAD_T - PAD_B - VOL_H - 8;
+
+  // Init / reset viewRange when candles arrive or are cleared
+  useEffect(() => {
+    if (candles.length === 0) {
+      setViewRange(null);
+      return;
+    }
+    if (viewRange === null) {
+      const maxVisible = Math.floor(innerW / MIN_CANDLE_PX);
+      const startIdx = Math.max(0, candles.length - maxVisible);
+      setViewRange({ startIdx, endIdx: candles.length - 1 });
+    }
+    // viewRange not in deps to avoid re-run when zoom/pan updates it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles.length, innerW]);
 
   const baselineOpen = dayOpenBaseline(candles, new Date());
   const latest = candles.length > 0 ? candles[candles.length - 1] : null;
