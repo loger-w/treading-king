@@ -58,3 +58,16 @@ export function computeNewViewRange(args: ComputeNewViewRangeArgs): ViewRange {
 
   return { startIdx: newStart, endIdx: newStart + newVisible - 1 };
 }
+
+const INTERVALS_MIN = [5, 15, 30, 60, 120, 240];
+
+/**
+ * 依「視窗內所有 session 時長加總」自動選 label interval (分鐘)。
+ * Target: 不超過 ~7 個 label / 視窗。
+ */
+export function pickInterval(visibleMinutesSum: number, targetLabelCount = 7): number {
+  for (const iv of INTERVALS_MIN) {
+    if (visibleMinutesSum / iv <= targetLabelCount) return iv;
+  }
+  return 240;
+}

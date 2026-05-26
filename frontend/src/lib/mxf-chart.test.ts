@@ -105,3 +105,27 @@ describe("computeNewViewRange", () => {
     expect(result.startIdx).toBeGreaterThanOrEqual(0);
   });
 });
+
+import { pickInterval } from "./mxf-chart";
+
+describe("pickInterval", () => {
+  test("picks 5m for short spans (<= 35min)", () => {
+    expect(pickInterval(30)).toBe(5);
+  });
+  test("picks 15m for spans 35-105min", () => {
+    expect(pickInterval(60)).toBe(15);
+    expect(pickInterval(100)).toBe(15);
+  });
+  test("picks 30m for spans 105-210min", () => {
+    expect(pickInterval(180)).toBe(30);
+  });
+  test("picks 60m for spans 210-420min", () => {
+    expect(pickInterval(300)).toBe(60);
+  });
+  test("picks 120m for spans 420-840min", () => {
+    expect(pickInterval(600)).toBe(120);
+  });
+  test("picks 240m for spans > 840min", () => {
+    expect(pickInterval(2000)).toBe(240);
+  });
+});
