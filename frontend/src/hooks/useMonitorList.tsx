@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, type MonitorListItem } from "../lib/api";
 
 interface MonitorListContextValue {
@@ -41,8 +41,16 @@ export function MonitorListProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Memo:每 render 新 object 會讓所有 consumer 重 render,在有 setState 寫回的 child
+  // useEffect 路徑下會引發無窮 loop(實測 BookmarksPanel.onItemsChanged → setBookmarkSymbolNames
+  // spread → Provider re-render → 新 value → BookmarksPanel re-render → ...)。
+  const value = useMemo(
+    () => ({ items, loading, error, refresh, add, remove }),
+    [items, loading, error, refresh, add, remove],
+  );
+
   return (
-    <MonitorListContext.Provider value={{ items, loading, error, refresh, add, remove }}>
+    <MonitorListContext.Provider value={value}>
       {children}
     </MonitorListContext.Provider>
   );
