@@ -73,3 +73,24 @@ def test_active_filter_loads_old_schema_2_data():
     }
     f = ActiveFilter(**old)
     assert f.ma_proximity is None
+
+
+def test_active_signal_create_default_notify_discord_true():
+    from models.condition import ActiveSignalCreate, ActiveFilter, Condition, WatchlistScope
+    payload = ActiveSignalCreate(
+        name="t",
+        filter_json=ActiveFilter(conditions=[Condition(field="close", operator="gt", value=0)]),
+        scope=WatchlistScope(type="watchlist"),
+    )
+    assert payload.notify_discord is True
+
+
+def test_active_signal_create_notify_discord_can_be_false():
+    from models.condition import ActiveSignalCreate, ActiveFilter, Condition, WatchlistScope
+    payload = ActiveSignalCreate(
+        name="t",
+        filter_json=ActiveFilter(conditions=[Condition(field="close", operator="gt", value=0)]),
+        scope=WatchlistScope(type="watchlist"),
+        notify_discord=False,
+    )
+    assert payload.notify_discord is False
