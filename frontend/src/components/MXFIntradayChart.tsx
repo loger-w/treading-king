@@ -11,6 +11,7 @@ import {
   VolumeSubChart,
   type ChartSession,
 } from "../lib/chart-svg";
+import { dayOpenBaseline } from "../lib/mxf-chart";
 
 const TIMEFRAMES = [1, 5, 10, 15, 30, 60];
 const CHART_W = 1000;
@@ -61,6 +62,13 @@ export function MXFIntradayChart() {
   const innerW = CHART_W - PAD_L - PAD_R;
   const innerH = CHART_H - PAD_T - PAD_B - VOL_H - 8;
 
+  const baselineOpen = dayOpenBaseline(candles, new Date());
+  const latest = candles.length > 0 ? candles[candles.length - 1] : null;
+  const change = latest && baselineOpen ? latest.close - baselineOpen : 0;
+  const changePct = latest && baselineOpen ? (change / baselineOpen) * 100 : 0;
+  const isUp = change > 0;
+  const dirCls = change > 0 ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
+
   const sx = (iso: string) => PAD_L + scaleX_compressed(iso, sessions, innerW);
   const sy = (v: number) => PAD_T + scaleY_clamped(v, yMin, yMax, innerH);
 
@@ -96,6 +104,23 @@ export function MXFIntradayChart() {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Top-left header — symbol + 大字現價 + 漲跌% */}
+      <div className="mb-4">
+        <div className="font-serif text-[22px] tracking-tight text-ink leading-tight font-medium">
+          {symbol ?? "—"}
+        </div>
+        <div className="flex items-baseline gap-4 mt-1">
+          <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
+            {latest ? latest.close : "—"}
+          </span>
+          {latest && baselineOpen && (
+            <span className={`text-[18px] tabular-nums ${dirCls}`}>
+              {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="flex items-center gap-6 text-sm flex-wrap">
         <span className="font-mono text-ink">{symbol}</span>
