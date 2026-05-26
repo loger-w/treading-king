@@ -11,7 +11,7 @@ import {
   VolumeSubChart,
   type ChartSession,
 } from "../lib/chart-svg";
-import { dayOpenBaseline, computeNewViewRange, type ViewRange } from "../lib/mxf-chart";
+import { dayOpenBaseline, type ViewRange } from "../lib/mxf-chart";
 
 const TIMEFRAMES = [1, 5, 10, 15, 30, 60];
 const CHART_W = 1000;
@@ -22,9 +22,6 @@ const PAD_R = 56;
 const PAD_T = 12;
 const PAD_B = 28;
 const MIN_CANDLE_PX = 6;
-
-// Suppress unused import warning — computeNewViewRange used in Task 5
-void computeNewViewRange;
 
 export function MXFIntradayChart() {
   const [tf, setTf] = useState(5);
