@@ -29,13 +29,12 @@ interface Props {
   onItemsChanged: (allSymbols: string[], names: Record<string, string | null>) => void;  // 給 Monitor 同步 watchlistSymbols + symbolNames
 }
 
-function rulesForSymbol(symbol: string, rules: ActiveSignal[]): ActiveSignal[] {
-  return rules.filter((r) => {
-    if (!r.enabled) return false;
-    if (r.scope.type === "watchlist") return true;
-    if (r.scope.type === "symbols") return r.scope.symbols.includes(symbol);
-    return false;
-  });
+function rulesForSymbol(_symbol: string, rules: ActiveSignal[]): ActiveSignal[] {
+  // Post-refactor:每條啟用的規則都對 monitor_list 裡的每個 symbol 觸發,scope 欄位不再控制範圍。
+  // MonitorRow 呼叫此函式時完全正確(每個 MonitorRow 都在 monitor_list 裡)。
+  // ItemRow(書籤列)呼叫時有 v1 妥協:不在 monitor_list 的書籤也會顯示 chip,但實際上不會觸發。
+  // 這個視覺謊言在 v1 可接受 — IntradayChart 的「+ 加入監聽」按鈕才是監聽資格的正式入口。
+  return rules.filter((r) => r.enabled);
 }
 
 function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {

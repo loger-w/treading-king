@@ -17,14 +17,16 @@ interface Props {
 }
 
 function pillsForRule(r: ActiveSignal): string[] {
-  const scope = r.scope.type === "watchlist"
-    ? "自選全部"
-    : `指定 ${r.scope.symbols.length} 檔`;
+  // scope chip 已移除:post-refactor scope 不再控制觸發範圍,顯示出來會誤導使用者。
+  // 改以 Discord 通知狀態取代,讓 UI 反映實際有意義的設定。
+  const pills: string[] = [];
+  if (r.notify_discord) pills.push("🔔 Discord");
   const cd = `cd ${r.cooldown_seconds}s`;
   const conditions = (r.filter_json.conditions?.length ?? 0)
     + (r.filter_json.window_conditions?.length ?? 0);
   const logic = `${r.filter_json.logic} · ${conditions} 條件`;
-  return [scope, cd, logic];
+  pills.push(cd, logic);
+  return pills;
 }
 
 export function SignalRulesDialog({ open, rules, onClose, onChanged }: Props) {

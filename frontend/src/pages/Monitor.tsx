@@ -79,7 +79,7 @@ export function Monitor() {
     [bookmarkSymbols, selected]
   );
 
-  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
+  const { items: monitorItems, refresh: refreshMonitor, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
 
   const inMonitor = useMemo(
     () => selected !== null && monitorItems.some((m) => m.symbol === selected),
@@ -256,6 +256,9 @@ export function Monitor() {
           onChanged={async () => {
             // 重新渲染 BookmarksPanel(讓它重新拉 groups + items)
             setBookmarksRefreshKey((k) => k + 1);
+            // 同步 Monitor 自己的 monitorItems,否則 inMonitor memo 不會重算
+            // (BookmarksPanel 有獨立的 useMonitorList 實例,不會傳回 Monitor)
+            await refreshMonitor();
           }}
         />
       )}
