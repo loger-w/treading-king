@@ -123,7 +123,7 @@ export function MXFIntradayChart() {
   const sy = (v: number) => PAD_T + scaleY_clamped(v, yMinView, yMaxView, innerH);
 
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    if (candles.length === 0) return;
+    if (visibleCandles.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
     const svgY = ((e.clientY - rect.top) / rect.height) * CHART_H;
@@ -132,11 +132,11 @@ export function MXFIntradayChart() {
       setHover(null);
       return;
     }
-    // compressed X scale 下找最近 candle 改用 pixel 距離(非 minute-of-day)
+    // Pixel-based nearest candle within visibleCandles
     let bestIdx = 0;
-    let bestDist = Math.abs(sx(candles[0].date) - svgX);
-    for (let i = 1; i < candles.length; i++) {
-      const cx = sx(candles[i].date);
+    let bestDist = Math.abs(sx(visibleCandles[0].date) - svgX);
+    for (let i = 1; i < visibleCandles.length; i++) {
+      const cx = sx(visibleCandles[i].date);
       if (Number.isNaN(cx)) continue;
       const d = Math.abs(cx - svgX);
       if (d < bestDist) { bestDist = d; bestIdx = i; }
@@ -305,8 +305,8 @@ export function MXFIntradayChart() {
         )}
 
         {/* Hover crosshair — snap 到最近 candle 的 close */}
-        {hover && candles[hover.idx] && (() => {
-          const c = candles[hover.idx];
+        {hover && visibleCandles[hover.idx] && (() => {
+          const c = visibleCandles[hover.idx];
           const lineX = sx(c.date);
           const lineY = sy(c.close);
           if (Number.isNaN(lineX)) return null;
