@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMXFCandles } from "../hooks/useMXFCandles";
 import {
   scaleX_compressed,
@@ -31,6 +31,9 @@ export function MXFIntradayChart() {
   const [showHighLow, setShowHighLow] = useState(true);
   const [hover, setHover] = useState<{ idx: number } | null>(null);
   const [viewRange, setViewRange] = useState<ViewRange | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartX = useRef(0);
+  const dragStartRange = useRef<ViewRange | null>(null);
 
   const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf);
 
@@ -122,7 +125,35 @@ export function MXFIntradayChart() {
   const sx = (iso: string) => PAD_L + scaleX_compressed(iso, visibleSessions, innerW);
   const sy = (v: number) => PAD_T + scaleY_clamped(v, yMinView, yMaxView, innerH);
 
+  function handleMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    if (!viewRange) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
+    if (svgX < PAD_L || svgX > CHART_W - PAD_R) return;
+    setIsDragging(true);
+    setHover(null);
+    dragStartX.current = e.clientX;
+    dragStartRange.current = viewRange;
+  }
+
+  function handleMouseUp() {
+    setIsDragging(false);
+  }
+
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (isDragging && dragStartRange.current) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dx = e.clientX - dragStartX.current;
+      const size = dragStartRange.current.endIdx - dragStartRange.current.startIdx + 1;
+      // pxPerCandle in actual viewport pixels
+      const viewportPxPerCandle = (rect.width * (innerW / CHART_W)) / size;
+      const deltaIdx = -Math.round(dx / viewportPxPerCandle);
+      let newStart = dragStartRange.current.startIdx + deltaIdx;
+      newStart = Math.max(0, Math.min(candles.length - size, newStart));
+      setViewRange({ startIdx: newStart, endIdx: newStart + size - 1 });
+      return;
+    }
+    // Crosshair hit-test — iterates visibleCandles
     if (visibleCandles.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
@@ -132,7 +163,6 @@ export function MXFIntradayChart() {
       setHover(null);
       return;
     }
-    // Pixel-based nearest candle within visibleCandles
     let bestIdx = 0;
     let bestDist = Math.abs(sx(visibleCandles[0].date) - svgX);
     for (let i = 1; i < visibleCandles.length; i++) {
@@ -146,6 +176,7 @@ export function MXFIntradayChart() {
 
   function handleMouseLeave() {
     setHover(null);
+    setIsDragging(false);
   }
 
   function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
@@ -259,8 +290,10 @@ export function MXFIntradayChart() {
       <svg
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
         style={{ width: "100%", height: "auto" }}
-        className="cursor-crosshair"
+        className={isDragging ? "cursor-grabbing" : "cursor-crosshair"}
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
       >
