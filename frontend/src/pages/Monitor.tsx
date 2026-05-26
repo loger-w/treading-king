@@ -28,6 +28,14 @@ import { api, type SignalLogRow } from "../lib/api";
  *           IntradayChart header 提供「+ 加入自選 / 已在自選 ✓」按鈕。
  */
 export function Monitor() {
+  return (
+    <MonitorListProvider>
+      <MonitorInner />
+    </MonitorListProvider>
+  );
+}
+
+function MonitorInner() {
   const { items: rules, refresh: refreshRules } = useActiveSignals();
   const { counts, bump } = useTodayHits();
 
@@ -141,7 +149,6 @@ export function Monitor() {
   }, []);
 
   return (
-    <MonitorListProvider>
     <div className="h-screen flex flex-col overflow-hidden">
       <div className="shrink-0">
         <TopToolbar
@@ -263,6 +270,5 @@ export function Monitor() {
         />
       )}
     </div>
-    </MonitorListProvider>
   );
 }
