@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type BookmarkGroup } from "../lib/api";
+import { useMonitorList } from "../hooks/useMonitorList";
 
 /**
  * 「加股票到書籤」modal — 從 IntradayChart header「+ 加入書籤」開。
@@ -14,6 +15,8 @@ interface Props {
 }
 
 export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
+  const { add: addToMonitor } = useMonitorList();
+  const [alsoMonitor, setAlsoMonitor] = useState(false);
   const [groups, setGroups] = useState<BookmarkGroup[]>([]);
   const [initial, setInitial] = useState<Set<string>>(new Set());  // 進入時已勾
   const [selected, setSelected] = useState<Set<string>>(new Set());  // 目前勾選
@@ -70,6 +73,13 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
         ...toAdd.map((gid) => api.bookmarks.addItems(gid, [symbol])),
         ...toRemove.map((gid) => api.bookmarks.removeItem(gid, symbol)),
       ]);
+      if (alsoMonitor) {
+        try {
+          await addToMonitor(symbol);
+        } catch (e) {
+          console.warn("add to monitor failed:", e);
+        }
+      }
       await onChanged();
       onClose();
     } catch (e) {
@@ -172,6 +182,16 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
             </div>
           </>
         )}
+
+        <label className="text-sm flex items-center gap-2 cursor-pointer text-ink-muted py-3 border-t border-line">
+          <input
+            type="checkbox"
+            checked={alsoMonitor}
+            onChange={(e) => setAlsoMonitor(e.target.checked)}
+            className="accent-accent"
+          />
+          同時加入監聽清單(訊號評估)
+        </label>
 
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose}
