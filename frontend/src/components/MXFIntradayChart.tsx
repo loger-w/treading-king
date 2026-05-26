@@ -12,6 +12,7 @@ import {
   type ChartSession,
 } from "../lib/chart-svg";
 import { dayOpenBaseline, computeNewViewRange, pickInterval, type ViewRange } from "../lib/mxf-chart";
+import { minuteOfDay } from "../lib/intraday-time";
 
 const TIMEFRAMES = [1, 5, 10, 15, 30, 60];
 const CHART_W = 1000;
@@ -140,14 +141,17 @@ export function MXFIntradayChart() {
     for (const s of visibleSessions) {
       const sStart = new Date(s.startIso);
       const sEnd = new Date(s.endIso);
-      // round sStart up to next interval boundary
-      const startMin = sStart.getHours() * 60 + sStart.getMinutes();
+      // round sStart up to next interval boundary (UTC+8 explicit)
+      const startMin = minuteOfDay(s.startIso);
       const remainder = startMin % interval;
       const firstAddMin = remainder === 0 ? 0 : interval - remainder;
       const cursor = new Date(sStart.getTime() + firstAddMin * MIN_MS);
       while (cursor <= sEnd) {
-        const hh = String(cursor.getHours()).padStart(2, "0");
-        const mm = String(cursor.getMinutes()).padStart(2, "0");
+        // UTC+8 explicit minute-of-day for label text
+        const utcMin = cursor.getUTCHours() * 60 + cursor.getUTCMinutes();
+        const taipeiMin = (utcMin + 8 * 60) % (24 * 60);
+        const hh = String(Math.floor(taipeiMin / 60)).padStart(2, "0");
+        const mm = String(taipeiMin % 60).padStart(2, "0");
         labelPoints.push({ iso: cursor.toISOString(), label: `${hh}:${mm}` });
         cursor.setTime(cursor.getTime() + interval * MIN_MS);
       }
@@ -362,13 +366,17 @@ export function MXFIntradayChart() {
             ? sx(visibleCandles[0]?.date ?? s.startIso)
             : PAD_L + sessionBoundaries(visibleSessions, innerW)[i - 1].gapEndPx;
           if (Number.isNaN(startX)) return null;
-          const d = new Date(s.startIso);
-          const hour = d.getHours();
+          // Taipei-time date + sessionType derived from session start
+          const startEpoch = new Date(s.startIso).getTime();
+          const tpe = new Date(startEpoch + 8 * 60 * 60 * 1000);
+          const month = tpe.getUTCMonth() + 1;
+          const day = tpe.getUTCDate();
+          const hour = Math.floor(minuteOfDay(s.startIso) / 60);
           const sessionType = (hour < 8 || hour >= 14) ? "夜盤" : "日盤";
           return (
             <text key={`sm-${i}`} x={startX + 4} y={PAD_T - 4} textAnchor="start"
               className="fill-ink-dim text-[10px]">
-              {`${d.getMonth() + 1}/${d.getDate()} ${sessionType}`}
+              {`${month}/${day} ${sessionType}`}
             </text>
           );
         })}
