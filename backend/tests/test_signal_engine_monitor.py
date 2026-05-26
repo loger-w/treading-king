@@ -48,3 +48,92 @@ def test_scope_symbols_returns_field_cache_keys():
     engine._field_cache = {"2330": {}, "2317": {}}
     active = MagicMock()
     assert set(engine._scope_symbols(active)) == {"2330", "2317"}
+
+
+@pytest.mark.asyncio
+async def test_fanout_calls_discord_when_notify_enabled(monkeypatch):
+    """rule.notify_discord=True → discord_notifier.send_signal 被叫一次。"""
+    from services import signal_engine as se
+    from services.ring_buffer import Tick
+    from models.condition import ActiveSignalOut, ActiveFilter, Condition
+
+    sent = []
+    async def fake_send_signal(**kwargs):
+        sent.append(kwargs)
+    monkeypatch.setattr(se, "discord_notifier", MagicMock(send_signal=fake_send_signal))
+    monkeypatch.setattr(se, "get_broadcaster", lambda: MagicMock(broadcast=AsyncMock()))
+    fake_writer = MagicMock(append=MagicMock())
+    monkeypatch.setattr("services.supabase_writer.get_supabase_writer", lambda: fake_writer)
+    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+
+    engine = SignalEngine()
+    active = ActiveSignalOut(
+        id="r1", name="r1",
+        filter_json=ActiveFilter(conditions=[Condition(field="close", operator="gt", value=0)]),
+        scope={"type": "watchlist"}, cooldown_seconds=60, enabled=True,
+        created_at="2026-05-26", notify_discord=True,
+    )
+    tick = Tick(price=600.0, size=10, time=1700000000.0)
+    await engine._fanout(active, "2330", tick)
+
+    assert len(sent) == 1
+    assert sent[0]["rule_name"] == "r1"
+    assert sent[0]["symbol"] == "2330"
+
+
+@pytest.mark.asyncio
+async def test_fanout_skips_discord_when_notify_disabled(monkeypatch):
+    from services import signal_engine as se
+    from services.ring_buffer import Tick
+    from models.condition import ActiveSignalOut, ActiveFilter, Condition
+
+    sent = []
+    async def fake_send_signal(**kwargs):
+        sent.append(kwargs)
+    monkeypatch.setattr(se, "discord_notifier", MagicMock(send_signal=fake_send_signal))
+    monkeypatch.setattr(se, "get_broadcaster", lambda: MagicMock(broadcast=AsyncMock()))
+    monkeypatch.setattr("services.supabase_writer.get_supabase_writer", lambda: MagicMock(append=MagicMock()))
+    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+
+    engine = SignalEngine()
+    active = ActiveSignalOut(
+        id="r2", name="r2",
+        filter_json=ActiveFilter(conditions=[Condition(field="close", operator="gt", value=0)]),
+        scope={"type": "watchlist"}, cooldown_seconds=60, enabled=True,
+        created_at="2026-05-26", notify_discord=False,
+    )
+    tick = Tick(price=600.0, size=10, time=1700000000.0)
+    await engine._fanout(active, "2330", tick)
+
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_fanout_continues_when_discord_raises(monkeypatch):
+    """discord 推送丟錯不該影響 ws broadcast + supabase append。"""
+    from services import signal_engine as se
+    from services.ring_buffer import Tick
+    from models.condition import ActiveSignalOut, ActiveFilter, Condition
+
+    async def raising_send_signal(**kwargs):
+        raise RuntimeError("discord down")
+    monkeypatch.setattr(se, "discord_notifier", MagicMock(send_signal=raising_send_signal))
+    broadcaster = MagicMock(broadcast=AsyncMock())
+    monkeypatch.setattr(se, "get_broadcaster", lambda: broadcaster)
+    writer = MagicMock(append=MagicMock())
+    monkeypatch.setattr("services.supabase_writer.get_supabase_writer", lambda: writer)
+    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+
+    engine = SignalEngine()
+    active = ActiveSignalOut(
+        id="r3", name="r3",
+        filter_json=ActiveFilter(conditions=[Condition(field="close", operator="gt", value=0)]),
+        scope={"type": "watchlist"}, cooldown_seconds=60, enabled=True,
+        created_at="2026-05-26", notify_discord=True,
+    )
+    tick = Tick(price=600.0, size=10, time=1700000000.0)
+    # 不該 raise
+    await engine._fanout(active, "2330", tick)
+
+    broadcaster.broadcast.assert_awaited_once()
+    writer.append.assert_called_once()

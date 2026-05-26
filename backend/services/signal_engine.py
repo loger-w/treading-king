@@ -10,7 +10,7 @@ from typing import Any
 from models.condition import (
     ActiveSignalOut, Condition, Filter, WindowCondition,
 )
-from services import alerts, ma_service
+from services import alerts, discord_notifier, ma_service
 from services.cdp import get_cdp_service
 from services.ring_buffer import Tick, get_ring_buffer
 from services.supabase_client import get_supabase
@@ -543,6 +543,20 @@ class SignalEngine:
             "context_json": context,
             "user_label": get_user_label(),
         })
+        # 3. Discord notify(per-rule 開關;失敗 swallowed,不影響上面兩條)
+        if active.notify_discord:
+            try:
+                await discord_notifier.send_signal(
+                    rule_name=active.name,
+                    symbol=symbol,
+                    price=tick.price,
+                    volume=tick.size,
+                    triggered_at_iso=data["triggered_at"],
+                    cdp_touch=cdp_touch,
+                    ma_touch=ma_touch,
+                )
+            except Exception as e:
+                logger.warning("discord notify failed: %s", e)
 
     async def _monitor_loop(self) -> None:
         """監控 lag — 超過 5s 連續 30s → 自動 disable + alerts。"""
