@@ -9,7 +9,7 @@ import { TradeTape } from "../components/TradeTape";
 import { TriggerList } from "../components/TriggerList";
 import { useActiveSignals } from "../hooks/useActiveSignals";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
-import { useMonitorList } from "../hooks/useMonitorList";
+import { MonitorListProvider, useMonitorList } from "../hooks/useMonitorList";
 import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
@@ -79,7 +79,7 @@ export function Monitor() {
     [bookmarkSymbols, selected]
   );
 
-  const { items: monitorItems, refresh: refreshMonitor, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
+  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
 
   const inMonitor = useMemo(
     () => selected !== null && monitorItems.some((m) => m.symbol === selected),
@@ -141,6 +141,7 @@ export function Monitor() {
   }, []);
 
   return (
+    <MonitorListProvider>
     <div className="h-screen flex flex-col overflow-hidden">
       <div className="shrink-0">
         <TopToolbar
@@ -256,12 +257,12 @@ export function Monitor() {
           onChanged={async () => {
             // 重新渲染 BookmarksPanel(讓它重新拉 groups + items)
             setBookmarksRefreshKey((k) => k + 1);
-            // 同步 Monitor 自己的 monitorItems,否則 inMonitor memo 不會重算
-            // (BookmarksPanel 有獨立的 useMonitorList 實例,不會傳回 Monitor)
-            await refreshMonitor();
+            // refreshMonitor 已不需要 — MonitorListProvider 共用同一份 state,
+            // add/remove 操作完成後所有消費者(Monitor、BookmarksPanel、AddToBookmarksDialog)都會看到最新資料
           }}
         />
       )}
     </div>
+    </MonitorListProvider>
   );
 }
