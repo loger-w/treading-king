@@ -48,6 +48,7 @@ export function SignalRulesDialog({ open, rules, onClose, onChanged }: Props) {
       scope: r.scope,
       cooldown_seconds: r.cooldown_seconds,
       enabled: !r.enabled,
+      notify_discord: r.notify_discord,
     });
     onChanged();
   }

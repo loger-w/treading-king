@@ -159,7 +159,8 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const payload = { name: name.trim(), filter_json: filter, scope, cooldown_seconds: cooldown, enabled };
+      // notify_discord 預設 true；Task 11 會加 UI toggle
+      const payload = { name: name.trim(), filter_json: filter, scope, cooldown_seconds: cooldown, enabled, notify_discord: initial?.notify_discord ?? true };
       if (initial) await api.activeSignals.update(initial.id, payload);
       else await api.activeSignals.create(payload);
       onSaved();
