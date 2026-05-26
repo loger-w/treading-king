@@ -92,7 +92,7 @@ class SignalEngine:
             return
         res = await asyncio.to_thread(
             lambda: sb.client.table("active_signals")
-            .select("id, name, filter_json, scope, cooldown_seconds, enabled, created_at")
+            .select("id, name, filter_json, scope, cooldown_seconds, enabled, notify_discord, created_at")
             .eq("user_label", get_user_label())
             .eq("enabled", True)
             .execute()
@@ -119,6 +119,7 @@ class SignalEngine:
             filter_json=r["filter_json"], scope=r["scope"],
             cooldown_seconds=r.get("cooldown_seconds", 1800),
             enabled=r.get("enabled", True),
+            notify_discord=r.get("notify_discord", True),
             created_at=str(r.get("created_at", "")),
         )
 
