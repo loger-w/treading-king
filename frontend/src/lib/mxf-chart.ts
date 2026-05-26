@@ -23,3 +23,38 @@ export function dayOpenBaseline(candles: MXFCandle[], now: Date): number | null 
   }
   return null;
 }
+
+export interface ViewRange {
+  startIdx: number;
+  endIdx: number;
+}
+
+export interface ComputeNewViewRangeArgs {
+  prevRange: ViewRange;
+  mouseRatio: number;     // 0 = left edge, 1 = right edge
+  deltaY: number;          // wheel deltaY: positive = zoom out, negative = zoom in
+  candlesLen: number;
+  innerW: number;
+  minCandlePx: number;
+}
+
+const ZOOM_FACTOR = 1.15;
+const MIN_VISIBLE = 5;
+
+export function computeNewViewRange(args: ComputeNewViewRangeArgs): ViewRange {
+  const { prevRange, mouseRatio, deltaY, candlesLen, innerW, minCandlePx } = args;
+  const visible = prevRange.endIdx - prevRange.startIdx + 1;
+  const factor = deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+  let newVisible = Math.round(visible * factor);
+  // Clamp visible to [MIN_VISIBLE, maxByPx, candlesLen]
+  const maxByPx = Math.floor(innerW / minCandlePx);
+  newVisible = Math.max(MIN_VISIBLE, Math.min(maxByPx, candlesLen, newVisible));
+
+  // Anchor: keep candle under cursor at same pixel
+  const anchorIdx = prevRange.startIdx + Math.round(mouseRatio * (visible - 1));
+  let newStart = Math.round(anchorIdx - mouseRatio * (newVisible - 1));
+  // Clamp newStart to [0, candlesLen - newVisible]
+  newStart = Math.max(0, Math.min(candlesLen - newVisible, newStart));
+
+  return { startIdx: newStart, endIdx: newStart + newVisible - 1 };
+}
