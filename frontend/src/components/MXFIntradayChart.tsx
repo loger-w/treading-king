@@ -11,7 +11,7 @@ import {
   VolumeSubChart,
   type ChartSession,
 } from "../lib/chart-svg";
-import { dayOpenBaseline, computeNewViewRange, type ViewRange } from "../lib/mxf-chart";
+import { dayOpenBaseline, computeNewViewRange, pickInterval, type ViewRange } from "../lib/mxf-chart";
 
 const TIMEFRAMES = [1, 5, 10, 15, 30, 60];
 const CHART_W = 1000;
@@ -83,6 +83,7 @@ export function MXFIntradayChart() {
   const {
     visibleCandles, visibleSessions, visibleMa5, visibleMa20,
     yMinView, yMaxView, todayHighInView, todayLowInView, maxVolumeInView,
+    labelPoints,
   } = useMemo(() => {
     if (!viewRange || candles.length === 0) {
       return {
@@ -94,6 +95,7 @@ export function MXFIntradayChart() {
         todayHighInView: { value: 0, idx: -1 },
         todayLowInView: { value: 0, idx: -1 },
         maxVolumeInView: 1,
+        labelPoints: [] as { iso: string; label: string }[],
       };
     }
     const start = viewRange.startIdx;
@@ -124,9 +126,37 @@ export function MXFIntradayChart() {
 
     const maxVolumeInView = Math.max(1, ...visibleCandles.map((c) => c.volume));
 
+    // 1. visibleMinutesSum = sum of each visible session's duration in minutes
+    const MIN_MS = 60 * 1000;
+    const visibleMinutesSum = visibleSessions.reduce((acc, s) => {
+      return acc + (new Date(s.endIso).getTime() - new Date(s.startIso).getTime()) / MIN_MS;
+    }, 0);
+    const interval = pickInterval(visibleMinutesSum);
+
+    // 2. For each visible session, generate HH:MM points at interval marks
+    //    A point at HH:MM means: (hour * 60 + min) % interval === 0
+    interface TimeLabel { iso: string; label: string; }
+    const labelPoints: TimeLabel[] = [];
+    for (const s of visibleSessions) {
+      const sStart = new Date(s.startIso);
+      const sEnd = new Date(s.endIso);
+      // round sStart up to next interval boundary
+      const startMin = sStart.getHours() * 60 + sStart.getMinutes();
+      const remainder = startMin % interval;
+      const firstAddMin = remainder === 0 ? 0 : interval - remainder;
+      const cursor = new Date(sStart.getTime() + firstAddMin * MIN_MS);
+      while (cursor <= sEnd) {
+        const hh = String(cursor.getHours()).padStart(2, "0");
+        const mm = String(cursor.getMinutes()).padStart(2, "0");
+        labelPoints.push({ iso: cursor.toISOString(), label: `${hh}:${mm}` });
+        cursor.setTime(cursor.getTime() + interval * MIN_MS);
+      }
+    }
+
     return {
       visibleCandles, visibleSessions, visibleMa5, visibleMa20,
       yMinView, yMaxView, todayHighInView, todayLowInView, maxVolumeInView,
+      labelPoints,
     };
   }, [candles, viewRange, ma5, ma20]);
 
@@ -370,6 +400,24 @@ export function MXFIntradayChart() {
             barWidth={Math.max(1, (innerW / visibleCandles.length) * 0.6)}
           />
         )}
+
+        {/* Time axis labels — adaptive interval, drop overlaps < 40px */}
+        {(() => {
+          if (labelPoints.length === 0) return null;
+          const rendered: { x: number; label: string }[] = [];
+          for (const lp of labelPoints) {
+            const x = sx(lp.iso);
+            if (Number.isNaN(x)) continue;
+            if (rendered.length > 0 && Math.abs(x - rendered[rendered.length - 1].x) < 40) continue;
+            rendered.push({ x, label: lp.label });
+          }
+          return rendered.map((r, i) => (
+            <text key={i} x={r.x} y={CHART_H - PAD_B + 14} textAnchor="middle"
+              className="fill-ink-dim text-[11px] tabular-nums">
+              {r.label}
+            </text>
+          ));
+        })()}
 
         {/* Hover crosshair — snap 到最近 candle 的 close */}
         {hover && visibleCandles[hover.idx] && (() => {
