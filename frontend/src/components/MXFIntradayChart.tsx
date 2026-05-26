@@ -11,7 +11,7 @@ import {
   VolumeSubChart,
   type ChartSession,
 } from "../lib/chart-svg";
-import { dayOpenBaseline, type ViewRange } from "../lib/mxf-chart";
+import { dayOpenBaseline, computeNewViewRange, type ViewRange } from "../lib/mxf-chart";
 
 const TIMEFRAMES = [1, 5, 10, 15, 30, 60];
 const CHART_W = 1000;
@@ -148,6 +148,24 @@ export function MXFIntradayChart() {
     setHover(null);
   }
 
+  function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
+    e.preventDefault();  // always block page scroll on chart
+    if (!viewRange) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
+    if (svgX < PAD_L || svgX > CHART_W - PAD_R) return;
+    const mouseRatio = (svgX - PAD_L) / innerW;
+    const newRange = computeNewViewRange({
+      prevRange: viewRange,
+      mouseRatio,
+      deltaY: e.deltaY,
+      candlesLen: candles.length,
+      innerW,
+      minCandlePx: MIN_CANDLE_PX,
+    });
+    setViewRange(newRange);
+  }
+
   if (loading) return <div className="p-8 text-center text-ink-muted">載入中…</div>;
   if (error) return <div className="p-8 text-center text-bear">{error}</div>;
   if (!symbol) return <div className="p-8 text-center text-ink-muted">無法取得 MXF 近月合約</div>;
@@ -244,6 +262,7 @@ export function MXFIntradayChart() {
         className="cursor-crosshair"
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
+        onWheel={handleWheel}
       >
         {/* Y 軸格線 */}
         {[0, 0.25, 0.5, 0.75, 1].map((r) => {
