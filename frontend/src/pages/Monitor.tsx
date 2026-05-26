@@ -79,7 +79,12 @@ export function Monitor() {
     [bookmarkSymbols, selected]
   );
 
-  const { items: monitorItems } = useMonitorList();
+  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
+
+  const inMonitor = useMemo(
+    () => selected !== null && monitorItems.some((m) => m.symbol === selected),
+    [monitorItems, selected]
+  );
   const allWatchSymbols = useMemo(
     () => Array.from(new Set([...bookmarkSymbols, ...monitorItems.map((m) => m.symbol)])),
     [bookmarkSymbols, monitorItems]
@@ -211,6 +216,9 @@ export function Monitor() {
                       prevClose={prevClose}
                       inAnyBookmark={inAnyBookmark}
                       onOpenBookmarkDialog={handleOpenBookmarkDialog}
+                      inMonitor={inMonitor}
+                      onAddToMonitor={() => selected && addToMonitor(selected)}
+                      onRemoveFromMonitor={() => selected && removeFromMonitor(selected)}
                     />
                   </div>
                 )}
