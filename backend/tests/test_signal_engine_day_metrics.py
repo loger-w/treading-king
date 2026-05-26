@@ -142,6 +142,8 @@ async def test_evaluate_day_change_pct_does_not_trigger_below_threshold():
 async def test_evaluate_day_volume_triggers_when_cumulative_exceeds_threshold():
     engine = SignalEngine()
     engine._active = [_active(Condition(field="day_volume", operator="gte", value=10))]
+    # _scope_includes 現在只看 _field_cache,必須預先放入 symbol 才能通過 scope filter
+    engine._field_cache["2330"] = {}
 
     captured: list = []
     async def fake_broadcast(payload):

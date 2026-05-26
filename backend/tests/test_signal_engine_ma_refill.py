@@ -12,23 +12,14 @@ from services.signal_engine import SignalEngine
 @pytest.mark.asyncio
 async def test_refill_writes_sma_into_field_cache():
     engine = SignalEngine()
-    engine._active = [
-        ActiveSignalOut(
-            id="x", name="t",
-            filter_json=ActiveFilter(
-                conditions=[Condition(field="close", operator="gte", value="sma_5")],
-            ),
-            scope={"type": "symbols", "symbols": ["2330"]},
-            cooldown_seconds=60, enabled=True, created_at="2026-05-19",
-        )
-    ]
+    # _refill_field_cache 現在透過 _load_monitor_symbols 拿 symbol 集合,
+    # 直接 monkeypatch 該方法讓它回傳測試目標 symbol,不需要 active scope 設定。
+    engine._load_monitor_symbols = AsyncMock(return_value={"2330"})
 
     with patch("services.signal_engine.get_cdp_service") as mock_cdp, \
-         patch("services.signal_engine.ma_service") as mock_ma, \
-         patch("services.signal_engine.get_supabase") as mock_sb:
+         patch("services.signal_engine.ma_service") as mock_ma:
         mock_cdp.return_value.get = AsyncMock(return_value=None)
         mock_ma.fetch_sma_5_20 = AsyncMock(return_value=(100.5, 105.2))
-        mock_sb.return_value.client = None  # 走「沒 supabase」路徑也能寫 cache
 
         await engine._refill_field_cache()
 
