@@ -34,6 +34,7 @@ export function MXFIntradayChart() {
   const [isDragging, setIsDragging] = useState(false);
   const dragStartX = useRef(0);
   const dragStartRange = useRef<ViewRange | null>(null);
+  const prevLenRef = useRef(0);
 
   const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf);
 
@@ -64,6 +65,20 @@ export function MXFIntradayChart() {
     // viewRange not in deps to avoid re-run when zoom/pan updates it
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles.length, innerW]);
+
+  // WS push 新 candle: 貼右就跟、否則凍結
+  useEffect(() => {
+    const prevLen = prevLenRef.current;
+    prevLenRef.current = candles.length;
+    if (!viewRange) return;
+    if (candles.length <= prevLen) return;  // not a push (or reset)
+    const anchoredRight = viewRange.endIdx === prevLen - 1;
+    if (!anchoredRight) return;
+    const shift = candles.length - prevLen;
+    setViewRange({ startIdx: viewRange.startIdx + shift, endIdx: viewRange.endIdx + shift });
+    // viewRange not in deps to avoid loop — we only react to length growth
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles.length]);
 
   const {
     visibleCandles, visibleSessions, visibleMa5, visibleMa20,
