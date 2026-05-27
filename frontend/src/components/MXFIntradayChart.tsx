@@ -179,6 +179,8 @@ export function MXFIntradayChart() {
     const rect = e.currentTarget.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
     if (svgX < PAD_L || svgX > CHART_W - PAD_R) return;
+    // 擋掉預設的文字選取 (拖曳時瀏覽器原生 selection 會把畫面外的文字框起來)
+    e.preventDefault();
     setIsDragging(true);
     setHover(null);
     dragStartX.current = e.clientX;
@@ -246,16 +248,23 @@ export function MXFIntradayChart() {
     setViewRange(newRange);
   }
 
-  if (loading) return <div className="p-8 text-center text-ink-muted">載入中…</div>;
-  if (error) return <div className="p-8 text-center text-bear">{error}</div>;
-  if (!symbol) return <div className="p-8 text-center text-ink-muted">無法取得 MXF 近月合約</div>;
+  // 顯示 chart 還是 placeholder 由 loading/error/!symbol 決定，但 header + toolbar 永遠 render
+  // 避免切 timeframe 時整個面板閃成「載入中...」
+  const placeholder = loading
+    ? { text: "載入中…", className: "text-ink-muted" }
+    : error
+    ? { text: error, className: "text-bear" }
+    : !symbol
+    ? { text: "無法取得 MXF 近月合約", className: "text-ink-muted" }
+    : null;
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Top-left header — symbol + 大字現價 + 漲跌% */}
+      {/* Top-left header — symbol + 中文名 + 大字現價 + 漲跌% */}
       <div className="mb-4">
-        <div className="font-serif text-[22px] tracking-tight text-ink leading-tight font-medium">
-          {symbol}
+        <div className="font-serif text-[22px] tracking-tight text-ink leading-tight">
+          <span className="font-medium">{symbol ?? "—"}</span>
+          <span className="ml-2 text-ink-muted">小型台指</span>
         </div>
         <div className="flex items-baseline gap-4 mt-1">
           <span className={`font-serif italic text-[44px] tabular-nums leading-none ${dirCls}`}>
@@ -335,7 +344,12 @@ export function MXFIntradayChart() {
         </div>
       </div>
 
-      {/* SVG */}
+      {/* Chart area — placeholder OR SVG (header+toolbar 上面已 render，這裡只切換 chart 內容) */}
+      {placeholder ? (
+        <div className={`aspect-[1000/460] w-full flex items-center justify-center font-serif italic ${placeholder.className}`}>
+          {placeholder.text}
+        </div>
+      ) : (
       <svg
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
         style={{ width: "100%", height: "auto" }}
@@ -486,6 +500,7 @@ export function MXFIntradayChart() {
           );
         })()}
       </svg>
+      )}
     </div>
   );
 }
