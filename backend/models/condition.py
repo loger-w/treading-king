@@ -177,6 +177,7 @@ class ActiveSignalCreate(BaseModel):
     scope: Scope
     cooldown_seconds: int = Field(default=1800, ge=60, le=86400)
     enabled: bool = True
+    notify_discord: bool = True
 
 
 class ActiveSignalOut(ActiveSignalCreate):

@@ -16,7 +16,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
     active_signals, bookmarks, camarilla, candles, cdp as cdp_route,
-    ma, mxf,
+    ma, monitor_list as monitor_list_route, mxf,
     preview, quote, signals_history, symbols,
     watchlist, ws,
 )  # noqa: E402
@@ -102,6 +102,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("startup bookmarks sub failed: %s", e)
 
+    # 訂閱 monitor_list — owner = "monitor_list"
+    if supabase.client is not None:
+        try:
+            ml_res = await asyncio.to_thread(
+                lambda: supabase.client.table("monitor_list")
+                .select("symbol")
+                .eq("user_label", label)
+                .execute()
+            )
+            for r in (ml_res.data or []):
+                try:
+                    await pool.subscribe(r["symbol"], owner_id="monitor_list")
+                except RuntimeError as e:
+                    logger.warning("startup monitor_list ws sub %s failed: %s", r["symbol"], e)
+        except Exception as e:
+            logger.error("startup monitor_list sub failed: %s", e)
+
     # 啟動 overnight 8:25 cron — 每個 instance 自己重 login + 重訂閱 ws
     overnight_task = asyncio.create_task(overnight_loop())
     logger.info("overnight loop started")
@@ -149,6 +166,7 @@ app.include_router(symbols.router)
 app.include_router(watchlist.router)
 app.include_router(bookmarks.router)
 app.include_router(active_signals.router)
+app.include_router(monitor_list_route.router)
 app.include_router(signals_history.router)
 app.include_router(candles.router)
 app.include_router(cdp_route.router)

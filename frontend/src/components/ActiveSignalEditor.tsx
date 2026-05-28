@@ -3,7 +3,7 @@ import {
   ALL_FIELDS, api, type ActiveFilter, type ActiveSignal, type CdpProximity,
   type Condition, type ConditionField, type ConditionOperator,
   type MAProximity,
-  type Scope, type WindowCondition, type WindowConditionType, type WindowSeconds,
+  type WindowCondition, type WindowConditionType, type WindowSeconds,
 } from "../lib/api";
 
 const FIELD_LABEL: Record<ConditionField, string> = {
@@ -52,7 +52,7 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   const [filter, setFilter] = useState<ActiveFilter>(initial?.filter_json ?? {
     conditions: [], window_conditions: [], logic: "AND",
   });
-  const [scope, setScope] = useState<Scope>(initial?.scope ?? { type: "watchlist" });
+  const [notifyDiscord, setNotifyDiscord] = useState(initial?.notify_discord ?? true);
   const [cooldown, setCooldown] = useState(initial?.cooldown_seconds ?? 1800);
   const [enabled] = useState(initial?.enabled ?? true);
   const [saving, setSaving] = useState(false);
@@ -159,7 +159,14 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const payload = { name: name.trim(), filter_json: filter, scope, cooldown_seconds: cooldown, enabled };
+      const payload = {
+        name: name.trim(),
+        filter_json: filter,
+        scope: { type: "watchlist" as const },  // legacy; backend ignores
+        cooldown_seconds: cooldown,
+        enabled,
+        notify_discord: notifyDiscord,
+      };
       if (initial) await api.activeSignals.update(initial.id, payload);
       else await api.activeSignals.create(payload);
       onSaved();
@@ -335,7 +342,7 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
           )}
         </div>
 
-        {/* Logic / Scope / Cooldown */}
+        {/* Logic / Discord / Cooldown */}
         <div className="border-t border-line pt-3 mb-4 grid grid-cols-2 gap-4">
           <div>
             <div className="label-tiny mb-1">邏輯</div>
@@ -343,9 +350,16 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
             <label className="text-sm"><input type="radio" checked={filter.logic === "OR"} onChange={() => setFilter({ ...filter, logic: "OR" })} className="accent-accent mr-1" />OR</label>
           </div>
           <div>
-            <div className="label-tiny mb-1">套用範圍</div>
-            <label className="text-sm mr-3"><input type="radio" checked={scope.type === "watchlist"} onChange={() => setScope({ type: "watchlist" })} className="accent-accent mr-1" />自選清單全部</label>
-            <label className="text-sm"><input type="radio" checked={scope.type === "symbols"} onChange={() => setScope({ type: "symbols", symbols: [] })} className="accent-accent mr-1" />指定股票</label>
+            <div className="label-tiny mb-1">Discord 通知</div>
+            <label className="text-sm flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyDiscord}
+                onChange={(e) => setNotifyDiscord(e.target.checked)}
+                className="accent-accent"
+              />
+              觸發時推送
+            </label>
           </div>
           <div>
             <div className="label-tiny mb-1">Cooldown 秒</div>

@@ -17,6 +17,9 @@ interface Props {
   prevClose: number | null;  // 昨日收盤，給漲跌% / Y 軸 ±10% 用
   inAnyBookmark: boolean;
   onOpenBookmarkDialog: () => void;
+  inMonitor: boolean;
+  onAddToMonitor: () => void;
+  onRemoveFromMonitor: () => void;
 }
 
 const CHART_W = 820;
@@ -43,7 +46,7 @@ function priceColorClass(price: number, baseline: number): string {
   return "fill-ink";
 }
 
-export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark, onOpenBookmarkDialog }: Props) {
+export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [showCamarilla, setShowCamarilla] = useLocalToggle("tk:chart:camarilla", false);
@@ -305,19 +308,39 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
             )}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onOpenBookmarkDialog}
-          className={[
-            "shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 text-2xs uppercase tracking-[1.5px] transition-all duration-150 cursor-pointer",
-            inAnyBookmark
-              ? "border border-bear/40 text-bear hover:border-bear"
-              : "border border-ink-dim text-ink-muted hover:border-accent hover:text-accent",
-          ].join(" ")}
-          aria-label="加入或編輯書籤"
-        >
-          {inAnyBookmark ? "✎ 編輯書籤" : "+ 加入書籤"}
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenBookmarkDialog}
+            className={[
+              "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-2xs uppercase tracking-[1.5px] transition-all duration-150 cursor-pointer",
+              inAnyBookmark
+                ? "border border-bear/40 text-bear hover:border-bear"
+                : "border border-ink-dim text-ink-muted hover:border-accent hover:text-accent",
+            ].join(" ")}
+            aria-label="加入或編輯書籤"
+          >
+            {inAnyBookmark ? "✎ 編輯書籤" : "+ 加入書籤"}
+          </button>
+          {inMonitor ? (
+            <button
+              type="button"
+              onClick={onRemoveFromMonitor}
+              className="text-xs text-ink-dim hover:text-bear px-2 py-1 border border-line"
+              title="從監聽清單移除"
+            >
+              已在監聽 ✓
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onAddToMonitor}
+              className="text-xs text-ink-dim hover:text-accent px-2 py-1 border border-dashed border-line"
+            >
+              + 加入監聽
+            </button>
+          )}
+        </div>
       </div>
 
       {filteredCandles.length === 0 ? (

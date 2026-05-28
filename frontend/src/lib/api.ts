@@ -128,11 +128,20 @@ export interface ActiveSignal {
   scope: Scope;
   cooldown_seconds: number;
   enabled: boolean;
+  notify_discord: boolean;
   created_at: string;
 }
 
 export interface ActiveSignalsResponse {
   active_signals: ActiveSignal[];
+}
+
+export interface MonitorListItem {
+  symbol: string;
+  added_at: string;
+  name: string | null;
+  market: string | null;
+  is_etf: boolean | null;
 }
 
 export interface WatchlistRow {
@@ -324,6 +333,19 @@ export const api = {
     fetchJSON<SymbolSearchResponse>(
       `/api/symbols?search=${encodeURIComponent(search)}&limit=${limit}`,
     ),
+
+  monitorList: {
+    list: () => fetchJSON<{ items: MonitorListItem[]; count: number }>("/api/monitor_list"),
+    add: (symbol: string) =>
+      fetchJSON("/api/monitor_list", {
+        method: "POST",
+        body: JSON.stringify({ symbol }),
+      }),
+    remove: (symbol: string) =>
+      fetchJSON(`/api/monitor_list/${encodeURIComponent(symbol)}`, {
+        method: "DELETE",
+      }),
+  },
 
   watchlist: {
     list: () => fetchJSON<WatchlistResponse>("/api/watchlist"),

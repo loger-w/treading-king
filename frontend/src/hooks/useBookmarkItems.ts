@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type BookmarkGroup, type BookmarkItem } from "../lib/api";
 
 /**
@@ -71,16 +71,21 @@ export function useAllBookmarkItems(groups: BookmarkGroup[]) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // 去重後的 flat list — section 分組仍用 byGroup
-  const bySymbolFirst = new Map<string, { item: BookmarkItem; groupId: string }>();
-  for (const g of groups) {
-    const items = byGroup.get(g.id) || [];
-    for (const it of items) {
-      if (!bySymbolFirst.has(it.symbol)) {
-        bySymbolFirst.set(it.symbol, { item: it, groupId: g.id });
+  // useMemo:不穩定的 Map ref 會讓 BookmarksPanel 的 useEffect([bySymbolFirst]) 每次 render
+  // 都跑、setState 寫回去、再觸 render → 無窮 loop。Provider 重構 (useMonitorList → context)
+  // 之前不明顯,改 context 後 trigger frequency 放大成 maximum update depth。
+  const bySymbolFirst = useMemo(() => {
+    const m = new Map<string, { item: BookmarkItem; groupId: string }>();
+    for (const g of groups) {
+      const items = byGroup.get(g.id) || [];
+      for (const it of items) {
+        if (!m.has(it.symbol)) {
+          m.set(it.symbol, { item: it, groupId: g.id });
+        }
       }
     }
-  }
+    return m;
+  }, [groups, byGroup]);
 
   return { byGroup, bySymbolFirst, loading, refresh };
 }

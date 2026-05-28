@@ -10,7 +10,7 @@ from typing import Any
 from models.condition import (
     ActiveSignalOut, Condition, Filter, WindowCondition,
 )
-from services import alerts, ma_service
+from services import alerts, discord_notifier, ma_service
 from services.cdp import get_cdp_service
 from services.ring_buffer import Tick, get_ring_buffer
 from services.supabase_client import get_supabase
@@ -92,7 +92,7 @@ class SignalEngine:
             return
         res = await asyncio.to_thread(
             lambda: sb.client.table("active_signals")
-            .select("id, name, filter_json, scope, cooldown_seconds, enabled, created_at")
+            .select("id, name, filter_json, scope, cooldown_seconds, enabled, notify_discord, created_at")
             .eq("user_label", get_user_label())
             .eq("enabled", True)
             .execute()
@@ -119,42 +119,29 @@ class SignalEngine:
             filter_json=r["filter_json"], scope=r["scope"],
             cooldown_seconds=r.get("cooldown_seconds", 1800),
             enabled=r.get("enabled", True),
+            notify_discord=r.get("notify_discord", True),
             created_at=str(r.get("created_at", "")),
         )
 
+    async def _load_monitor_symbols(self) -> set[str]:
+        """從 monitor_list 拉本 user 的所有監聽 symbol。"""
+        sb = get_supabase()
+        if sb.client is None:
+            return set()
+        res = await asyncio.to_thread(
+            lambda: sb.client.table("monitor_list")
+            .select("symbol")
+            .eq("user_label", get_user_label())
+            .execute()
+        )
+        return {r["symbol"] for r in (res.data or [])}
+
     async def _refill_field_cache(self) -> None:
-        """為每個 active 涉及的 symbol 載入 cdp_* + sma 值進 cache。
+        """為 monitor_list 內的 symbol 載入 cdp_* + sma 進 cache。
 
         close 走即時 tick.price(由 _eval_filter_cond 處理),不進 field_cache。
-        sb.client 為 None 時只 skip watchlist scope 解析,CDP/MA refill 仍跑。
         """
-        sb = get_supabase()
-
-        # 蒐集所有 active 涉及的 symbol
-        symbols_needed: set[str] = set()
-        watchlist_fetched = False  # 只查一次 watchlist
-        for a in self._active:
-            scope = a.scope
-            # scope 可以是 dict（舊路徑）或 Pydantic model（_row_to_active 驗證後）
-            if isinstance(scope, dict):
-                scope_type = scope.get("type")
-                scope_symbols = scope.get("symbols", [])
-            else:
-                scope_type = getattr(scope, "type", None)
-                scope_symbols = getattr(scope, "symbols", [])
-            if scope_type == "symbols":
-                symbols_needed.update(scope_symbols)
-            elif scope_type == "watchlist" and not watchlist_fetched and sb.client is not None:
-                # watchlist 全部（限定本 instance 的 user_label）
-                res = await asyncio.to_thread(
-                    lambda: sb.client.table("watchlist")
-                    .select("symbol")
-                    .eq("user_label", get_user_label())
-                    .execute()
-                )
-                for row in (res.data or []):
-                    symbols_needed.add(row["symbol"])
-                watchlist_fetched = True
+        symbols_needed: set[str] = await self._load_monitor_symbols()
 
         # cdp 5 值 + 昨日收盤(供 day_change_pct 算式分母)
         cdp = get_cdp_service()
@@ -229,20 +216,8 @@ class SignalEngine:
                 await self._evaluate(symbol, tick)
 
     def _scope_symbols(self, active: ActiveSignalOut) -> list[str]:
-        s = active.scope
-        if isinstance(s, dict):
-            t = s.get("type")
-            if t == "watchlist":
-                return list(self._field_cache.keys())
-            if t == "symbols":
-                return list(s.get("symbols", []))
-        else:
-            t = getattr(s, "type", None)
-            if t == "watchlist":
-                return list(self._field_cache.keys())
-            if t == "symbols":
-                return list(getattr(s, "symbols", []))
-        return []
+        """所有 rule 共用 monitor_list;heartbeat 用此列舉 candidate symbols。"""
+        return list(self._field_cache.keys())
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
@@ -376,19 +351,8 @@ class SignalEngine:
         return all(sub_results) if logic == "AND" else any(sub_results)
 
     def _scope_includes(self, active: ActiveSignalOut, symbol: str) -> bool:
-        s = active.scope
-        # scope 可以是 dict（從 DB JSON 讀）或 Pydantic model（直接構建）
-        if isinstance(s, dict):
-            t = s.get("type")
-            syms = s.get("symbols", [])
-        else:
-            t = getattr(s, "type", None)
-            syms = getattr(s, "symbols", [])
-        if t == "watchlist":
-            return symbol in self._field_cache  # watchlist refill 過就在
-        if t == "symbols":
-            return symbol in syms
-        return False
+        """所有 rule 共用 monitor_list;field_cache key = monitor_list union。"""
+        return symbol in self._field_cache
 
     def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
         # WindowCondition + Filter.conditions + CdpProximity + MAProximity
@@ -580,6 +544,20 @@ class SignalEngine:
             "context_json": context,
             "user_label": get_user_label(),
         })
+        # 3. Discord notify(per-rule 開關;失敗 swallowed,不影響上面兩條)
+        if active.notify_discord:
+            try:
+                await discord_notifier.send_signal(
+                    rule_name=active.name,
+                    symbol=symbol,
+                    price=tick.price,
+                    volume=tick.size,
+                    triggered_at_iso=data["triggered_at"],
+                    cdp_touch=cdp_touch,
+                    ma_touch=ma_touch,
+                )
+            except Exception as e:
+                logger.warning("discord notify failed: %s", e)
 
     async def _monitor_loop(self) -> None:
         """監控 lag — 超過 5s 連續 30s → 自動 disable + alerts。"""
