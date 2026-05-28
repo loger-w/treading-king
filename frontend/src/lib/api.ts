@@ -198,6 +198,29 @@ export interface IntradayCandle {
   average: number;    // 富邦給的 minute VWAP
 }
 
+export interface MXFCandle {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  average: number;
+}
+
+export interface MXFActiveSymbolResponse {
+  symbol: string;
+}
+
+export type CurrentSession = "day" | "night" | "closed";
+
+export interface MXFCandlesResponse {
+  symbol: string;
+  timeframe: number;
+  candles: MXFCandle[];
+  current_session: CurrentSession;
+}
+
 export interface IntradayCandlesResponse {
   date: string;
   symbol: string;
@@ -413,6 +436,14 @@ export const api = {
   candlesIntraday: (symbol: string) =>
     fetchJSON<IntradayCandlesResponse>(
       `/api/candles/${encodeURIComponent(symbol)}/intraday`,
+    ),
+
+  mxfSymbolActive: () =>
+    fetchJSON<MXFActiveSymbolResponse>("/api/mxf/symbol/active"),
+
+  mxfCandles: (tf: number, symbol?: string) =>
+    fetchJSON<MXFCandlesResponse>(
+      `/api/mxf/candles?tf=${tf}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`,
     ),
 
   cdp: (symbol: string) =>

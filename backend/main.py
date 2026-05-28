@@ -16,12 +16,14 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
     active_signals, bookmarks, camarilla, candles, cdp as cdp_route,
-    ma, monitor_list as monitor_list_route,
+    ma, monitor_list as monitor_list_route, mxf,
     preview, quote, signals_history, symbols,
     watchlist, ws,
 )  # noqa: E402
 from jobs.top_gainers_scheduler import top_gainers_loop  # noqa: E402
 from services.fubon_client import get_fubon  # noqa: E402
+from services.fubon_futures import resolve_active_symbol  # noqa: E402
+from services.fubon_futures_ws import get_futures_ws_pool, session_reconcile_loop  # noqa: E402
 from services.fubon_ws import get_ws_pool  # noqa: E402
 from services.logging_config import configure_logging  # noqa: E402
 from services.overnight import overnight_loop  # noqa: E402
@@ -57,6 +59,20 @@ async def lifespan(app: FastAPI):
 
     engine = get_signal_engine()
     await engine.start()
+
+    # MXF 期貨 WS 訂閱 — 取近月、啟動 session reconcile loop
+    futures_reconcile_task: asyncio.Task | None = None
+    try:
+        mxf_symbol = await resolve_active_symbol()
+        if mxf_symbol:
+            await get_futures_ws_pool().start(mxf_symbol)
+            logger.info("MXF futures WS started for symbol=%s", mxf_symbol)
+        else:
+            logger.warning("MXF active symbol unavailable at startup; will retry on reconcile")
+    except Exception as e:
+        logger.error("MXF futures WS startup failed: %s", e)
+    futures_reconcile_task = asyncio.create_task(session_reconcile_loop())
+    logger.info("MXF session reconcile loop started")
 
     # 訂閱 user 所有書籤內的 symbols(每個 group 一個 owner_id = "bookmark:{gid}")
     # 系統書籤(大漲股)由 top_gainers_scheduler 在每次 refresh 時自行 sync 訂閱
@@ -117,6 +133,9 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down…")
     overnight_task.cancel()
     top_gainers_task.cancel()
+    if futures_reconcile_task:
+        futures_reconcile_task.cancel()
+    await get_futures_ws_pool().stop()
     await engine.shutdown()
     await writer.shutdown()
     await pool.shutdown()
@@ -153,4 +172,5 @@ app.include_router(candles.router)
 app.include_router(cdp_route.router)
 app.include_router(camarilla.router)
 app.include_router(ma.router)
+app.include_router(mxf.router)
 app.include_router(ws.router)
