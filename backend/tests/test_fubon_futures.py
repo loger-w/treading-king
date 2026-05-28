@@ -184,3 +184,59 @@ def test_parse_tickers_response_truncates_datetime_to_date():
     raw = {"data": [{"symbol": "MXFF6", "endDate": "2026-06-17T13:45:00+08:00"}]}
     out = parse_tickers_response(raw)
     assert out == [{"symbol": "MXFF6", "expiry": "2026-06-17"}]
+
+
+# ---- resolve_active_symbol: 夜盤跨午夜的 session 修正 ----
+# tickers 不帶 session 預設只回 REGULAR(日盤)清單。夜盤跨午夜後(00:00–08:45)
+# 新日期的日盤尚未開盤,REGULAR 為空,必須同時查 AFTERHOURS 才拿得到當前合約 ——
+# 否則小台圖整段夜盤拿不到近月 symbol、回 503 mxf_symbol_unavailable。
+from types import SimpleNamespace
+
+from services import fubon_futures as ff
+
+
+class _FakeTickers:
+    """記錄每次 tickers 呼叫的 kwargs,並依 session 回不同清單。"""
+
+    def __init__(self, by_session: dict):
+        self._by_session = by_session
+        self.calls: list[dict] = []
+
+    def tickers(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._by_session.get(kwargs.get("session"), {"data": []})
+
+
+def _fake_fubon(intraday: _FakeTickers) -> SimpleNamespace:
+    return SimpleNamespace(
+        sdk=SimpleNamespace(
+            marketdata=SimpleNamespace(
+                rest_client=SimpleNamespace(
+                    futopt=SimpleNamespace(intraday=intraday)
+                )
+            )
+        )
+    )
+
+
+async def test_resolve_active_symbol_uses_afterhours_when_regular_empty(monkeypatch):
+    ff._ACTIVE_SYMBOL_CACHE.clear()
+    intraday = _FakeTickers({
+        "REGULAR": {"data": []},  # 跨午夜後當日日盤尚未開,REGULAR 空
+        "AFTERHOURS": {"data": [
+            {"symbol": "MXFF6", "endDate": "2099-06-17"},
+            {"symbol": "MXFG6", "endDate": "2099-07-15"},
+            {"symbol": "TXFF6", "endDate": "2099-06-17"},  # 大台,須排除
+        ]},
+    })
+    monkeypatch.setattr("services.fubon_client.get_fubon", lambda: _fake_fubon(intraday))
+    monkeypatch.setattr(
+        "services.rate_limiter.get_rate_limiter",
+        lambda: SimpleNamespace(acquire=lambda: None),
+    )
+
+    result = await ff.resolve_active_symbol()
+
+    assert result == "MXFF6"
+    # 必須真的查過 AFTERHOURS,而不是只查預設 REGULAR
+    assert "AFTERHOURS" in {c.get("session") for c in intraday.calls}

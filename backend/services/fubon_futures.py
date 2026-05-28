@@ -62,6 +62,10 @@ async def resolve_active_symbol() -> Optional[str]:
 
     換月一個月一次,1h TTL 足夠安全。
     回傳 None 代表 SDK 未初始化或找不到符合的 MXF 合約。
+
+    同時查 REGULAR + AFTERHOURS 兩個 session 再合併:tickers 不帶 session 只回
+    日盤(REGULAR)清單,而夜盤跨午夜後(00:00 起)新交易日的日盤尚未開盤、
+    REGULAR 會是空的,得靠 AFTERHOURS 才拿得到當前可交易合約。
     """
     # lazy import 避免測試環境在 module 載入時拉入 fubon_client 相依鏈
     from services.fubon_client import get_fubon  # noqa: PLC0415
@@ -76,28 +80,43 @@ async def resolve_active_symbol() -> Optional[str]:
         logger.warning("Fubon SDK not initialized")
         return None
 
-    try:
-        # lazy import 與 get_fubon 同理,避免 module 載入時拉入 httpx 相依鏈影響測試
-        from services.rate_limiter import get_rate_limiter  # noqa: PLC0415
+    # lazy import 與 get_fubon 同理,避免 module 載入時拉入 httpx 相依鏈影響測試
+    from services.rate_limiter import get_rate_limiter  # noqa: PLC0415
 
+    async def _fetch_session(session: str) -> list[ProductRow]:
         # 期貨 tickers API:futopt.intraday.tickers(type='FUTURE', exchange='TAIFEX')
         # 回傳欄位是 camelCase:data[].symbol / endDate / settlementDate
-        await asyncio.to_thread(get_rate_limiter().acquire)
-        raw = await asyncio.to_thread(
-            fubon.sdk.marketdata.rest_client.futopt.intraday.tickers,
-            type="FUTURE",
-            exchange="TAIFEX",
-        )
-    except Exception as e:
-        logger.warning("resolve_active_symbol fubon call failed: %s", e)
-        return None
+        # tickers 的 session 是大寫 REGULAR/AFTERHOURS(candles 端點才用小寫 afterhours)
+        try:
+            await asyncio.to_thread(get_rate_limiter().acquire)
+            raw = await asyncio.to_thread(
+                fubon.sdk.marketdata.rest_client.futopt.intraday.tickers,
+                type="FUTURE",
+                exchange="TAIFEX",
+                session=session,
+            )
+        except Exception as e:
+            logger.warning("resolve_active_symbol tickers(session=%s) failed: %s", session, e)
+            return []
+        return parse_tickers_response(raw)
 
-    products = parse_tickers_response(raw)
+    regular, afterhours = await asyncio.gather(
+        _fetch_session("REGULAR"),
+        _fetch_session("AFTERHOURS"),
+    )
+    # 同一合約兩 session 都會列,dedupe by symbol(expiry 與 session 無關)
+    by_symbol: dict[str, ProductRow] = {}
+    for p in (*regular, *afterhours):
+        by_symbol.setdefault(p["symbol"], p)
+    products = list(by_symbol.values())
+
     today_str = now.strftime("%Y-%m-%d")
     mxf_candidates = [p for p in products if MXF_SYMBOL_RE.match(p["symbol"])]
     logger.info(
-        "resolve_active_symbol: %d total products, %d MXF candidates: %s",
+        "resolve_active_symbol: %d products (REGULAR=%d, AFTERHOURS=%d), %d MXF candidates: %s",
         len(products),
+        len(regular),
+        len(afterhours),
         len(mxf_candidates),
         [p["symbol"] for p in mxf_candidates[:6]],
     )
