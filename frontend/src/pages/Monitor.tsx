@@ -9,6 +9,7 @@ import { TradeTape } from "../components/TradeTape";
 import { TriggerList } from "../components/TriggerList";
 import { useActiveSignals } from "../hooks/useActiveSignals";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
+import { MonitorListProvider, useMonitorList } from "../hooks/useMonitorList";
 import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
@@ -27,6 +28,14 @@ import { api, type SignalLogRow } from "../lib/api";
  *           IntradayChart header 提供「+ 加入自選 / 已在自選 ✓」按鈕。
  */
 export function Monitor() {
+  return (
+    <MonitorListProvider>
+      <MonitorInner />
+    </MonitorListProvider>
+  );
+}
+
+function MonitorInner() {
   const { items: rules, refresh: refreshRules } = useActiveSignals();
   const { counts, bump } = useTodayHits();
 
@@ -78,7 +87,18 @@ export function Monitor() {
     [bookmarkSymbols, selected]
   );
 
-  const watchlistQuotes = useWatchlistQuotes(bookmarkSymbols);
+  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
+
+  const inMonitor = useMemo(
+    () => selected !== null && monitorItems.some((m) => m.symbol === selected),
+    [monitorItems, selected]
+  );
+  const allWatchSymbols = useMemo(
+    () => Array.from(new Set([...bookmarkSymbols, ...monitorItems.map((m) => m.symbol)])),
+    [bookmarkSymbols, monitorItems]
+  );
+
+  const watchlistQuotes = useWatchlistQuotes(allWatchSymbols);
 
   const triggerSymbols = useMemo(() => {
     const set = new Set<string>();
@@ -204,6 +224,9 @@ export function Monitor() {
                       prevClose={prevClose}
                       inAnyBookmark={inAnyBookmark}
                       onOpenBookmarkDialog={handleOpenBookmarkDialog}
+                      inMonitor={inMonitor}
+                      onAddToMonitor={() => selected && addToMonitor(selected)}
+                      onRemoveFromMonitor={() => selected && removeFromMonitor(selected)}
                     />
                   </div>
                 )}
@@ -241,6 +264,8 @@ export function Monitor() {
           onChanged={async () => {
             // 重新渲染 BookmarksPanel(讓它重新拉 groups + items)
             setBookmarksRefreshKey((k) => k + 1);
+            // refreshMonitor 已不需要 — MonitorListProvider 共用同一份 state,
+            // add/remove 操作完成後所有消費者(Monitor、BookmarksPanel、AddToBookmarksDialog)都會看到最新資料
           }}
         />
       )}
