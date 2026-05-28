@@ -14,6 +14,7 @@ import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
 import { useSnapshotCache } from "../hooks/useSnapshotCache";
+import { useSymbolNames } from "../hooks/useSymbolNames";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
 
@@ -116,8 +117,19 @@ function MonitorInner() {
   // 預覽訂閱:selected 不在任何書籤時通知 backend 用 owner='preview' 訂閱該 symbol
   usePreviewSubscribe(selected, bookmarkSymbols);
 
-  // BookmarksPanel 回報的 symbol → name 映射(觸發歷史用)
-  const symbolNames = bookmarkSymbolNames;
+  // 訊號可對非自選股觸發 — 這些 symbol 不在 bookmarkSymbolNames,TriggerList 只剩裸代號。
+  // 補查這些未知 symbol 的名稱(已知的不重打)。
+  const unknownTriggerSymbols = useMemo(
+    () => triggerSymbols.filter((s) => !(s in bookmarkSymbolNames)),
+    [triggerSymbols, bookmarkSymbolNames]
+  );
+  const resolvedNames = useSymbolNames(unknownTriggerSymbols);
+
+  // BookmarksPanel 回報的 symbol → name 映射(觸發歷史用);書籤/搜尋來源優先
+  const symbolNames = useMemo(
+    () => ({ ...resolvedNames, ...bookmarkSymbolNames }),
+    [resolvedNames, bookmarkSymbolNames]
+  );
 
   function handleSelect(sym: string) {
     setSelected(sym);

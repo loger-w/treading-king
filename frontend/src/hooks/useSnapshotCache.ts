@@ -23,9 +23,15 @@ const SNAPSHOT_BATCH_SIZE = 50;
  * - prev_close = null 不寫 cache：富邦回失敗時下次 symbols 變動可重試,不然會永久顯示 "—"
  * - 沒做 TTL：當日盤中 prev_close 不會變,盤後新 trading day 才會差；
  *   過 24h 仍命中舊 cache → reload 頁面解
+ * - 失敗重試：prev_close=null 不寫 cache,但 symbols 不變時 effect 不會重 fire,
+ *   開盤瞬間富邦回降級 payload 的 symbol 會永久顯示 "—"。retryTick 定期重打仍缺的。
  */
+const RETRY_DELAY_MS = 20_000;
+
 export function useSnapshotCache(symbols: string[]): Record<string, SnapshotEntry> {
   const [version, setVersion] = useState(0);
+  const [retryTick, setRetryTick] = useState(0);
+  const symbolsKey = symbols.join(",");
 
   useEffect(() => {
     const missing = symbols.filter((s) => !cache.has(s) && !inFlight.has(s));
@@ -61,7 +67,20 @@ export function useSnapshotCache(symbols: string[]): Record<string, SnapshotEntr
     })();
 
     for (const s of missing) inFlight.set(s, promise);
-  }, [symbols.join(",")]);  // deps 用 stringified 避免每 render 變陣列實例就 re-fire
+    // deps 用 stringified symbolsKey 避免每 render 變陣列實例就 re-fire;
+    // retryTick 變動讓「失敗未進 cache」的 symbol 能被重打
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolsKey, retryTick]);
+
+  // 還有 symbol 沒進 cache(初打失敗 / 富邦降級)→ 定期 bump retryTick 重打,
+  // 全部命中後 stillMissing=false 就停。version 進 deps 讓每次 fetch 完成後重新評估。
+  useEffect(() => {
+    const stillMissing = symbols.some((s) => !cache.has(s));
+    if (!stillMissing) return;
+    const t = setTimeout(() => setRetryTick((n) => n + 1), RETRY_DELAY_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolsKey, retryTick, version]);
 
   // version 變數讓 React 認為 deps 變了 — 即使 out 物件 ref 同
   void version;
