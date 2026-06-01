@@ -86,7 +86,7 @@ async def _fetch_isin(client: httpx.AsyncClient, mode: int, market: str) -> tupl
         return [], f"{type(e).__name__}: {e}"
 
 
-from services.supabase_client import get_supabase
+from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -98,34 +98,12 @@ async def search_symbols(
     limit: int = Query(20, ge=1, le=100),
 ) -> dict:
     """搜 symbol（給 Monitor 搜尋框 / 加入自選股用）。"""
-    sb = get_supabase()
-    if sb.status.value != "ok" or sb.client is None:
-        raise HTTPException(
-            503, detail={"error": "supabase_unavailable", "last_error": sb.last_error}
-        )
-
-    q = (
-        sb.client.table("symbols")
-        .select("symbol, name, market, is_etf")
-        .eq("is_active", True)
-    )
-    s = search.strip()
-    if s:
-        # symbol 前綴 OR name 模糊
-        q = q.or_(f"symbol.ilike.{s}%,name.ilike.%{s}%")
-    res = q.order("symbol").limit(limit).execute()
-    return {"results": res.data or []}
+    results = get_local_store().market.search(search, limit)
+    return {"results": results}
 
 
 @router.post("/api/symbols/refresh")
 async def refresh_symbols() -> dict:
-    supabase = get_supabase()
-    if supabase.status.value != "ok":
-        raise HTTPException(
-            503,
-            detail={"error": "supabase_unavailable", "last_error": supabase.last_error},
-        )
-
     rows: list[dict] = []
     errors: list[str] = []
     by_symbol: dict[str, dict] = {}
@@ -212,26 +190,17 @@ async def refresh_symbols() -> dict:
             detail={"error": "no_symbols_fetched", "fetch_errors": errors},
         )
 
-    # Upsert in batches (supabase has payload size limits)
-    BATCH = 500
-    inserted_total = 0
-    try:
-        client_obj = supabase.client
-        for i in range(0, len(rows), BATCH):
-            batch = rows[i : i + BATCH]
-            res = client_obj.table("symbols").upsert(batch, on_conflict="symbol").execute()
-            inserted_total += len(res.data) if hasattr(res, "data") and res.data else len(batch)
-        logger.info("Upserted %d symbols", inserted_total)
-    except Exception as e:
-        logger.error("supabase upsert failed: %s", e)
-        raise HTTPException(
-            500,
-            detail={"error": "supabase_upsert_failed", "detail": str(e)},
-        )
+    get_local_store().market.replace_symbols(rows)
+    logger.info("Replaced %d symbols into local cache", len(rows))
+    return {"status": "ok", "fetched": len(rows), "upserted": len(rows), "errors": errors}
 
-    return {
-        "status": "ok",
-        "fetched": len(rows),
-        "upserted": inserted_total,
-        "errors": errors,
-    }
+
+async def bootstrap_symbols_if_missing() -> None:
+    """啟動時若本機尚無 symbols 快取,背景爬一次(不阻塞)。"""
+    if get_local_store().market.symbols_loaded():
+        return
+    try:
+        await refresh_symbols()
+        logger.info("symbols bootstrap done")
+    except Exception as e:
+        logger.warning("symbols bootstrap failed (可手動 POST /api/symbols/refresh): %s", e)
