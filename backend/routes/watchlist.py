@@ -18,6 +18,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from routes._item_enrich import enrich_item
 from services.cdp import get_cdp_service
 from services.fubon_ws import get_ws_pool
 from services.local_store import get_local_store
@@ -54,17 +55,13 @@ async def list_watchlist() -> dict:
 
     items = store.config.list_items(gid)
     items = sorted(items, key=lambda it: it.get("added_at") or "", reverse=True)
-    out = []
-    for it in items:
-        meta = store.market.get_symbol(it["symbol"])
-        out.append({
-            "symbol": it["symbol"],
-            "added_at": it.get("added_at"),
-            "note": it.get("note"),
-            "name": meta["name"] if meta else None,
-            "market": meta["market"] if meta else None,
-            "is_etf": meta["is_etf"] if meta else False,
-        })
+    out = [
+        enrich_item(
+            {"symbol": it["symbol"], "added_at": it.get("added_at"), "note": it.get("note")},
+            store.market,
+        )
+        for it in items
+    ]
     return {"watchlist": out, "count": len(out)}
 
 

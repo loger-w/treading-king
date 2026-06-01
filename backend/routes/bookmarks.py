@@ -23,6 +23,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from routes._item_enrich import enrich_item
 from services.cdp import get_cdp_service
 from services.fubon_ws import get_ws_pool
 from services.local_store import get_local_store
@@ -41,14 +42,6 @@ SYSTEM_TOP_GAINERS_SORT_ORDER = 100
 def _owner_id(group_id: str) -> str:
     """WSPool owner id naming — 每個書籤獨立 owner,refcount 自動處理多書籤共有。"""
     return f"bookmark:{group_id}"
-
-
-def _enrich_item(symbol: str) -> dict:
-    """從 MarketCache 補單筆 metadata;不在 cache 時 best-effort 降級。"""
-    meta = get_local_store().market.get_symbol(symbol)
-    if meta is None:
-        return {"name": None, "market": None, "is_etf": False}
-    return {"name": meta["name"], "market": meta["market"], "is_etf": meta["is_etf"]}
 
 
 def _require_user_group(group_id: str) -> dict:
@@ -177,16 +170,12 @@ async def list_items(bid: str) -> dict:
     store = get_local_store()
 
     if bid == SYSTEM_TOP_GAINERS_ID:
-        # 從 top_gainers 快取補 symbols metadata
+        # 從 top_gainers 快取補 symbols metadata;market 仍用大漲股 row 的值(來源較新)
         out = []
         for r in store.market.get_top_gainers():
-            sym = r["symbol"]
-            meta = _enrich_item(sym)
             out.append({
-                "symbol": sym,
-                "name": meta["name"],
+                **enrich_item({"symbol": r["symbol"]}, store.market),
                 "market": r.get("market"),
-                "is_etf": meta["is_etf"],
                 "change_pct": r.get("change_pct"),
                 "volume_lots": r.get("volume_lots"),
                 "captured_at": r.get("captured_at"),
@@ -200,17 +189,13 @@ async def list_items(bid: str) -> dict:
     # User 書籤 — 從 watchlist_items 補 symbols metadata,added_at desc
     items = store.config.list_items(bid)
     items = sorted(items, key=lambda it: it.get("added_at") or "", reverse=True)
-    out = []
-    for it in items:
-        meta = _enrich_item(it["symbol"])
-        out.append({
-            "symbol": it["symbol"],
-            "added_at": it.get("added_at"),
-            "note": it.get("note"),
-            "name": meta["name"],
-            "market": meta["market"],
-            "is_etf": meta["is_etf"],
-        })
+    out = [
+        enrich_item(
+            {"symbol": it["symbol"], "added_at": it.get("added_at"), "note": it.get("note")},
+            store.market,
+        )
+        for it in items
+    ]
     return {"items": out, "count": len(out)}
 
 
