@@ -2,7 +2,7 @@
 
 POST/PUT/DELETE 後呼叫 signal_engine.refresh_active_signals 重新載入規則。
 WS 訂閱由 monitor_list owner 統一管,active_signal 不再自己訂閱。
-儲存層從 Supabase 改為本機 ConfigStore;無 user_label 隔離。
+儲存層為本機 ConfigStore。
 """
 from __future__ import annotations
 

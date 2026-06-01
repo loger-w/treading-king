@@ -1,5 +1,4 @@
 """Shared fixtures."""
-import os
 import sys
 from pathlib import Path
 
@@ -8,9 +7,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 from services.local_store import reset_local_store
-
-# 給 user_context.get_user_label() 一個合法值,避免測試時噴 RuntimeError
-os.environ.setdefault("USER_LABEL", "test")
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 """GET /api/signals/history?... — 訊號歷史查詢。
 GET /api/signals/today_counts — 今日累計命中數（給前端 chip 上標）。
 
-儲存層從 Supabase 改為本機 SignalsLog;無 user_label 隔離。
+儲存層為本機 SignalsLog。
 """
 from __future__ import annotations
 
