@@ -32,7 +32,8 @@ class MonitorListAdd(BaseModel):
 @router.get("/api/monitor_list")
 async def list_monitor() -> dict:
     store = get_local_store()
-    items = store.config.list_monitor()
+    # 舊 Supabase 版用 .order("added_at", desc=True);這裡補齊相同語意
+    items = sorted(store.config.list_monitor(), key=lambda m: m["added_at"], reverse=True)
     out = [enrich_item(m, store.market) for m in items]
     return {"items": out, "count": len(out)}
 

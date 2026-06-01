@@ -107,3 +107,39 @@ def test_list_enriches_with_name_market_isetf(local_store_tmp, monkeypatch):
     assert item["name"] == "台積電"
     assert item["market"] == "TSE"
     assert item["is_etf"] is False
+
+
+def test_list_returns_newest_first(local_store_tmp, monkeypatch):
+    """GET 回傳順序為最新加入在前(parity with old Supabase .order desc)。"""
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.monitor_list.get_ws_pool", lambda: fake_pool)
+    # CDP/signal_engine 靜音,不影響斷言
+    monkeypatch.setattr("routes.monitor_list.get_cdp_service", lambda: AsyncMock())
+    with patch("services.signal_engine.get_signal_engine") as mock_engine_getter:
+        mock_engine_getter.return_value = AsyncMock()
+        client.post("/api/monitor_list", json={"symbol": "2330"})
+        client.post("/api/monitor_list", json={"symbol": "2454"})
+
+    syms = [it["symbol"] for it in client.get("/api/monitor_list").json()["items"]]
+    # 2454 是後加的,應排在前面
+    assert syms == ["2454", "2330"]
+
+
+def test_add_triggers_cdp_backfill(local_store_tmp, monkeypatch):
+    """POST 時應呼叫 get_cdp_service().backfill_from_fubon(symbol)。"""
+    store = get_local_store()
+    monkeypatch.setattr(store.market, "symbols_loaded", lambda: False)
+
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.monitor_list.get_ws_pool", lambda: fake_pool)
+
+    fake_cdp = AsyncMock()
+    monkeypatch.setattr("routes.monitor_list.get_cdp_service", lambda: fake_cdp)
+
+    with patch("services.signal_engine.get_signal_engine") as mock_engine_getter:
+        mock_engine_getter.return_value = AsyncMock()
+        r = client.post("/api/monitor_list", json={"symbol": "2330"})
+
+    assert r.status_code == 201
+    # backfill_from_fubon 已被呼叫(透過 create_task,coroutine 物件已建立)
+    fake_cdp.backfill_from_fubon.assert_called_once_with("2330")
