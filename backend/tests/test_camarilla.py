@@ -62,22 +62,19 @@ def test_compute_camarilla_zero_range_collapses_to_close():
 
 """Service tests — refresh / backfill / cache."""
 from datetime import date
-from unittest.mock import MagicMock
 
 import pytest
 
 from services import camarilla as cam_module
+from services.local_store import get_local_store
 
 
 @pytest.mark.asyncio
-async def test_service_refresh_caches_levels(monkeypatch):
-    """mock daily_ohlc 回一筆 row → refresh → cache 命中 → has() True、_cache 回值。"""
-    fake_supabase = MagicMock()
-    fake_supabase.client = MagicMock()
-    fake_supabase.client.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [
-        {"date": "2026-05-21", "high": 110.0, "low": 90.0, "close": 100.0}
-    ]
-    monkeypatch.setattr(cam_module, "get_supabase", lambda: fake_supabase)
+async def test_service_refresh_caches_levels(local_store_tmp):
+    """local_store 有昨日 OHLC → refresh → cache 命中 → has() True、_cache 回值。"""
+    get_local_store().market.upsert_daily_ohlc([
+        {"symbol": "2330", "date": "2026-05-21", "high": 110.0, "low": 90.0, "close": 100.0}
+    ])
 
     svc = cam_module.CamarillaService()
     await svc.refresh("2330")
@@ -158,13 +155,9 @@ async def test_service_get_retriggers_backfill_after_date_rollover(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_service_refresh_missing_row_returns_silently(monkeypatch):
-    """daily_ohlc 沒這 symbol 的 row → refresh 不 raise、cache 不命中。"""
-    fake_supabase = MagicMock()
-    fake_supabase.client = MagicMock()
-    fake_supabase.client.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
-    monkeypatch.setattr(cam_module, "get_supabase", lambda: fake_supabase)
-
+async def test_service_refresh_missing_row_returns_silently(local_store_tmp):
+    """local_store 無此 symbol OHLC → refresh 不 raise、cache 不命中。"""
+    # 不 seed local_store，local cache 為空
     svc = cam_module.CamarillaService()
     await svc.refresh("UNKNOWN")
     assert not svc.has("UNKNOWN")

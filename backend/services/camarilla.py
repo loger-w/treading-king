@@ -15,7 +15,7 @@ from datetime import date, timedelta
 from typing import TypedDict
 
 from services.cdp import round_to_tick_tw
-from services.supabase_client import get_supabase
+from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 
@@ -78,25 +78,11 @@ class CamarillaService:
         return self._cache.get(symbol)
 
     async def refresh(self, symbol: str) -> None:
-        """從 daily_ohlc 抓最近一筆 OHLC → 算 → 進 cache。"""
-        sb = get_supabase()
-        if sb.client is None:
-            logger.warning("camarilla.refresh: supabase not ready")
-            return
-
-        res = (
-            sb.client.table("daily_ohlc")
-            .select("date, high, low, close")
-            .eq("symbol", symbol)
-            .order("date", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
+        """從 local MarketCache 抓最近一筆 OHLC → 算 → 進 cache。"""
+        row = get_local_store().market.get_latest_daily_ohlc(symbol)
+        if row is None:
             logger.info("camarilla.refresh: no daily_ohlc for %s yet", symbol)
             return
-        row = rows[0]
         try:
             levels = compute_camarilla(
                 float(row["high"]), float(row["low"]), float(row["close"]),
@@ -118,7 +104,7 @@ class CamarillaService:
         return symbol in self._cache
 
     async def backfill_from_fubon(self, symbol: str) -> bool:
-        """打富邦 historical.candles 拉昨日 OHLC → upsert daily_ohlc → refresh cache。
+        """打富邦 historical.candles 拉昨日 OHLC → upsert local daily_ohlc → refresh cache。
 
         共用既有 historical rate limiter(60 req/min)。
         """
@@ -126,12 +112,8 @@ class CamarillaService:
         from services.rate_limiter import get_historical_rate_limiter
 
         fubon = get_fubon()
-        sb = get_supabase()
         if fubon.status != FubonStatus.OK or fubon.sdk is None:
             logger.warning("camarilla.backfill: fubon not OK")
-            return False
-        if sb.client is None:
-            logger.warning("camarilla.backfill: supabase not OK")
             return False
 
         today = date.today()
@@ -169,16 +151,7 @@ class CamarillaService:
             logger.info("camarilla.backfill %s: only today data (no past)", symbol)
             return False
 
-        try:
-            await asyncio.to_thread(
-                lambda: sb.client.table("daily_ohlc")
-                .upsert(upserts, on_conflict="symbol,date")
-                .execute()
-            )
-        except Exception as e:
-            logger.error("camarilla.backfill %s: supabase upsert failed: %s", symbol, e)
-            return False
-
+        get_local_store().market.upsert_daily_ohlc(upserts)
         await self.refresh(symbol)
         logger.info("camarilla.backfill %s: %d days OHLC stored", symbol, len(upserts))
         return True

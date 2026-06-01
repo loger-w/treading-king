@@ -125,28 +125,13 @@ class CdpService:
         return self._cache.get(symbol)
 
     async def refresh(self, symbol: str) -> None:
-        """從 daily_ohlc 抓最近一筆 OHLC → 算 → 進 cache。"""
-        from services.supabase_client import get_supabase
+        """從 local MarketCache 抓最近一筆 OHLC → 算 → 進 cache。"""
+        from services.local_store import get_local_store
 
-        sb = get_supabase()
-        if sb.client is None:
-            logger.warning("cdp.refresh: supabase not ready")
-            return
-
-        # 抓最近一筆 daily_ohlc（昨日）
-        res = (
-            sb.client.table("daily_ohlc")
-            .select("date, high, low, close")
-            .eq("symbol", symbol)
-            .order("date", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
+        row = get_local_store().market.get_latest_daily_ohlc(symbol)
+        if row is None:
             logger.info("cdp.refresh: no daily_ohlc for %s yet", symbol)
             return
-        row = rows[0]
         try:
             levels = compute_cdp(
                 float(row["high"]), float(row["low"]), float(row["close"]),
@@ -168,22 +153,18 @@ class CdpService:
         return symbol in self._cache
 
     async def backfill_from_fubon(self, symbol: str) -> bool:
-        """打富邦 historical.candles 拉昨日 OHLC → INSERT daily_ohlc → refresh cache。
+        """打富邦 historical.candles 拉昨日 OHLC → upsert local daily_ohlc → refresh cache。
 
         Return True if successful, False if no data / fubon error。
         Historical API 富邦官方限 60 req/min，用獨立的 historical limiter (1 req/s)。
         """
         from services.fubon_client import FubonStatus, get_fubon
+        from services.local_store import get_local_store
         from services.rate_limiter import get_historical_rate_limiter
-        from services.supabase_client import get_supabase
 
         fubon = get_fubon()
-        sb = get_supabase()
         if fubon.status != FubonStatus.OK or fubon.sdk is None:
             logger.warning("cdp.backfill: fubon not OK")
-            return False
-        if sb.client is None:
-            logger.warning("cdp.backfill: supabase not OK")
             return False
 
         today = date.today()
@@ -224,17 +205,7 @@ class CdpService:
             logger.info("cdp.backfill %s: only today data (no past)", symbol)
             return False
 
-        # upsert 進 daily_ohlc
-        try:
-            await asyncio.to_thread(
-                lambda: sb.client.table("daily_ohlc")
-                .upsert(upserts, on_conflict="symbol,date")
-                .execute()
-            )
-        except Exception as e:
-            logger.error("cdp.backfill %s: supabase upsert failed: %s", symbol, e)
-            return False
-
+        get_local_store().market.upsert_daily_ohlc(upserts)
         await self.refresh(symbol)
         logger.info("cdp.backfill %s: %d days OHLC stored", symbol, len(upserts))
         return True
