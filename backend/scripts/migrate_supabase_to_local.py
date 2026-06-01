@@ -20,7 +20,14 @@ def _strip_label(row: dict) -> dict:
     return {k: v for k, v in row.items() if k != "user_label"}
 
 
-def migrate(sb: Any, user_label: str) -> dict:
+def migrate(sb: Any, user_label: str, *, force: bool = False) -> dict:
+    from services.local_store.paths import signals_log_path
+    if signals_log_path().exists() and not force:
+        raise RuntimeError(
+            f"{signals_log_path()} 已存在 — 遷移疑似已執行過。"
+            f"為避免訊號歷史重複(append-only 無法復原),已中止。"
+            f"確定要重跑請先刪除該檔,或用 --force。"
+        )
     store = get_local_store()
     store.init()
     cfg = store.config
@@ -57,12 +64,13 @@ def migrate(sb: Any, user_label: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--user-label", required=True)
+    ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
     from dotenv import load_dotenv
     load_dotenv()
     from supabase import create_client
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
-    summary = migrate(sb, args.user_label)
+    summary = migrate(sb, args.user_label, force=args.force)
     print("遷移完成:", summary)
     print("驗證無誤後,即可從 .env 移除 SUPABASE_*、解除安裝 supabase 依賴(見 Task 19)。")
 
