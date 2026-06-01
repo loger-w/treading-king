@@ -26,6 +26,7 @@ from services.fubon_client import get_fubon  # noqa: E402
 from services.fubon_futures import resolve_active_symbol  # noqa: E402
 from services.fubon_futures_ws import get_futures_ws_pool, session_reconcile_loop  # noqa: E402
 from services.fubon_ws import get_ws_pool  # noqa: E402
+from services.lifecycle_sync import resync_from_config  # noqa: E402
 from services.local_store import get_local_store  # noqa: E402
 from services.logging_config import configure_logging  # noqa: E402
 from services.overnight import overnight_loop  # noqa: E402
@@ -70,23 +71,9 @@ async def lifespan(app: FastAPI):
     futures_reconcile_task = asyncio.create_task(session_reconcile_loop())
     logger.info("MXF session reconcile loop started")
 
-    # 訂閱所有書籤內的 symbols(每個 group 一個 owner_id = "bookmark:{gid}")
+    # 依 config 訂閱書籤/監聽清單並刷新訊號引擎
     # 系統書籤(大漲股)由 top_gainers_scheduler 在每次 refresh 時自行 sync 訂閱
-    store = get_local_store()
-    for g in store.config.list_groups():
-        owner = f"bookmark:{g['id']}"
-        for it in store.config.list_items(g["id"]):
-            try:
-                await pool.subscribe(it["symbol"], owner_id=owner)
-            except RuntimeError as e:
-                logger.warning("startup ws sub %s failed: %s", it["symbol"], e)
-
-    # 訂閱 monitor_list — owner = "monitor_list"
-    for m in store.config.list_monitor():
-        try:
-            await pool.subscribe(m["symbol"], owner_id="monitor_list")
-        except RuntimeError as e:
-            logger.warning("startup monitor_list ws sub %s failed: %s", m["symbol"], e)
+    await resync_from_config()
 
     # 啟動 overnight 8:25 cron — 每個 instance 自己重 login + 重訂閱 ws
     overnight_task = asyncio.create_task(overnight_loop())
