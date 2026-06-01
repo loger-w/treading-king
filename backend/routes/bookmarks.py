@@ -1,17 +1,18 @@
 """GET/POST/PATCH/DELETE /api/bookmarks — 書籤群組 + 內含股票 CRUD。
 
-書籤架構:
-  - bookmark_groups:user 自訂書籤 + 系統書籤(user_label = NULL)
+書籤架構(本機 JSON 儲存,ConfigStore):
+  - bookmark_groups:user 自訂書籤(系統書籤「大漲股」由 route 動態合成,不入檔)
   - watchlist_items:書籤 → 股票 (group_id, symbol)
-  - top_gainers_snapshot:系統書籤「大漲股」的動態內容(由排程更新)
+  - top_gainers:系統書籤「大漲股」的動態內容(記憶體快取,由排程更新)
 
 WS subscribe 用 owner_id = f"bookmark:{group_id}":
   fubon_ws 的 refcount 是 set-of-owner_id,同檔股票在多書籤時、
   pool 自動處理 — 刪一邊不會 unsubscribe(只要還有其他 group_id 的 owner)。
 
 系統書籤(is_system=true):
-  - 內容來自 top_gainers_snapshot(不在 watchlist_items)
+  - id 固定為 SYSTEM_TOP_GAINERS_ID,內容來自 top_gainers 快取(不在 watchlist_items)
   - PATCH/DELETE/POST items/DELETE items 一律拒絕(403)
+  - item 的 name/market/is_etf 由 MarketCache.get_symbol 即時補回
 """
 from __future__ import annotations
 
@@ -24,45 +25,39 @@ from pydantic import BaseModel, Field
 
 from services.cdp import get_cdp_service
 from services.fubon_ws import get_ws_pool
-from services.supabase_client import SupabaseStatus, get_supabase
-from services.user_context import get_user_label
+from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# 系統書籤「大漲股」的固定 id — 不入檔,由 route 動態合成。
+SYSTEM_TOP_GAINERS_ID = "system-top-gainers"
+SYSTEM_TOP_GAINERS_NAME = "大漲股"
+SYSTEM_TOP_GAINERS_SORT_ORDER = 100
+
 
 # ---------- helpers ----------
-
-def _ensure_supabase():
-    sb = get_supabase()
-    if sb.status != SupabaseStatus.OK or sb.client is None:
-        raise HTTPException(503, detail={"error": "supabase_unavailable", "last_error": sb.last_error})
-    return sb
-
 
 def _owner_id(group_id: str) -> str:
     """WSPool owner id naming — 每個書籤獨立 owner,refcount 自動處理多書籤共有。"""
     return f"bookmark:{group_id}"
 
 
-async def _get_group(sb, group_id: str, *, allow_system: bool = True) -> dict:
-    """讀單一 group + 驗證 user 有權看(系統書籤所有人可看,user 書籤要對 label)。"""
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("bookmark_groups")
-        .select("id, user_label, name, sort_order, is_system, source_type")
-        .eq("id", group_id)
-        .limit(1)
-        .execute()
-    )
-    rows = res.data or []
-    if not rows:
-        raise HTTPException(404, detail={"error": "bookmark_not_found"})
-    g = rows[0]
-    # 系統書籤所有人可看;user 書籤要對 label
-    if not g["is_system"] and g["user_label"] != get_user_label():
-        raise HTTPException(404, detail={"error": "bookmark_not_found"})  # 不洩漏存在性
-    if g["is_system"] and not allow_system:
+def _enrich_item(symbol: str) -> dict:
+    """從 MarketCache 補單筆 metadata;不在 cache 時 best-effort 降級。"""
+    meta = get_local_store().market.get_symbol(symbol)
+    if meta is None:
+        return {"name": None, "market": None, "is_etf": False}
+    return {"name": meta["name"], "market": meta["market"], "is_etf": meta["is_etf"]}
+
+
+def _require_user_group(group_id: str) -> dict:
+    """取 user 書籤 + 擋系統書籤。系統 id → 403;不存在 → 404。"""
+    if group_id == SYSTEM_TOP_GAINERS_ID:
         raise HTTPException(403, detail={"error": "system_bookmark_readonly"})
+    g = next((x for x in get_local_store().config.list_groups() if x["id"] == group_id), None)
+    if g is None:
+        raise HTTPException(404, detail={"error": "bookmark_not_found"})
     return g
 
 
@@ -80,146 +75,80 @@ class BookmarkPatch(BaseModel):
 @router.get("/api/bookmarks")
 async def list_bookmarks() -> dict:
     """列出 user 的書籤(含系統書籤),含每個書籤的股票數。"""
-    sb = _ensure_supabase()
-    label = get_user_label()
+    store = get_local_store()
+    groups = store.config.list_groups()
+    counts = store.config.item_counts()
 
-    # 撈 user 自己的 + 系統書籤
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("bookmark_groups")
-        .select("id, name, sort_order, is_system, source_type, user_label")
-        .or_(f"user_label.eq.{label},user_label.is.null")
-        .order("is_system")
-        .order("sort_order")
-        .execute()
-    )
-    groups = res.data or []
-    group_ids = [g["id"] for g in groups if not g["is_system"]]
-
-    # 一次撈 user 書籤的 item counts
-    user_counts: dict[str, int] = {}
-    if group_ids:
-        items_res = await asyncio.to_thread(
-            lambda: sb.client.table("watchlist_items")
-            .select("group_id")
-            .in_("group_id", group_ids)
-            .execute()
-        )
-        for r in items_res.data or []:
-            user_counts[r["group_id"]] = user_counts.get(r["group_id"], 0) + 1
-
-    # 系統書籤 (top_gainers) 從 snapshot 算
-    system_counts: dict[str, int] = {}
-    for g in groups:
-        if g["is_system"] and g["source_type"] == "top_gainers":
-            tg_res = await asyncio.to_thread(
-                lambda: sb.client.table("top_gainers_snapshot").select("symbol", count="exact").execute()
-            )
-            system_counts[g["id"]] = tg_res.count or 0
-
+    # user 書籤依 sort_order 排序(對齊舊行為:is_system 先、再 sort_order)
+    user_sorted = sorted(groups, key=lambda g: g.get("sort_order", 0))
     out = []
-    for g in groups:
-        cnt = system_counts.get(g["id"], 0) if g["is_system"] else user_counts.get(g["id"], 0)
+    for g in user_sorted:
         out.append({
             "id": g["id"],
             "name": g["name"],
-            "sort_order": g["sort_order"],
-            "is_system": g["is_system"],
-            "source_type": g["source_type"],
-            "count": cnt,
+            "sort_order": g.get("sort_order", 0),
+            "is_system": False,
+            "source_type": g.get("source_type"),
+            "count": counts.get(g["id"], 0),
         })
+
+    # 系統書籤「大漲股」放最後(對齊舊 order by is_system)
+    out.append({
+        "id": SYSTEM_TOP_GAINERS_ID,
+        "name": SYSTEM_TOP_GAINERS_NAME,
+        "sort_order": SYSTEM_TOP_GAINERS_SORT_ORDER,
+        "is_system": True,
+        "source_type": "top_gainers",
+        "count": store.market.top_gainers_count(),
+    })
     return {"groups": out, "count": len(out)}
 
 
 @router.post("/api/bookmarks", status_code=201)
 async def create_bookmark(payload: BookmarkCreate) -> dict:
-    sb = _ensure_supabase()
-    label = get_user_label()
-
-    # 算下一個 sort_order
-    max_res = await asyncio.to_thread(
-        lambda: sb.client.table("bookmark_groups")
-        .select("sort_order")
-        .eq("user_label", label)
-        .order("sort_order", desc=True)
-        .limit(1)
-        .execute()
-    )
-    next_order = (max_res.data[0]["sort_order"] + 1) if max_res.data else 1
-
-    try:
-        res = await asyncio.to_thread(
-            lambda: sb.client.table("bookmark_groups").insert({
-                "user_label": label,
-                "name": payload.name,
-                "sort_order": next_order,
-                "is_system": False,
-            }).execute()
-        )
-    except Exception as e:
-        # 名稱重複(uniq_bookmark_user_name)
-        raise HTTPException(409, detail={"error": "bookmark_name_taken", "detail": str(e)})
-
-    if not res.data:
-        raise HTTPException(500, detail={"error": "insert_failed"})
-    return res.data[0]
+    store = get_local_store()
+    groups = store.config.list_groups()
+    if any(g["name"] == payload.name for g in groups):
+        raise HTTPException(409, detail={"error": "bookmark_name_taken"})
+    next_order = (max((g.get("sort_order", 0) for g in groups), default=0) + 1) if groups else 1
+    g = store.config.create_group(payload.name, sort_order=next_order)
+    return g
 
 
 @router.patch("/api/bookmarks/{bid}")
 async def update_bookmark(bid: str, payload: BookmarkPatch) -> dict:
-    sb = _ensure_supabase()
-    await _get_group(sb, bid, allow_system=False)  # 系統書籤擋
+    store = get_local_store()
+    _require_user_group(bid)  # 系統書籤擋 + 存在性
 
-    update: dict = {}
-    if payload.name is not None:
-        update["name"] = payload.name
-    if payload.sort_order is not None:
-        update["sort_order"] = payload.sort_order
-    if not update:
+    if payload.name is None and payload.sort_order is None:
         raise HTTPException(400, detail={"error": "nothing_to_update"})
 
-    try:
-        res = await asyncio.to_thread(
-            lambda: sb.client.table("bookmark_groups")
-            .update(update)
-            .eq("id", bid)
-            .eq("user_label", get_user_label())
-            .execute()
-        )
-    except Exception as e:
-        raise HTTPException(409, detail={"error": "bookmark_name_taken", "detail": str(e)})
+    if payload.name is not None:
+        if any(g["name"] == payload.name and g["id"] != bid
+               for g in store.config.list_groups()):
+            raise HTTPException(409, detail={"error": "bookmark_name_taken"})
 
-    if not res.data:
+    g = store.config.update_group(bid, name=payload.name, sort_order=payload.sort_order)
+    if g is None:
         raise HTTPException(404, detail={"error": "bookmark_not_found"})
-    return res.data[0]
+    return g
 
 
 @router.delete("/api/bookmarks/{bid}", status_code=204)
 async def delete_bookmark(bid: str) -> None:
-    sb = _ensure_supabase()
-    await _get_group(sb, bid, allow_system=False)  # 系統書籤擋
+    store = get_local_store()
+    _require_user_group(bid)  # 系統書籤擋 + 存在性
 
-    # 撈 items 清單,先 unsubscribe 自己的 owner_id(refcount 機制會處理多書籤共有)
-    items_res = await asyncio.to_thread(
-        lambda: sb.client.table("watchlist_items")
-        .select("symbol")
-        .eq("group_id", bid)
-        .execute()
-    )
+    # 先 unsubscribe 自己的 owner_id(refcount 機制會處理多書籤共有)
     owner = _owner_id(bid)
-    for r in items_res.data or []:
+    for it in store.config.list_items(bid):
         try:
-            await get_ws_pool().unsubscribe(r["symbol"], owner_id=owner)
+            await get_ws_pool().unsubscribe(it["symbol"], owner_id=owner)
         except Exception as e:
-            logger.warning("delete bookmark: ws unsubscribe %s failed: %s", r["symbol"], e)
+            logger.warning("delete bookmark: ws unsubscribe %s failed: %s", it["symbol"], e)
 
-    # 刪 group 會 cascade 刪 watchlist_items
-    await asyncio.to_thread(
-        lambda: sb.client.table("bookmark_groups")
-        .delete()
-        .eq("id", bid)
-        .eq("user_label", get_user_label())
-        .execute()
-    )
+    # 刪 group 連帶刪 items(ConfigStore.delete_group 內部處理)
+    store.config.delete_group(bid)
 
     # signal_engine refresh — scope=watchlist 改用「自選」書籤,不影響;但保險 refresh
     try:
@@ -245,25 +174,19 @@ class ItemsMove(BaseModel):
 
 @router.get("/api/bookmarks/{bid}/items")
 async def list_items(bid: str) -> dict:
-    sb = _ensure_supabase()
-    g = await _get_group(sb, bid)
+    store = get_local_store()
 
-    if g["is_system"] and g["source_type"] == "top_gainers":
-        # 從 top_gainers_snapshot join symbols
-        res = await asyncio.to_thread(
-            lambda: sb.client.table("top_gainers_snapshot")
-            .select("symbol, change_pct, volume_lots, market, rank, captured_at, symbols(name, is_etf)")
-            .order("rank")
-            .execute()
-        )
+    if bid == SYSTEM_TOP_GAINERS_ID:
+        # 從 top_gainers 快取補 symbols metadata
         out = []
-        for r in res.data or []:
-            meta = r.get("symbols") or {}
+        for r in store.market.get_top_gainers():
+            sym = r["symbol"]
+            meta = _enrich_item(sym)
             out.append({
-                "symbol": r["symbol"],
-                "name": meta.get("name"),
+                "symbol": sym,
+                "name": meta["name"],
                 "market": r.get("market"),
-                "is_etf": meta.get("is_etf"),
+                "is_etf": meta["is_etf"],
                 "change_pct": r.get("change_pct"),
                 "volume_lots": r.get("volume_lots"),
                 "captured_at": r.get("captured_at"),
@@ -272,24 +195,21 @@ async def list_items(bid: str) -> dict:
             })
         return {"items": out, "count": len(out)}
 
-    # User 書籤 — 從 watchlist_items join symbols
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("watchlist_items")
-        .select("symbol, added_at, note, symbols(name, market, is_etf)")
-        .eq("group_id", bid)
-        .order("added_at", desc=True)
-        .execute()
-    )
+    g = _require_user_group(bid)  # noqa: F841 — 存在性檢查(系統 id 不會到這)
+
+    # User 書籤 — 從 watchlist_items 補 symbols metadata,added_at desc
+    items = store.config.list_items(bid)
+    items = sorted(items, key=lambda it: it.get("added_at") or "", reverse=True)
     out = []
-    for r in res.data or []:
-        meta = r.get("symbols") or {}
+    for it in items:
+        meta = _enrich_item(it["symbol"])
         out.append({
-            "symbol": r["symbol"],
-            "added_at": r.get("added_at"),
-            "note": r.get("note"),
-            "name": meta.get("name"),
-            "market": meta.get("market"),
-            "is_etf": meta.get("is_etf"),
+            "symbol": it["symbol"],
+            "added_at": it.get("added_at"),
+            "note": it.get("note"),
+            "name": meta["name"],
+            "market": meta["market"],
+            "is_etf": meta["is_etf"],
         })
     return {"items": out, "count": len(out)}
 
@@ -297,37 +217,22 @@ async def list_items(bid: str) -> dict:
 @router.post("/api/bookmarks/{bid}/items", status_code=201)
 async def add_items(bid: str, payload: ItemsAdd) -> dict:
     """批次加股票。已加入的 symbol 略過(不視為錯誤)。"""
-    sb = _ensure_supabase()
-    await _get_group(sb, bid, allow_system=False)  # 系統書籤擋
+    store = get_local_store()
+    _require_user_group(bid)  # 系統書籤擋 + 存在性
 
-    # 驗 symbols 存在
-    valid_res = await asyncio.to_thread(
-        lambda: sb.client.table("symbols")
-        .select("symbol")
-        .in_("symbol", payload.symbols)
-        .execute()
-    )
-    valid_set = {r["symbol"] for r in (valid_res.data or [])}
-    bad = [s for s in payload.symbols if s not in valid_set]
-    if bad:
-        raise HTTPException(404, detail={"error": "symbol_not_found", "symbols": bad})
+    # 驗 symbols 存在(cache 已載入才驗;未載入則放行,best-effort)
+    if store.market.symbols_loaded():
+        bad = [s for s in payload.symbols if not store.market.has_symbol(s)]
+        if bad:
+            raise HTTPException(404, detail={"error": "symbol_not_found", "symbols": bad})
 
-    # 撈當前已在的 symbol 避免 unique violation
-    cur_res = await asyncio.to_thread(
-        lambda: sb.client.table("watchlist_items")
-        .select("symbol")
-        .eq("group_id", bid)
-        .in_("symbol", payload.symbols)
-        .execute()
-    )
-    already = {r["symbol"] for r in (cur_res.data or [])}
+    # 撈當前已在的 symbol(同 group 不重複)
+    already = {it["symbol"] for it in store.config.list_items(bid)
+               if it["symbol"] in set(payload.symbols)}
     to_insert = [s for s in payload.symbols if s not in already]
 
-    if to_insert:
-        rows = [{"group_id": bid, "symbol": s} for s in to_insert]
-        await asyncio.to_thread(
-            lambda: sb.client.table("watchlist_items").insert(rows).execute()
-        )
+    for s in to_insert:
+        store.config.add_item(bid, s)
 
     # WS subscribe (owner_id 用 bookmark:{bid}) + backfill CDP
     owner = _owner_id(bid)
@@ -350,16 +255,10 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
 
 @router.delete("/api/bookmarks/{bid}/items/{symbol}", status_code=204)
 async def remove_item(bid: str, symbol: str) -> None:
-    sb = _ensure_supabase()
-    await _get_group(sb, bid, allow_system=False)  # 系統書籤擋
+    store = get_local_store()
+    _require_user_group(bid)  # 系統書籤擋 + 存在性
 
-    await asyncio.to_thread(
-        lambda: sb.client.table("watchlist_items")
-        .delete()
-        .eq("group_id", bid)
-        .eq("symbol", symbol)
-        .execute()
-    )
+    store.config.remove_item(bid, symbol)
 
     # WS unsubscribe(只解除這個書籤的 owner、refcount 自動處理其他書籤)
     try:
@@ -382,29 +281,20 @@ async def remove_item(bid: str, symbol: str) -> None:
 @router.patch("/api/bookmarks/items/move")
 async def move_items(payload: ItemsMove) -> dict:
     """批次跨書籤搬移 / 複製。"""
-    sb = _ensure_supabase()
+    store = get_local_store()
 
-    # 驗 from + to 都不是系統書籤
-    await _get_group(sb, payload.from_group_id, allow_system=False)
+    # 驗 from + to 都不是系統書籤 + 存在
+    _require_user_group(payload.from_group_id)
     for to_id in payload.to_group_ids:
-        await _get_group(sb, to_id, allow_system=False)
+        _require_user_group(to_id)
 
-    # 加到 to_groups(批次 upsert,unique violation 略過)
+    # 加到 to_groups(同 group 已在則略過)
     for to_id in payload.to_group_ids:
-        cur_res = await asyncio.to_thread(
-            lambda tid=to_id: sb.client.table("watchlist_items")
-            .select("symbol")
-            .eq("group_id", tid)
-            .in_("symbol", payload.symbols)
-            .execute()
-        )
-        already = {r["symbol"] for r in (cur_res.data or [])}
+        already = {it["symbol"] for it in store.config.list_items(to_id)
+                   if it["symbol"] in set(payload.symbols)}
         to_insert = [s for s in payload.symbols if s not in already]
-        if to_insert:
-            rows = [{"group_id": to_id, "symbol": s} for s in to_insert]
-            await asyncio.to_thread(
-                lambda r=rows: sb.client.table("watchlist_items").insert(r).execute()
-            )
+        for s in to_insert:
+            store.config.add_item(to_id, s)
         owner_to = _owner_id(to_id)
         for s in to_insert:
             try:
@@ -415,14 +305,9 @@ async def move_items(payload: ItemsMove) -> dict:
 
     # 如果 op="move",從 from_group 移除(refcount 自動處理同檔多書籤)
     if payload.op == "move":
-        await asyncio.to_thread(
-            lambda: sb.client.table("watchlist_items")
-            .delete()
-            .eq("group_id", payload.from_group_id)
-            .in_("symbol", payload.symbols)
-            .execute()
-        )
         owner_from = _owner_id(payload.from_group_id)
+        for s in payload.symbols:
+            store.config.remove_item(payload.from_group_id, s)
         for s in payload.symbols:
             try:
                 await get_ws_pool().unsubscribe(s, owner_id=owner_from)

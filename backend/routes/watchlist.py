@@ -1,8 +1,10 @@
 """GET/POST/DELETE /api/watchlist — 「自選」書籤的 thin alias。
 
 Legacy 入口:書籤群組化後,/api/watchlist 改為對 user 的「自選」書籤 (預設書籤)
-操作。內部呼叫新 schema (bookmark_groups + watchlist_items),但 API 簽名不變,
+操作。內部走本機 ConfigStore(bookmark_groups + watchlist_items),但 API 簽名不變,
 讓既有前端與 active_signals scope=watchlist 邏輯持續運作。
+
+「自選」書籤由 ConfigStore.load() 的 _seed_defaults 保證存在(name == "自選")。
 
 POST 順手:
   - ws_pool.subscribe(owner=f"bookmark:{自選_group_id}")
@@ -18,8 +20,7 @@ from pydantic import BaseModel, Field
 
 from services.cdp import get_cdp_service
 from services.fubon_ws import get_ws_pool
-from services.supabase_client import SupabaseStatus, get_supabase
-from services.user_context import get_user_label
+from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,38 +33,14 @@ class WatchlistAdd(BaseModel):
     note: str | None = None
 
 
-def _ensure_supabase():
-    sb = get_supabase()
-    if sb.status != SupabaseStatus.OK or sb.client is None:
-        raise HTTPException(503, detail={"error": "supabase_unavailable", "last_error": sb.last_error})
-    return sb
-
-
-async def _get_or_create_default_group_id(sb, label: str) -> str:
-    """取 user 的「自選」書籤 id;若不存在自動建一個。"""
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("bookmark_groups")
-        .select("id")
-        .eq("user_label", label)
-        .eq("name", DEFAULT_BOOKMARK_NAME)
-        .limit(1)
-        .execute()
-    )
-    if res.data:
-        return res.data[0]["id"]
-
-    # 沒有就建
-    ins = await asyncio.to_thread(
-        lambda: sb.client.table("bookmark_groups").insert({
-            "user_label": label,
-            "name": DEFAULT_BOOKMARK_NAME,
-            "sort_order": 0,
-            "is_system": False,
-        }).execute()
-    )
-    if not ins.data:
-        raise HTTPException(500, detail={"error": "create_default_bookmark_failed"})
-    return ins.data[0]["id"]
+def _default_group_id() -> str:
+    """取 user 的「自選」書籤 id;seed 保證存在,缺了就建一個。"""
+    store = get_local_store()
+    g = next((x for x in store.config.list_groups()
+              if x["name"] == DEFAULT_BOOKMARK_NAME), None)
+    if g is None:
+        g = store.config.create_group(DEFAULT_BOOKMARK_NAME, sort_order=0)
+    return g["id"]
 
 
 def _owner_id(group_id: str) -> str:
@@ -72,54 +49,39 @@ def _owner_id(group_id: str) -> str:
 
 @router.get("/api/watchlist")
 async def list_watchlist() -> dict:
-    sb = _ensure_supabase()
-    gid = await _get_or_create_default_group_id(sb, get_user_label())
+    store = get_local_store()
+    gid = _default_group_id()
 
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("watchlist_items")
-        .select("symbol, added_at, note, symbols(name, market, is_etf)")
-        .eq("group_id", gid)
-        .order("added_at", desc=True)
-        .execute()
-    )
-    rows = res.data or []
+    items = store.config.list_items(gid)
+    items = sorted(items, key=lambda it: it.get("added_at") or "", reverse=True)
     out = []
-    for r in rows:
-        meta = r.get("symbols") or {}
+    for it in items:
+        meta = store.market.get_symbol(it["symbol"])
         out.append({
-            "symbol": r["symbol"],
-            "added_at": r.get("added_at"),
-            "note": r.get("note"),
-            "name": meta.get("name"),
-            "market": meta.get("market"),
-            "is_etf": meta.get("is_etf"),
+            "symbol": it["symbol"],
+            "added_at": it.get("added_at"),
+            "note": it.get("note"),
+            "name": meta["name"] if meta else None,
+            "market": meta["market"] if meta else None,
+            "is_etf": meta["is_etf"] if meta else False,
         })
     return {"watchlist": out, "count": len(out)}
 
 
 @router.post("/api/watchlist", status_code=201)
 async def add_watchlist(payload: WatchlistAdd) -> dict:
-    sb = _ensure_supabase()
-    label = get_user_label()
-    gid = await _get_or_create_default_group_id(sb, label)
+    store = get_local_store()
+    gid = _default_group_id()
 
-    # symbol 必須存在 symbols 表(FK 會擋但前端體驗差,主動驗)
-    sym_res = await asyncio.to_thread(
-        lambda: sb.client.table("symbols").select("symbol").eq("symbol", payload.symbol).limit(1).execute()
-    )
-    if not (sym_res.data or []):
+    # symbol 必須存在 symbols cache(cache 已載入才驗;未載入則放行)
+    if store.market.symbols_loaded() and not store.market.has_symbol(payload.symbol):
         raise HTTPException(404, detail={"error": "symbol_not_found", "symbol": payload.symbol})
 
-    try:
-        await asyncio.to_thread(
-            lambda: sb.client.table("watchlist_items").insert({
-                "group_id": gid,
-                "symbol": payload.symbol,
-                "note": payload.note,
-            }).execute()
-        )
-    except Exception as e:
-        raise HTTPException(409, detail={"error": "already_in_watchlist", "detail": str(e)})
+    # 已在自選 → 409(對齊舊 unique violation 行為)
+    if any(it["symbol"] == payload.symbol for it in store.config.list_items(gid)):
+        raise HTTPException(409, detail={"error": "already_in_watchlist"})
+
+    store.config.add_item(gid, payload.symbol, note=payload.note)
 
     # WS subscribe (owner_id 用 bookmark:{gid})
     try:
@@ -142,16 +104,10 @@ async def add_watchlist(payload: WatchlistAdd) -> dict:
 
 @router.delete("/api/watchlist/{symbol}", status_code=204)
 async def remove_watchlist(symbol: str) -> None:
-    sb = _ensure_supabase()
-    gid = await _get_or_create_default_group_id(sb, get_user_label())
+    store = get_local_store()
+    gid = _default_group_id()
 
-    await asyncio.to_thread(
-        lambda: sb.client.table("watchlist_items")
-        .delete()
-        .eq("group_id", gid)
-        .eq("symbol", symbol)
-        .execute()
-    )
+    store.config.remove_item(gid, symbol)
 
     # WS unsubscribe (refcount 自動處理同檔多書籤;此處只取消「自選」這個 owner)
     try:
