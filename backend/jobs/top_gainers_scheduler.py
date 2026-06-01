@@ -1,8 +1,8 @@
-"""大漲股排程 — 盤中每 1 分鐘更新 top_gainers_snapshot。
+"""大漲股排程 — 盤中每 1 分鐘更新 top_gainers 記憶體快取。
 
 呼叫富邦 `snapshot.movers` 拿漲跌幅排行(server-side filter:type=COMMONSTOCK +
-gt/lt 漲跌幅範圍),篩出符合條件的股票寫進 top_gainers_snapshot 表。所有 user
-共用同一份(系統書籤「大漲股」的內容)。
+gt/lt 漲跌幅範圍),篩出符合條件的股票整批 replace 進 market_cache 的 top_gainers
+記憶體快取(系統書籤「大漲股」的內容)。
 
 篩選條件(per docs/superpowers/specs/2026-05-20-bookmarks-design.md):
   - Server-side: type=COMMONSTOCK(一般股票,排除 ETF / 特別股)
@@ -11,7 +11,7 @@ gt/lt 漲跌幅範圍),篩出符合條件的股票寫進 top_gainers_snapshot �
   - Client-side: tradeVolume > 3000 張(富邦 movers API 的 tradeVolume 單位是
     「張/lots」,不是「股」— 經實測 2327 vol=22373, close=572, tradeValue≈12.7B 驗證)
   - Client-side: symbol 是 4 位純數字(雙保險,擋權證、可轉債)
-  - Client-side: 須在 symbols 表(FK 限制)
+  - Client-side: 須在本機 symbols 快取(快取未載入時不過濾)
   - 依 changePercent desc 取前 50
 
 時間規則:
@@ -26,12 +26,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
 from typing import Any
 
 from services.fubon_client import FubonStatus, get_fubon
 from services.fubon_ws import get_ws_pool
-from services.supabase_client import SupabaseStatus, get_supabase
+from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +88,6 @@ def _fetch_market_movers(market: str) -> list[dict[str, Any]]:
 
 async def refresh_top_gainers() -> dict:
     """執行一次 refresh — 拉漲跌幅榜 + 過濾 + 整批 replace。"""
-    sb = get_supabase()
-    if sb.status != SupabaseStatus.OK or sb.client is None:
-        logger.warning("top_gainers: supabase not ready, skip")
-        return {"status": "skipped", "reason": "supabase_unavailable"}
-
     raw: list[tuple[str, float, int, str]] = []  # (symbol, change_pct, volume_lots, market)
     for market in ("TSE", "OTC"):
         items = await asyncio.to_thread(_fetch_market_movers, market)
@@ -111,32 +106,28 @@ async def refresh_top_gainers() -> dict:
     if not raw:
         logger.info("top_gainers: nothing passes filters")
         # 仍然清空 snapshot(讓前端看到空 state、而不是 stale)
-        await _replace_snapshot(sb, [])
+        await _replace_snapshot([])
         await _sync_subscriptions(set())
         return {"status": "ok", "count": 0}
 
-    # 確認在 symbols 表(top_gainers_snapshot 對 symbols 有 FK、不在則 insert 失敗)
-    candidate_symbols = [r[0] for r in raw]
-    meta_res = await asyncio.to_thread(
-        lambda: sb.client.table("symbols")
-        .select("symbol")
-        .in_("symbol", candidate_symbols)
-        .execute()
-    )
-    known_set = {m["symbol"] for m in (meta_res.data or [])}
+    # 只保留本機 symbols 快取裡有的(擋雜訊 / 未知代號)。
+    # 快取尚未載入時保留全部 — 不拿空快取把所有候選砍光。
+    store = get_local_store()
+    if store.market.symbols_loaded():
+        raw = [r for r in raw if store.market.has_symbol(r[0])]
 
-    filtered = [r for r in raw if r[0] in known_set]
-    filtered.sort(key=lambda r: -r[1])
-    top = filtered[:TOP_N]
+    raw.sort(key=lambda r: -r[1])
+    top = raw[:TOP_N]
 
+    captured_at = datetime.now(timezone.utc).isoformat()
     rows = [
         {
             "symbol": s, "change_pct": pct, "volume_lots": vol_lots,
-            "market": mkt, "rank": i + 1,
+            "market": mkt, "rank": i + 1, "captured_at": captured_at,
         }
         for i, (s, pct, vol_lots, mkt) in enumerate(top)
     ]
-    await _replace_snapshot(sb, rows)
+    await _replace_snapshot(rows)
     await _sync_subscriptions({r["symbol"] for r in rows})
     logger.info("top_gainers: refreshed %d entries", len(rows))
     return {"status": "ok", "count": len(rows)}
@@ -168,19 +159,9 @@ async def _sync_subscriptions(new_set: set[str]) -> None:
     _subscribed_symbols = new_set
 
 
-async def _replace_snapshot(sb, rows: list[dict]) -> None:
-    """整批 replace — 先 delete all,再 insert 新批。"""
-    try:
-        # supabase-py: delete 需要 filter,用 neq("symbol","") 強制 match-all
-        await asyncio.to_thread(
-            lambda: sb.client.table("top_gainers_snapshot").delete().neq("symbol", "").execute()
-        )
-        if rows:
-            await asyncio.to_thread(
-                lambda: sb.client.table("top_gainers_snapshot").insert(rows).execute()
-            )
-    except Exception as e:
-        logger.error("top_gainers: snapshot replace failed: %s", e)
+async def _replace_snapshot(rows: list[dict]) -> None:
+    """整批 replace 記憶體快取 — 空 list 即清空,讓前端看到空 state 而非 stale。"""
+    get_local_store().market.replace_top_gainers(rows)
 
 
 async def top_gainers_loop() -> None:

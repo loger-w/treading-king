@@ -1,6 +1,6 @@
 """訊號歷史寫入器 — 直接 append 到本機 jsonl(取代 supabase_writer 的批次邏輯)。
 
-保留 start()/stop() 以維持 main.py 生命週期介面(本機無需背景 flush,為 no-op)。
+保留 start()/shutdown() 以維持 main.py 生命週期介面(本機無需背景 flush,為 no-op)。
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ class SignalWriter:
     async def start(self) -> None:  # 介面相容,no-op
         return
 
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         return
 
     def append(self, row: dict[str, Any]) -> None:
