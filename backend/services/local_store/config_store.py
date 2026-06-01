@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,7 +40,13 @@ class ConfigStore:
 
     # ---- lifecycle ----
     def load(self) -> None:
-        self._data = read_json(self._path, None) or _empty_config()
+        try:
+            self._data = read_json(self._path, None) or _empty_config()
+        except (json.JSONDecodeError, OSError):
+            # 壞檔不讓後端起不來:備份後重建
+            if self._path.exists():
+                self._path.replace(self._path.with_suffix(".json.corrupt"))
+            self._data = _empty_config()
         for k, v in _empty_config().items():
             self._data.setdefault(k, v)
         self._seed_defaults()

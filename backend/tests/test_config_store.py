@@ -22,13 +22,18 @@ def test_create_and_list_group_persists(tmp_path):
 
 
 def test_delete_group_cascades_items(tmp_path):
-    # 為何重要:孤兒 item 會讓前端出現「幽靈股票」
-    cfg = ConfigStore(tmp_path / "config.json")
+    # 為何重要:孤兒 item 會讓前端出現「幽靈股票」;且 cascade 必須真的寫到磁碟
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
     cfg.load()
     g = cfg.create_group("X")
     cfg.add_item(g["id"], "2330")
     assert cfg.delete_group(g["id"]) is True
     assert cfg.list_items(g["id"]) == []
+    # round-trip:cascade 必須持久化(否則重載又出現孤兒 item)
+    cfg2 = ConfigStore(path)
+    cfg2.load()
+    assert cfg2.list_items(g["id"]) == []
 
 
 def test_add_item_dedup_and_counts(tmp_path):
