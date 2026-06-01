@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type BookmarkGroup } from "../lib/api";
+import { ConfigIODialog } from "./ConfigIODialog";
 
 /**
  * 「管理書籤」modal — 改名 / 刪 / 新增。排序留待後續(暫不實作拖拉)。
@@ -17,6 +18,7 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
   const [renameValue, setRenameValue] = useState("");
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [ioOpen, setIoOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -73,12 +75,18 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
                    w-[min(460px,90vw)] max-h-[82vh] overflow-y-auto scroll-editorial"
         style={{ transform: "translate(-50%, -50%)" }}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">管理書籤</h3>
+          <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">
+            {ioOpen ? "匯出 / 匯入設定" : "管理書籤"}
+          </h3>
           <button onClick={onClose} className="text-ink-dim hover:text-accent text-lg" aria-label="關閉">×</button>
         </div>
 
         <div className="h-px bg-line mb-4" />
 
+        {ioOpen ? (
+          <ConfigIODialog onClose={() => setIoOpen(false)} />
+        ) : (
+        <>
         <ul>
           {sortedGroups.map((g) => (
             <li key={g.id} className="flex items-center gap-3 py-3 border-b border-line">
@@ -137,12 +145,18 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
           系統書籤無法刪除或改名。
         </p>
 
-        <div className="flex justify-end mt-5">
+        <div className="flex items-center justify-between mt-5">
+          <button onClick={() => setIoOpen(true)}
+            className="text-xs text-ink-dim hover:text-accent">
+            ⤓ 匯出 / 匯入
+          </button>
           <button onClick={onClose}
             className="px-4 py-2 text-sm bg-accent text-bg font-medium">
             完成
           </button>
         </div>
+        </>
+        )}
       </div>
     </>
   );

@@ -460,4 +460,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ symbols }),
     }),
+
+  // 本機設定可攜檔(書籤 / 訊號規則 / 監聽清單)
+  config: {
+    // 不走 fetchJSON:要拿 Blob 直接下載,但 API key header 機制照舊
+    export: async (): Promise<Blob> => {
+      const headers = new Headers();
+      if (BFF_API_KEY) headers.set("X-API-Key", BFF_API_KEY);
+      const res = await fetch("/api/config/export", { headers });
+      if (!res.ok) throw new ApiError(res.status, await res.text());
+      return res.blob();
+    },
+    import: (data: unknown) =>
+      fetchJSON<{ status: string }>("/api/config/import", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  },
 };
