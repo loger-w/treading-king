@@ -7,28 +7,17 @@ from services.signal_engine import SignalEngine
 
 
 @pytest.mark.asyncio
-async def test_load_monitor_symbols_returns_set(monkeypatch):
-    from services import signal_engine as se
-    fake_table = MagicMock()
-    fake_table.select.return_value = fake_table
-    fake_table.eq.return_value = fake_table
-    fake_table.execute.return_value = MagicMock(data=[{"symbol": "2330"}, {"symbol": "2317"}])
-    fake_sb = MagicMock()
-    fake_sb.client.table.return_value = fake_table
-    monkeypatch.setattr(se, "get_supabase", lambda: fake_sb)
-    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+async def test_load_monitor_symbols_returns_set(local_store_tmp):
+    local_store_tmp.config.add_monitor("2330")
+    local_store_tmp.config.add_monitor("2317")
 
     engine = SignalEngine()
     syms = await engine._load_monitor_symbols()
     assert syms == {"2330", "2317"}
-    fake_table.eq.assert_called_with("user_label", "loger")
 
 
 @pytest.mark.asyncio
-async def test_load_monitor_symbols_empty_when_supabase_none(monkeypatch):
-    from services import signal_engine as se
-    fake_sb = MagicMock(client=None)
-    monkeypatch.setattr(se, "get_supabase", lambda: fake_sb)
+async def test_load_monitor_symbols_empty_when_no_monitor(local_store_tmp):
     engine = SignalEngine()
     assert await engine._load_monitor_symbols() == set()
 
@@ -63,8 +52,7 @@ async def test_fanout_calls_discord_when_notify_enabled(monkeypatch):
     monkeypatch.setattr(se, "discord_notifier", MagicMock(send_signal=fake_send_signal))
     monkeypatch.setattr(se, "get_broadcaster", lambda: MagicMock(broadcast=AsyncMock()))
     fake_writer = MagicMock(append=MagicMock())
-    monkeypatch.setattr("services.supabase_writer.get_supabase_writer", lambda: fake_writer)
-    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+    monkeypatch.setattr(se, "get_signal_writer", lambda: fake_writer)
 
     engine = SignalEngine()
     active = ActiveSignalOut(
@@ -92,8 +80,7 @@ async def test_fanout_skips_discord_when_notify_disabled(monkeypatch):
         sent.append(kwargs)
     monkeypatch.setattr(se, "discord_notifier", MagicMock(send_signal=fake_send_signal))
     monkeypatch.setattr(se, "get_broadcaster", lambda: MagicMock(broadcast=AsyncMock()))
-    monkeypatch.setattr("services.supabase_writer.get_supabase_writer", lambda: MagicMock(append=MagicMock()))
-    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+    monkeypatch.setattr(se, "get_signal_writer", lambda: MagicMock(append=MagicMock()))
 
     engine = SignalEngine()
     active = ActiveSignalOut(
@@ -110,7 +97,7 @@ async def test_fanout_skips_discord_when_notify_disabled(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fanout_continues_when_discord_raises(monkeypatch):
-    """discord 推送丟錯不該影響 ws broadcast + supabase append。"""
+    """discord 推送丟錯不該影響 ws broadcast + 歷史寫入。"""
     from services import signal_engine as se
     from services.ring_buffer import Tick
     from models.condition import ActiveSignalOut, ActiveFilter, Condition
@@ -121,8 +108,7 @@ async def test_fanout_continues_when_discord_raises(monkeypatch):
     broadcaster = MagicMock(broadcast=AsyncMock())
     monkeypatch.setattr(se, "get_broadcaster", lambda: broadcaster)
     writer = MagicMock(append=MagicMock())
-    monkeypatch.setattr("services.supabase_writer.get_supabase_writer", lambda: writer)
-    monkeypatch.setattr(se, "get_user_label", lambda: "loger")
+    monkeypatch.setattr(se, "get_signal_writer", lambda: writer)
 
     engine = SignalEngine()
     active = ActiveSignalOut(

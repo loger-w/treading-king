@@ -12,9 +12,9 @@ from models.condition import (
 )
 from services import alerts, discord_notifier, ma_service
 from services.cdp import get_cdp_service
+from services.local_store import get_local_store
 from services.ring_buffer import Tick, get_ring_buffer
-from services.supabase_client import get_supabase
-from services.user_context import get_user_label
+from services.signal_writer import get_signal_writer
 from ws_broadcaster import get_broadcaster
 
 logger = logging.getLogger(__name__)
@@ -85,19 +85,8 @@ class SignalEngine:
             self._dropped_today += 1
 
     async def refresh_active_signals(self) -> None:
-        """從 supabase 讀 enabled active_signals，刷新 in-memory list 跟 field cache。"""
-        sb = get_supabase()
-        if sb.client is None:
-            self._active = []
-            return
-        res = await asyncio.to_thread(
-            lambda: sb.client.table("active_signals")
-            .select("id, name, filter_json, scope, cooldown_seconds, enabled, notify_discord, created_at")
-            .eq("user_label", get_user_label())
-            .eq("enabled", True)
-            .execute()
-        )
-        rows = res.data or []
+        """從本機 ConfigStore 讀 enabled active_signals，刷新 in-memory list 跟 field cache。"""
+        rows = get_local_store().config.list_active_signals(enabled_only=True)
         self._active = [self._row_to_active(r) for r in rows]
         await self._refill_field_cache()
         logger.info("active_signals reloaded: %d enabled", len(self._active))
@@ -124,17 +113,8 @@ class SignalEngine:
         )
 
     async def _load_monitor_symbols(self) -> set[str]:
-        """從 monitor_list 拉本 user 的所有監聽 symbol。"""
-        sb = get_supabase()
-        if sb.client is None:
-            return set()
-        res = await asyncio.to_thread(
-            lambda: sb.client.table("monitor_list")
-            .select("symbol")
-            .eq("user_label", get_user_label())
-            .execute()
-        )
-        return {r["symbol"] for r in (res.data or [])}
+        """從本機 monitor_list 拉所有監聽 symbol。"""
+        return {m["symbol"] for m in get_local_store().config.list_monitor()}
 
     async def _refill_field_cache(self) -> None:
         """為 monitor_list 內的 symbol 載入 cdp_* + sma 進 cache。
@@ -518,7 +498,6 @@ class SignalEngine:
         self, active: ActiveSignalOut, symbol: str, tick: Tick,
         cdp_touch: dict | None = None, ma_touch: dict | None = None,
     ) -> None:
-        from services.supabase_writer import get_supabase_writer
         data: dict = {
             "active_signal_id": active.id,
             "active_signal_name": active.name,
@@ -532,17 +511,16 @@ class SignalEngine:
         payload = {"event": "signal", "data": data}
         # 1. 前端 WS broadcast
         await get_broadcaster().broadcast(payload)
-        # 2. supabase writer
+        # 2. 本機歷史寫入
         context: dict = {"latest_tick_time": tick.time}
         if cdp_touch: context["cdp_touch"] = cdp_touch
         if ma_touch:  context["ma_touch"]  = ma_touch
-        get_supabase_writer().append({
+        get_signal_writer().append({
             "active_signal_id": active.id,
             "symbol": symbol,
             "trigger_price": tick.price,
             "trigger_volume": tick.size,
             "context_json": context,
-            "user_label": get_user_label(),
         })
         # 3. Discord notify(per-rule 開關;失敗 swallowed,不影響上面兩條)
         if active.notify_discord:
@@ -576,17 +554,8 @@ class SignalEngine:
                 self._lag_violation_started = None
 
     async def _auto_disable_all(self) -> None:
-        sb = get_supabase()
-        if sb.client is None:
-            return
         try:
-            await asyncio.to_thread(
-                lambda: sb.client.table("active_signals")
-                .update({"enabled": False})
-                .eq("user_label", get_user_label())
-                .eq("enabled", True)
-                .execute()
-            )
+            get_local_store().config.disable_all_active_signals()
         except Exception as e:
             logger.error("auto disable failed: %s", e)
         self._active = []
