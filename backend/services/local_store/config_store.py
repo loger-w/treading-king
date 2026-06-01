@@ -129,3 +129,80 @@ class ConfigStore:
             self._persist()
             return True
         return False
+
+    # ---- active_signals ----
+    def list_active_signals(self, enabled_only: bool = False) -> list[dict]:
+        sigs = self._data["active_signals"]
+        return [s for s in sigs if s["enabled"]] if enabled_only else list(sigs)
+
+    def get_active_signal(self, sig_id: str) -> dict | None:
+        return next((s for s in self._data["active_signals"] if s["id"] == sig_id), None)
+
+    def create_active_signal(self, payload: dict) -> dict:
+        s = {
+            "id": _new_id(),
+            "name": payload["name"],
+            "filter_json": payload.get("filter_json", {}),
+            "scope": payload.get("scope", {}),
+            "cooldown_seconds": payload.get("cooldown_seconds", 1800),
+            "enabled": payload.get("enabled", True),
+            "notify_discord": payload.get("notify_discord", True),
+            "created_at": _now_iso(),
+        }
+        self._data["active_signals"].append(s)
+        self._persist()
+        return s
+
+    def update_active_signal(self, sig_id: str, patch: dict) -> dict | None:
+        for s in self._data["active_signals"]:
+            if s["id"] == sig_id:
+                for k in ("name", "filter_json", "scope", "cooldown_seconds",
+                          "enabled", "notify_discord"):
+                    if k in patch:
+                        s[k] = patch[k]
+                self._persist()
+                return s
+        return None
+
+    def delete_active_signal(self, sig_id: str) -> bool:
+        before = len(self._data["active_signals"])
+        self._data["active_signals"] = [
+            s for s in self._data["active_signals"] if s["id"] != sig_id
+        ]
+        if len(self._data["active_signals"]) != before:
+            self._persist()
+            return True
+        return False
+
+    def disable_all_active_signals(self) -> int:
+        n = 0
+        for s in self._data["active_signals"]:
+            if s["enabled"]:
+                s["enabled"] = False
+                n += 1
+        if n:
+            self._persist()
+        return n
+
+    # ---- monitor_list ----
+    def list_monitor(self) -> list[dict]:
+        return list(self._data["monitor_list"])
+
+    def add_monitor(self, symbol: str) -> dict:
+        for m in self._data["monitor_list"]:
+            if m["symbol"] == symbol:
+                return m
+        m = {"symbol": symbol, "added_at": _now_iso()}
+        self._data["monitor_list"].append(m)
+        self._persist()
+        return m
+
+    def remove_monitor(self, symbol: str) -> bool:
+        before = len(self._data["monitor_list"])
+        self._data["monitor_list"] = [
+            m for m in self._data["monitor_list"] if m["symbol"] != symbol
+        ]
+        if len(self._data["monitor_list"]) != before:
+            self._persist()
+            return True
+        return False

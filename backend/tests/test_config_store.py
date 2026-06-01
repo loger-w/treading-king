@@ -44,3 +44,37 @@ def test_add_item_dedup_and_counts(tmp_path):
     cfg.add_item(g["id"], "2330")  # 同檔不重複
     assert len(cfg.list_items(g["id"])) == 1
     assert cfg.item_counts()[g["id"]] == 1
+
+
+def test_active_signal_crud(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    s = cfg.create_active_signal({
+        "name": "突破", "filter_json": {"op": ">"}, "scope": {"type": "watchlist"},
+        "cooldown_seconds": 1800, "enabled": True, "notify_discord": True,
+    })
+    assert s["id"] and s["created_at"]
+    assert cfg.update_active_signal(s["id"], {"enabled": False})["enabled"] is False
+    assert cfg.list_active_signals(enabled_only=True) == []
+    assert cfg.delete_active_signal(s["id"]) is True
+
+
+def test_disable_all_active_signals_returns_count(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    cfg.create_active_signal({"name": "a", "filter_json": {}, "scope": {},
+                              "cooldown_seconds": 60, "enabled": True, "notify_discord": True})
+    cfg.create_active_signal({"name": "b", "filter_json": {}, "scope": {},
+                              "cooldown_seconds": 60, "enabled": True, "notify_discord": True})
+    assert cfg.disable_all_active_signals() == 2
+    assert cfg.list_active_signals(enabled_only=True) == []
+
+
+def test_monitor_list_add_remove_dedup(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    cfg.add_monitor("2330")
+    cfg.add_monitor("2330")
+    assert [m["symbol"] for m in cfg.list_monitor()] == ["2330"]
+    assert cfg.remove_monitor("2330") is True
+    assert cfg.list_monitor() == []
