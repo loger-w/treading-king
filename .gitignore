@@ -56,3 +56,6 @@ desktop.ini
 
 # Superpowers brainstorm sessions (visual companion mockups, server state)
 .superpowers/
+
+# 本機儲存(每台機器各一份,不進版控)
+backend/data/
