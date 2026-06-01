@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
     overnight_task = asyncio.create_task(overnight_loop())
     logger.info("overnight loop started")
 
-    # 大漲股排程 — 盤中每 1 分鐘 refresh top_gainers_snapshot
+    # 大漲股排程 — 盤中每 1 分鐘更新 top_gainers 記憶體快取
     top_gainers_task = asyncio.create_task(top_gainers_loop())
 
     logger.info("Startup done — fubon=%s, ws_pool=%s",

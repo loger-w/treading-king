@@ -1,6 +1,5 @@
 """共用:把 config item(只有 symbol)補上 name/market/is_etf(查不到全為 None,best-effort)。"""
 from __future__ import annotations
-from typing import Any
 
 
 def enrich_item(item: dict, market) -> dict:
