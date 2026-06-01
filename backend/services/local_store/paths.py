@@ -43,9 +43,13 @@ def atomic_write_json(path: Path, payload: Any) -> None:
     """寫暫存檔 + os.replace,避免寫到一半壞檔(Windows 同磁區 replace 為原子)。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def read_json(path: Path, default: Any) -> Any:
