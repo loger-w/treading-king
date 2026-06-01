@@ -1,4 +1,4 @@
-"""POST /api/symbols/refresh — 從 TWSE/OTC 公開檔抓全市場 symbol 主表 → upsert supabase.
+"""POST /api/symbols/refresh — 從 TWSE/OTC 公開檔抓全市場 symbol 主表 → 寫入本機 symbols 快取.
 GET  /api/symbols?search=&limit= — 給 Monitor 搜尋框 + 加入自選股用。
 
 主要來源:ISIN 表(全部上市/上櫃股票,不限當日有交易)
@@ -109,7 +109,7 @@ async def refresh_symbols() -> dict:
     by_symbol: dict[str, dict] = {}
 
     # verify=False: TWSE/OTC public 站,cert 缺 Subject Key Identifier extension
-    # (Python 3.13 嚴格驗證 fail)。資料公開、無 secret;Supabase / Fubon API 另一 client
+    # (Python 3.13 嚴格驗證 fail)。資料公開、無 secret;與富邦 API client 分開
     async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
         # ----- 主來源: ISIN 表(全部上市/上櫃股票) -----
         for mode, market in ((2, "TWSE"), (4, "OTC")):

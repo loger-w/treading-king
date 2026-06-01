@@ -1,4 +1,4 @@
-"""訊號歷史寫入器 — 直接 append 到本機 jsonl(取代 supabase_writer 的批次邏輯)。
+"""訊號歷史寫入器 — 直接 append 到本機 jsonl(無批次、即時寫穿)。
 
 保留 start()/shutdown() 以維持 main.py 生命週期介面(本機無需背景 flush,為 no-op)。
 """

@@ -3,7 +3,6 @@
 Use for critical conditions only:
 - WS 連續 5 次重連失敗（circuit open）
 - evaluator_lag > 5s 連續 30s
-- supabase 連線失敗
 - init_realtime 連 3 次失敗
 """
 from __future__ import annotations
