@@ -88,3 +88,40 @@ def test_monitor_list_add_remove_dedup(tmp_path):
     cfg2 = ConfigStore(path)
     cfg2.load()
     assert cfg2.list_monitor() == []  # remove 必須持久化
+
+
+def test_export_then_import_replaces(tmp_path):
+    src = ConfigStore(tmp_path / "a.json")
+    src.load()
+    src.create_group("帶走的")
+    snapshot = src.export_config()
+    assert snapshot["schema_version"] == 1
+    assert snapshot["exported_at"]
+
+    dst = ConfigStore(tmp_path / "b.json")
+    dst.load()
+    dst.create_group("本機舊的")
+    dst.import_config(snapshot)
+    names = [g["name"] for g in dst.list_groups()]
+    assert "帶走的" in names
+    assert "本機舊的" not in names  # 整包取代
+
+
+def test_import_backs_up_old_file(tmp_path):
+    # 為何重要:誤匯入可從備份救回
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
+    cfg.load()
+    cfg.create_group("舊")
+    cfg.import_config({"schema_version": 1, "bookmark_groups": [], "watchlist_items": [],
+                       "active_signals": [], "monitor_list": []})
+    backups = list(tmp_path.glob("config.backup-*.json"))
+    assert len(backups) == 1
+
+
+def test_import_rejects_bad_schema(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    import pytest
+    with pytest.raises(ValueError):
+        cfg.import_config({"schema_version": 999})

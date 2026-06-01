@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -206,3 +207,28 @@ class ConfigStore:
             self._persist()
             return True
         return False
+
+    # ---- export / import ----
+    def export_config(self) -> dict:
+        snap = {k: self._data[k] for k in
+                ("schema_version", "bookmark_groups", "watchlist_items",
+                 "active_signals", "monitor_list")}
+        snap["schema_version"] = SCHEMA_VERSION
+        snap["exported_at"] = _now_iso()
+        return snap
+
+    def import_config(self, data: dict) -> None:
+        if data.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(f"unsupported schema_version: {data.get('schema_version')}")
+        # 備份現有檔(誤匯入可從備份救回)
+        if self._path.exists():
+            n = 1
+            while (bak := self._path.with_name(f"config.backup-{n}.json")).exists():
+                n += 1
+            shutil.copy2(self._path, bak)
+        new = _empty_config()
+        for k in ("bookmark_groups", "watchlist_items", "active_signals", "monitor_list"):
+            new[k] = data.get(k, [])
+        self._data = new
+        self._seed_defaults()  # 匯入空設定也要有「自選」
+        self._persist()
