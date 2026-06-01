@@ -18,12 +18,14 @@ class MarketCache:
         self._daily_ohlc_path = Path(daily_ohlc_path)
         self._symbols: list[dict] = []
         self._symbol_set: set[str] = set()
+        self._symbol_index: dict[str, dict] = {}   # symbol -> row(O(1) 查單筆 metadata)
         self._daily_ohlc: dict[str, dict] = {}   # symbol -> 最新一筆
         self._top_gainers: list[dict] = []
 
     def load(self) -> None:
         self._symbols = read_json(self._symbols_path, []) or []
         self._symbol_set = {s["symbol"] for s in self._symbols}
+        self._symbol_index = {s["symbol"]: s for s in self._symbols}
         self._daily_ohlc = read_json(self._daily_ohlc_path, {}) or {}
 
     # ---- symbols ----
@@ -34,10 +36,19 @@ class MarketCache:
     def has_symbol(self, symbol: str) -> bool:
         return symbol in self._symbol_set
 
+    def get_symbol(self, symbol: str) -> dict | None:
+        """精確查單筆 metadata;不存在回 None。給 route 補 item 的 name/market/is_etf。"""
+        r = self._symbol_index.get(symbol)
+        if r is None:
+            return None
+        return {"symbol": r["symbol"], "name": r["name"],
+                "market": r["market"], "is_etf": r.get("is_etf", False)}
+
     def replace_symbols(self, rows: list[dict]) -> None:
         """全量取代 symbols 清單並持久化到檔案。"""
         self._symbols = rows
         self._symbol_set = {s["symbol"] for s in rows}
+        self._symbol_index = {s["symbol"]: s for s in rows}
         atomic_write_json(self._symbols_path, rows)
 
     def search(self, search: str, limit: int) -> list[dict]:

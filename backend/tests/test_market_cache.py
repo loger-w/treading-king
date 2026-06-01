@@ -30,6 +30,14 @@ def test_daily_ohlc_upsert_keeps_latest(tmp_path):
     assert mc.get_latest_daily_ohlc("9999") is None
 
 
+def test_get_symbol_returns_metadata_or_none(tmp_path):
+    mc = MarketCache(tmp_path / "symbols.json", tmp_path / "daily_ohlc.json")
+    mc.load()
+    mc.replace_symbols([{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
+    assert mc.get_symbol("2330") == {"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False}
+    assert mc.get_symbol("9999") is None
+
+
 def test_top_gainers_in_memory(tmp_path):
     mc = MarketCache(tmp_path / "symbols.json", tmp_path / "daily_ohlc.json")
     mc.load()
