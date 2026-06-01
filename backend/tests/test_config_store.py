@@ -47,16 +47,22 @@ def test_add_item_dedup_and_counts(tmp_path):
 
 
 def test_active_signal_crud(tmp_path):
-    cfg = ConfigStore(tmp_path / "config.json")
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
     cfg.load()
     s = cfg.create_active_signal({
         "name": "突破", "filter_json": {"op": ">"}, "scope": {"type": "watchlist"},
         "cooldown_seconds": 1800, "enabled": True, "notify_discord": True,
     })
     assert s["id"] and s["created_at"]
-    assert cfg.update_active_signal(s["id"], {"enabled": False})["enabled"] is False
+    cfg.update_active_signal(s["id"], {"enabled": False})
+    assert cfg.get_active_signal(s["id"])["enabled"] is False  # 覆蓋 get + 確認 update
     assert cfg.list_active_signals(enabled_only=True) == []
     assert cfg.delete_active_signal(s["id"]) is True
+    # round-trip:刪除必須持久化
+    cfg2 = ConfigStore(path)
+    cfg2.load()
+    assert cfg2.get_active_signal(s["id"]) is None
 
 
 def test_disable_all_active_signals_returns_count(tmp_path):
@@ -68,13 +74,17 @@ def test_disable_all_active_signals_returns_count(tmp_path):
                               "cooldown_seconds": 60, "enabled": True, "notify_discord": True})
     assert cfg.disable_all_active_signals() == 2
     assert cfg.list_active_signals(enabled_only=True) == []
+    assert cfg.disable_all_active_signals() == 0  # 全已停用 → 0
 
 
 def test_monitor_list_add_remove_dedup(tmp_path):
-    cfg = ConfigStore(tmp_path / "config.json")
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
     cfg.load()
     cfg.add_monitor("2330")
     cfg.add_monitor("2330")
     assert [m["symbol"] for m in cfg.list_monitor()] == ["2330"]
     assert cfg.remove_monitor("2330") is True
-    assert cfg.list_monitor() == []
+    cfg2 = ConfigStore(path)
+    cfg2.load()
+    assert cfg2.list_monitor() == []  # remove 必須持久化
