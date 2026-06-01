@@ -14,10 +14,10 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from routes._item_enrich import enrich_item
 from services.cdp import get_cdp_service
 from services.fubon_ws import get_ws_pool
-from services.supabase_client import SupabaseStatus, get_supabase
-from services.user_context import get_user_label
+from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -29,71 +29,30 @@ class MonitorListAdd(BaseModel):
     symbol: str = Field(min_length=1, max_length=20)
 
 
-def _ensure_supabase():
-    sb = get_supabase()
-    if sb.status != SupabaseStatus.OK or sb.client is None:
-        raise HTTPException(503, detail={"error": "supabase_unavailable"})
-    return sb
-
-
 @router.get("/api/monitor_list")
 async def list_monitor() -> dict:
-    sb = _ensure_supabase()
-    res = await asyncio.to_thread(
-        lambda: sb.client.table("monitor_list")
-        .select("symbol, added_at, symbols(name, market, is_etf)")
-        .eq("user_label", get_user_label())
-        .order("added_at", desc=True)
-        .execute()
-    )
-    rows = res.data or []
-    out = []
-    for r in rows:
-        meta = r.get("symbols") or {}
-        out.append({
-            "symbol": r["symbol"],
-            "added_at": r.get("added_at"),
-            "name": meta.get("name"),
-            "market": meta.get("market"),
-            "is_etf": meta.get("is_etf"),
-        })
+    store = get_local_store()
+    items = store.config.list_monitor()
+    out = [enrich_item(m, store.market) for m in items]
     return {"items": out, "count": len(out)}
 
 
 @router.post("/api/monitor_list", status_code=201)
 async def add_monitor(payload: MonitorListAdd) -> dict:
-    sb = _ensure_supabase()
-    label = get_user_label()
+    store = get_local_store()
 
-    # symbol 必須存在 symbols 表
-    sym_res = await asyncio.to_thread(
-        lambda: sb.client.table("symbols").select("symbol")
-        .eq("symbol", payload.symbol).limit(1).execute()
-    )
-    if not (sym_res.data or []):
+    # symbol 必須存在於本機 market cache(若尚未載入則跳過,讓資料稍後同步)
+    if store.market.symbols_loaded() and not store.market.has_symbol(payload.symbol):
         raise HTTPException(404, detail={"error": "symbol_not_found"})
 
-    # 先試 ws subscribe;失敗就不寫 DB,避免狀態不一致
+    # 先試 ws subscribe;失敗就不寫 store,避免狀態不一致
     try:
         await get_ws_pool().subscribe(payload.symbol, owner_id=OWNER_ID)
     except RuntimeError as e:
         raise HTTPException(503, detail={"error": "ws_capacity_full", "detail": str(e)})
 
-    # 寫 DB
-    try:
-        await asyncio.to_thread(
-            lambda: sb.client.table("monitor_list").insert({
-                "user_label": label,
-                "symbol": payload.symbol,
-            }).execute()
-        )
-    except Exception as e:
-        # 寫失敗 → rollback ws subscribe
-        try:
-            await get_ws_pool().unsubscribe(payload.symbol, owner_id=OWNER_ID)
-        except Exception:
-            pass
-        raise HTTPException(409, detail={"error": "already_in_monitor_list", "detail": str(e)})
+    # 寫 local store(add_monitor 已是 idempotent)
+    store.config.add_monitor(payload.symbol)
 
     # CDP backfill 背景跑
     asyncio.create_task(get_cdp_service().backfill_from_fubon(payload.symbol))
@@ -110,13 +69,8 @@ async def add_monitor(payload: MonitorListAdd) -> dict:
 
 @router.delete("/api/monitor_list/{symbol}", status_code=204)
 async def remove_monitor(symbol: str) -> None:
-    sb = _ensure_supabase()
-    await asyncio.to_thread(
-        lambda: sb.client.table("monitor_list").delete()
-        .eq("user_label", get_user_label())
-        .eq("symbol", symbol)
-        .execute()
-    )
+    store = get_local_store()
+    store.config.remove_monitor(symbol)
     try:
         await get_ws_pool().unsubscribe(symbol, owner_id=OWNER_ID)
     except Exception as e:
