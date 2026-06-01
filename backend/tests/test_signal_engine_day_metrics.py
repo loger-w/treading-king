@@ -100,7 +100,7 @@ async def test_evaluate_day_change_pct_triggers_signal_above_threshold():
 
     with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 
@@ -125,7 +125,7 @@ async def test_evaluate_day_change_pct_does_not_trigger_below_threshold():
 
     with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 
@@ -151,7 +151,7 @@ async def test_evaluate_day_volume_triggers_when_cumulative_exceeds_threshold():
 
     with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 

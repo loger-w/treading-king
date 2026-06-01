@@ -40,7 +40,7 @@ async def test_fanout_payload_includes_cdp_touch_from_below():
 
     with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         sw = MagicMock()
         mock_sw.return_value = sw
@@ -68,7 +68,7 @@ async def test_touch_index_increments_on_repeat_trigger():
 
     with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 

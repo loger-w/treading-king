@@ -104,7 +104,7 @@ async def test_evaluate_skips_fanout_during_pre_open():
 
     with patch("services.signal_engine.time.time", return_value=_ts(2026, 5, 20, 8, 45)), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 
@@ -134,7 +134,7 @@ async def test_evaluate_blocks_stale_tick_when_wall_clock_in_pre_open():
 
     with patch("services.signal_engine.time.time", return_value=_ts(2026, 5, 20, 8, 45)), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 
@@ -156,7 +156,7 @@ async def test_evaluate_does_not_touch_prev_tick_during_pre_open():
 
     with patch("services.signal_engine.time.time", return_value=_ts(2026, 5, 20, 8, 45)), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = MagicMock()
         mock_sw.return_value = MagicMock()
         await engine._evaluate("2330", pre_open_tick)
@@ -183,7 +183,7 @@ async def test_evaluate_blocks_stale_tick_after_close():
     # wall clock 在盤後 14:30(cooldown 過期後 heartbeat 重評估)
     with patch("services.signal_engine.time.time", return_value=_ts(2026, 5, 20, 14, 30)), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 
@@ -206,7 +206,7 @@ async def test_evaluate_triggers_at_market_open():
 
     with patch("services.signal_engine.time.time", return_value=_ts(2026, 5, 20, 9, 0)), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
-         patch("services.supabase_writer.get_supabase_writer") as mock_sw:
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
         mock_bc.return_value.broadcast = fake_broadcast
         mock_sw.return_value = MagicMock()
 
