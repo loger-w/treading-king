@@ -110,11 +110,33 @@ export interface MAProximity {
   tolerance_ticks: number;
 }
 
+export type CdpLevel = "ah" | "nh" | "cdp" | "nl" | "al";
+
+export interface LimitUpOpenTouchStrategy {
+  type: "limit_up_open_touch";
+  lock_seconds: number;
+  levels: CdpLevel[];
+  tolerance_ticks: number;
+}
+
+export interface BreakoutRetestStrategy {
+  type: "breakout_retest";
+  early_window_minutes: number;
+  surge_pct: number;
+  surge_window_seconds: WindowSeconds;
+  retest_within_minutes: number;
+  levels: CdpLevel[];
+  tolerance_ticks: number;
+}
+
+export type StrategyConfig = LimitUpOpenTouchStrategy | BreakoutRetestStrategy;
+
 export interface ActiveFilter extends Filter {
   // schema_version 已從 Filter inherit,不重複宣告
   window_conditions?: WindowCondition[];
   cdp_proximity?: CdpProximity | null;
   ma_proximity?: MAProximity | null;
+  strategy?: StrategyConfig | null;
 }
 
 export type Scope =
