@@ -4,7 +4,8 @@ import type { IntradayCandle, CdpLevels, MaLevels } from "../../frontend/src/lib
 async function get<T>(path: string): Promise<T> {
   const headers: Record<string, string> = {};
   if (config.bffApiKey) headers["X-API-Key"] = config.bffApiKey;
-  const res = await fetch(`${config.backendBaseUrl}${path}`, { headers });
+  // 後端/富邦 hang 時不要無限等;逾時丟錯,由上層 catch 成「查詢失敗」(spec §8 不靜默)
+  const res = await fetch(`${config.backendBaseUrl}${path}`, { headers, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }

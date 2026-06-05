@@ -1,6 +1,7 @@
 import { EmbedBuilder, AttachmentBuilder } from "discord.js";
 import type { QuoteResp } from "./data";
 import type { CdpLevels, MaLevels } from "../../frontend/src/lib/api";
+import { formatTickPrice, roundToNearestTick } from "../../frontend/src/lib/tick";
 
 type Lvl = { price: number; size: number };
 
@@ -39,7 +40,9 @@ export function buildReply(args: {
   const cdp = args.cdp
     ? `AH ${args.cdp.ah} ／ NH ${args.cdp.nh} ／ CDP ${args.cdp.cdp} ／ NL ${args.cdp.nl} ／ AL ${args.cdp.al}`
     : "—";
-  const ma = args.ma ? `MA5 ${args.ma.sma_5 ?? "—"} ／ MA20 ${args.ma.sma_20 ?? "—"}` : "—";
+  // MA 對齊台股 tick,跟圖上 MA 標籤一致(後端回的是原始 SMA,非 tick 值)
+  const fmtMa = (v: number | null) => (v == null ? "—" : formatTickPrice(roundToNearestTick(v)));
+  const ma = args.ma ? `MA5 ${fmtMa(args.ma.sma_5)} ／ MA20 ${fmtMa(args.ma.sma_20)}` : "—";
 
   const embed = new EmbedBuilder()
     .setColor(color)
