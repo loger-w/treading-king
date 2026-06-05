@@ -82,6 +82,16 @@ async def lifespan(app: FastAPI):
     # 大漲股排程 — 盤中每 1 分鐘更新 top_gainers 記憶體快取
     top_gainers_task = asyncio.create_task(top_gainers_loop())
 
+    # 群益下單(可選,未設定或失敗都不影響富邦)
+    try:
+        from services.capital_factory import get_capital
+        capital = get_capital()
+        if capital is not None:
+            capital.start(asyncio.get_running_loop())
+            logger.info("Capital client started (env=%s)", os.getenv("CAPITAL_ENV", "test"))
+    except Exception as e:  # noqa: BLE001
+        logger.error("Capital startup skipped: %s", e)
+
     logger.info("Startup done — fubon=%s, ws_pool=%s",
                 fubon.status.value, pool.status.value)
     yield
