@@ -39,10 +39,10 @@ def test_ma_proximity_rejects_invalid_level():
         MAProximityCondition(levels=["sma_60"])  # type: ignore
 
 
-def test_active_filter_schema_bumps_to_4():
+def test_active_filter_schema_bumps_to_5():
     from models.condition import ActiveFilter
     f = ActiveFilter(conditions=[Condition(field="close", operator="gt", value=100)])
-    assert f.schema_version == 4
+    assert f.schema_version == 5  # 4→5:加 strategy discriminated union
     assert f.ma_proximity is None
 
 
