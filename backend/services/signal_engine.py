@@ -207,6 +207,7 @@ class SignalEngine:
             # heartbeat path 拿到收盤 stale tick 時也能正確擋下。
             return
 
+        now = time.time()
         # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染
         self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
@@ -216,23 +217,26 @@ class SignalEngine:
                 if not self._scope_includes(active, symbol):
                     continue
 
-                cdp_touch, ma_touch = self._eval_with_touch_meta(active, symbol, tick, prev)
-                non_prox_ok = self._eval_non_proximity(active, symbol, tick)
-
-                # 邏輯結合(AND/OR)— 任一觸發機制成立才往下走
-                ok = self._combine_results(active, cdp_touch, ma_touch, non_prox_ok)
+                strat = self._strategy_of(active)
+                if strat is not None:
+                    cdp_touch = self._eval_strategy(strat, active, symbol, tick, prev, now)
+                    ma_touch = None
+                    ok = cdp_touch is not None
+                else:
+                    cdp_touch, ma_touch = self._eval_with_touch_meta(active, symbol, tick, prev)
+                    non_prox_ok = self._eval_non_proximity(active, symbol, tick)
+                    ok = self._combine_results(active, cdp_touch, ma_touch, non_prox_ok)
                 if not ok:
                     continue
 
                 # cooldown 檢查
                 key = (active.id, symbol)
-                now = time.time()
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
                     continue
                 self._cooldown[key] = now
 
-                # touch_count(僅 proximity 觸發才計次)
+                # touch_count(proximity / strategy 觸發才計次)
                 today = date.today()
                 if cdp_touch is not None:
                     count_key = (symbol, cdp_touch["level"], today)
@@ -247,6 +251,21 @@ class SignalEngine:
         finally:
             # 用 finally 保證每次 evaluate 都更新 prev,避免下次方向算錯
             self._prev_tick[symbol] = tick
+
+    def _strategy_of(self, active: ActiveSignalOut) -> dict | None:
+        """取 filter 的 strategy,一律回 dict(evaluator 不必處理 model/dict 二態)。"""
+        f = active.filter_json
+        s = f.get("strategy") if isinstance(f, dict) else getattr(f, "strategy", None)
+        if s is None:
+            return None
+        return s if isinstance(s, dict) else s.model_dump()
+
+    def _eval_strategy(
+        self, strat: dict, active: ActiveSignalOut, symbol: str, tick: Tick,
+        prev: Tick | None, now: float,
+    ) -> dict | None:
+        """依 strategy.type 跑專用 evaluator,回 cdp_touch dict 或 None。"""
+        return None  # Task 4 / 5 填內容
 
     def _eval_with_touch_meta(
         self, active: ActiveSignalOut, symbol: str, tick: Tick, prev: Tick | None,
