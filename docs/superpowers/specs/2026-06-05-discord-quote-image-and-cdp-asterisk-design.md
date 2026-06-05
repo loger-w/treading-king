@@ -1,18 +1,19 @@
-# Discord Bot 五檔改圖 + CDP 全標米字號 — 設計文件
+# Discord Bot 五檔改圖 + CDP 全標米字號 + 圖片 feed 放大可讀 — 設計文件
 
 **日期**:2026-06-05
 **範圍**:Discord bot 回覆(`bot/`)+ 共用畫圖層(`frontend/src/lib/`)
 **狀態**:設計完成,brainstorm 決策已由 user 拍板
-**修訂**:本案修訂 [discord-bot-tweaks design](./2026-06-05-discord-bot-tweaks-design.md) 的決策 #2(CDP `*`)與 #3(五檔呈現)—— 兩者都是 user 看了實作效果後的調整
+**修訂**:本案修訂 [discord-bot-tweaks design](./2026-06-05-discord-bot-tweaks-design.md) 的決策 #2(CDP `*`)與 #3(五檔呈現)—— 都是 user 看了實作效果後的調整
 
 ---
 
 ## 1. 目的
 
-針對 `p代號` 查詢 bot 的回覆做兩項修訂:
+針對 `p代號` 查詢 bot 的回覆做三項修訂:
 
 1. **五檔**:從「左右掛單文字」改成獨立的視覺化圖片(照網頁 `QuoteBook` 樣式)。
 2. **CDP 米字號 `*`**:從「只標中央樞紐那條」改成「5 條 CDP 全標」。
+3. **圖片 feed 可讀性**:讓分時圖 + 五檔圖在 Discord feed 裡**免點擊**就看清(手機 / 電腦),靠橫版比例 + 加大字級 / 降密度。
 
 ---
 
@@ -23,6 +24,7 @@
 | 1 | 五檔呈現 | 改成獨立第二張 PNG(照 `QuoteBook` 視覺),文字五檔移除 | bot-tweaks #3(原:左右掛單文字) |
 | 2 | 兩張圖擺法 | **單 embed**(分時圖 + 文字欄)+ 五檔圖當**額外附件**掛 embed 下方 | 新 |
 | 3 | CDP `*` | 5 條(AH/NH/CDP/NL/AL)**全加** `*`,不再區分中央樞紐 | bot-tweaks #2(原:只標中央) |
+| 4 | 圖片可讀性 | 兩張圖**都**調成 feed 友善(landscape + 大字 + 疏朗);維持 2x 解析度 | 新 |
 
 ---
 
@@ -42,7 +44,7 @@ bot 產圖用;網頁 `QuoteBook.tsx` 維持 Tailwind 版**不動**。
   - 委買總量(紅、左大字)/ 委賣總量(綠、右大字)= 五檔 `size` 加總。
   - 左欄 5 檔買(價紅、量條由右往左)/ 右欄 5 檔賣(價綠、量條由左往右);量條 width 用兩側共用 `maxQty` normalize。
   - `price === 0`(鎖漲跌停的市價單)顯示「市價」;不足 5 檔補「—」。
-- 畫布:寬 ~600、高依內容(抬頭 + 總量列 + 5 檔列)~280;實作時微調定值。
+- 畫布:**landscape 橫版**(寬 > 高,~720×300、約 2.4:1);字級放大、版面疏朗,目標 feed 縮到 ~450px 寬時仍可讀(見 §3.3)。實作時微調定值 + 視覺驗證。
 
 #### 3.1.2 產圖整合 `bot/src/render.ts`
 
@@ -103,6 +105,34 @@ bot 產圖用;網頁 `QuoteBook.tsx` 維持 Tailwind 版**不動**。
 
 此圖層**網頁分時圖也用** → 網頁的 CDP 5 條 label 也會全帶 `*`。user 已接受(不再區分樞紐)。若日後要 bot-only,再加 prop 隔開。
 
+### 3.3 功能 3 — 圖片在 Discord feed 放大可讀
+
+#### 3.3.1 限制(誠實寫明,管理期望)
+
+- Discord 把圖縮到聊天欄寬顯示:桌面約 **400–520px**(embed image 上限更窄 ~400px),手機 fit 螢幕寬(通常比桌面大)。**這是硬上限,圖在 feed 無法更寬。**
+- **提高解析度(像素)不會讓 feed 顯示變大**,只讓「點開後」更清楚。現已 2x,維持即可。
+- 「免點擊就看清」靠的是**比例 + 密度**,不是解析度。
+
+#### 3.3.2 兩個槓桿
+
+1. **landscape 橫版比例**:寬 > 高的圖,Discord 給足欄寬;窄高 portrait 圖會被限制高度、顯示更小。
+2. **加大字級 / 降密度**:feed 顯示寬 W_feed≈450px,圖內字級 F_img 在 feed 顯示 ≈ F_img × (450 / 圖寬)。要 feed 顯示 ≥ ~11px(可讀),例:圖寬 720 → 圖內字需 ≥ ~18px。**這是設計時的量化目標。**
+
+#### 3.3.3 分時圖 `intraday-chart-svg.tsx`(網頁 + bot 共用)
+
+- 加大字級:現多處 `fontSize: 12`(軸標 / label)、`11`(成交量)在 ~820 寬圖縮到 feed 後僅 ~6–7px。提高到讓 feed 顯示 ≥ ~11px(依最終圖寬回推,約 16–20px)。
+- 降密度:`±2%` 一條的 Y 軸格線(11 條)可改 `±4%`(6 條),減少擁擠;X 軸 6 個整點維持。
+- 比例:必要時微調 `CHART_W` / `CHART_H` 讓整體更橫(landscape)。
+- ⚠️ 共用層副作用:**網頁分時圖字級 / 格線也會跟著變**。網頁是大畫面,字變大影響小;但需在網頁 + bot 兩邊都肉眼確認不破版(見測試)。若衝突過大,改用 `theme` 帶字級係數區隔 bot / web(備案,非首選)。
+
+#### 3.3.4 五檔圖
+
+於 §3.1.1 已定 landscape ~720×300 + 大字疏朗,直接照 §3.3.2 目標設計。
+
+#### 3.3.5 擺法已避開 grid
+
+查到 Discord 對「多張純附件」會排成 grid 並排縮小;本案「分時圖 = embed image + 五檔 = 唯一自由附件」剛好讓兩張各自獨立全寬,不觸發 grid(§2 決策 #2)。
+
 ---
 
 ## 4. 錯誤處理 / 降級(彙整)
@@ -119,16 +149,18 @@ bot 產圖用;網頁 `QuoteBook.tsx` 維持 Tailwind 版**不動**。
 
 | 層 | 檔案 | 重點 |
 |---|---|---|
-| 前端單元 | `intraday-chart-svg.test.ts` | 改:5 條 CDP label **全帶** `*`(原本只斷言中央);snapshot `-u` |
+| 前端單元 | `intraday-chart-svg.test.ts` | 改:5 條 CDP label **全帶** `*`(原本只斷言中央);字級 / 格線密度調整 → snapshot `-u` |
 | 前端單元 | `quote-book-svg.test.ts`(新) | 給 bids/asks → 含委買 / 委賣總量、5 檔價量、`price=0`→「市價」、缺檔補「—」、鎖漲停→badge |
 | bot 單元 | `embed.test.ts` | 改:CDP 欄位含 `AH*` / `NL*` / `AL*`(不只 `CDP*`);移除文字五檔斷言,改斷言 description **不含**五檔 code block;`buildReply` 收 `quotePng` → `files` 含兩張 |
 | bot 單元 | `render.test.ts` | 新:`renderQuotePng(quote)` 不拋、回 `Buffer` |
-| 視覺 | 手動 render 一張五檔 PNG | 確認排版、紅綠、量條、市價、badge |
-| 盤中 | user | 兩張圖在 Discord 的實際堆疊順序符合預期 |
+| 視覺(關鍵) | 手動 render 兩張 PNG | 五檔排版 / 紅綠 / 量條 / 市價 / badge;**且把兩張縮到 ~450px 寬,確認字免點開可讀**(feed 模擬) |
+| 視覺(網頁) | 開網頁分時圖 | 確認字級 / 格線改動沒把網頁圖弄破版 |
+| 盤中 | user | 兩張圖在 Discord(手機 + 電腦)實際 feed 免點開可讀、堆疊順序正確 |
 
 測試 why(對齊 CLAUDE.md Rule 9):
 - CDP 測試 encode「user 要五條都標米字號」—— 業務語意改了測試才會動。
 - 五檔圖測試 encode「市價 / 缺檔 / 鎖漲停的降級顯示意圖」。
+- feed 模擬驗證 encode「圖的目的是免點開可讀」—— 純單元測試測不到視覺尺寸,故列為手動關卡。
 
 ---
 
@@ -138,3 +170,4 @@ bot 產圖用;網頁 `QuoteBook.tsx` 維持 Tailwind 版**不動**。
 - 訊號推播附五檔圖(屬 bot-tweaks 第二階段)。
 - 五檔圖即時刷新(bot 是查詢當下 snapshot,跟現況一致)。
 - 改動五檔 / CDP 的**資料來源**(`/api/quote`、`/api/cdp` 後端不動;bot 不直接碰富邦 SDK)。
+- **突破 Discord feed 欄寬上限**(技術不可能;本案只在上限內最佳化可讀性)。
