@@ -55,27 +55,33 @@ describe("loadSlow — orchestration 降級(review #5)", () => {
   });
 });
 
-describe("composeReply — 組裝降級(review #5)", () => {
+describe("composeReply — 組裝降級(五檔改圖)", () => {
   const slowOk = {
     empty: false as const, name: "台積電", cdp: CDP, ma: MA, png: Buffer.from([0x89]) as Buffer | null,
     lastClose: 102, change: 2, changePct: 2, open: 100, high: 103, low: 99, vwap: 101, volume: 4000, asOf: "13:30",
   };
+  const quotePng = Buffer.from([0x89, 0x51]);
 
-  it("產圖失敗(png=null)→ 回含五檔/現價的 embed、不附圖", () => {
-    const r = composeReply("2330", { ...slowOk, png: null }, QUOTE);
-    expect(r.files).toHaveLength(0);
-    expect((r.embeds![0] as { data: { description?: string } }).data.description).toContain("買盤");
+  it("分時圖 + 五檔圖都在 → files 兩張", () => {
+    const r = composeReply("2330", slowOk, QUOTE, quotePng);
+    expect(r.files).toHaveLength(2);
+  });
+
+  it("分時圖失敗(png=null)→ 只附五檔圖、描述不再含文字五檔", () => {
+    const r = composeReply("2330", { ...slowOk, png: null }, QUOTE, quotePng);
+    expect(r.files).toHaveLength(1);
+    expect((r.embeds![0] as { data: { description?: string } }).data.description).not.toContain("買盤");
   });
 
   it("空盤前(empty)→ 回純文字 content(含 CDP/MA5)、不附圖", () => {
-    const r = composeReply("2330", { empty: true as const, cdp: CDP, ma: MA, name: "台積電", prevClose: 100 }, null);
+    const r = composeReply("2330", { empty: true as const, cdp: CDP, ma: MA, name: "台積電", prevClose: 100 }, null, null);
     expect(r.content).toContain("無分時資料");
     expect(r.content).toContain("MA5");
     expect(r.files ?? []).toHaveLength(0);
   });
 
-  it("五檔失敗(quote=null)→ 仍回含圖的 embed", () => {
-    const r = composeReply("2330", slowOk, null);
+  it("五檔抓不到(quote=null, quotePng=null)→ 仍回含分時圖的 embed", () => {
+    const r = composeReply("2330", slowOk, null, null);
     expect(r.files).toHaveLength(1);
   });
 });

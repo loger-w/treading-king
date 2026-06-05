@@ -61,7 +61,7 @@ export type SlowResult = Awaited<ReturnType<typeof loadSlow>>;
 
 // 把 slow 結果 + 即時五檔組成 discord 回覆:空盤前 → 純文字(仍給 CDP/MA5);否則 → buildReply。
 // 純函式,好測;降級判斷(png=null / quote=null)交給 buildReply。
-export function composeReply(symbol: string, s: SlowResult, quote: QuoteResp | null): MessageReplyOptions {
+export function composeReply(symbol: string, s: SlowResult, quote: QuoteResp | null, quotePng: Buffer | null): MessageReplyOptions {
   if (s.empty) {
     return {
       content:
@@ -74,6 +74,6 @@ export function composeReply(symbol: string, s: SlowResult, quote: QuoteResp | n
     lastClose: s.lastClose, change: s.change, changePct: s.changePct,
     open: s.open, high: s.high, low: s.low,
     vwap: s.vwap, volume: s.volume,
-    cdp: s.cdp, ma: s.ma, quote, png: s.png, asOf: s.asOf,
+    cdp: s.cdp, ma: s.ma, quote, png: s.png, quotePng, asOf: s.asOf,
   });
 }
