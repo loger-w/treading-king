@@ -26,6 +26,7 @@ const COL_W = LEFT_R - PAD;         // 324 單欄寬(量條 normalize 用)
 const ROWS_TOP = 104;
 const ROW_H = 36;
 const BAR_H = 24;
+// 容量核查:ROWS_TOP + 5*ROW_H = 284 ≤ QUOTE_H(300);改上面常數時別讓五檔區超出畫布
 
 export function QuoteBookSvg(input: QuoteBookSvgInput) {
   const t = input.theme ?? INTRADAY_THEME;
@@ -87,7 +88,7 @@ export function QuoteBookSvg(input: QuoteBookSvgInput) {
         // 買量條:靠中線(LEFT_R)往左長
         bidW > 0 && createElement("rect", {
           x: LEFT_R - bidW, y: barY, width: bidW, height: BAR_H,
-          fill: t.bull, fillOpacity: 0.15,
+          fill: t.bull, fillOpacity: "0.15",
         }),
         // 買量(左)/ 買價(靠中,紅)
         createElement("text", { x: PAD, y: textY, fontSize: 18, fill: t.inkMuted, fontFamily: t.fontFamily, style: num }, qtyCell(bid)),
@@ -95,7 +96,7 @@ export function QuoteBookSvg(input: QuoteBookSvgInput) {
         // 賣量條:靠中線(RIGHT_L)往右長
         askW > 0 && createElement("rect", {
           x: RIGHT_L, y: barY, width: askW, height: BAR_H,
-          fill: t.bear, fillOpacity: 0.15,
+          fill: t.bear, fillOpacity: "0.15",
         }),
         // 賣價(靠中,綠)/ 賣量(右)
         createElement("text", { x: RIGHT_L, y: textY, fontSize: 18, fill: t.bear, fontFamily: t.fontFamily, style: { ...num, fontWeight: 500 } }, priceCell(ask)),

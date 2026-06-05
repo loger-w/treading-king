@@ -39,4 +39,12 @@ describe("QuoteBookSvg", () => {
     });
     expect(svg).toContain("鎖漲停");
   });
+
+  it("鎖跌停 → 顯示 badge", () => {
+    const svg = render({
+      ...base, isLimitDown: true,
+      bids: [{ price: 384, size: 5 }], asks: [{ price: 385, size: 13 }],
+    });
+    expect(svg).toContain("鎖跌停");
+  });
 });
