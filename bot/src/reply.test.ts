@@ -40,6 +40,19 @@ describe("loadSlow — orchestration 降級(review #5)", () => {
     expect(s.empty).toBe(true);
     if (s.empty) { expect(s.cdp).toEqual(CDP); expect(s.ma).toEqual(MA); }
   });
+
+  it("推播分時圖不畫 MA 線:render 收到 flags.ma===false(均線改由 embed 文字呈現)", async () => {
+    const seenFlags: { ma: boolean; vwap: boolean; cdp: boolean; volume: boolean }[] = [];
+    await loadSlow("2330", {
+      ...okDeps,
+      render: (input) => { seenFlags.push(input.flags); return Buffer.from([0x89]); },
+    });
+    expect(seenFlags).toHaveLength(1);
+    expect(seenFlags[0].ma).toBe(false);    // MA5/MA20 兩條線不畫進圖
+    expect(seenFlags[0].vwap).toBe(true);   // 其餘圖層不動,確認只關了 MA
+    expect(seenFlags[0].cdp).toBe(true);
+    expect(seenFlags[0].volume).toBe(true);
+  });
 });
 
 describe("composeReply — 組裝降級(review #5)", () => {
@@ -51,7 +64,7 @@ describe("composeReply — 組裝降級(review #5)", () => {
   it("產圖失敗(png=null)→ 回含五檔/現價的 embed、不附圖", () => {
     const r = composeReply("2330", { ...slowOk, png: null }, QUOTE);
     expect(r.files).toHaveLength(0);
-    expect((r.embeds![0] as { data: { description?: string } }).data.description).toContain("買1");
+    expect((r.embeds![0] as { data: { description?: string } }).data.description).toContain("買盤");
   });
 
   it("空盤前(empty)→ 回純文字 content(含 CDP/MA5)、不附圖", () => {

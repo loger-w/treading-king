@@ -24,7 +24,8 @@ export async function loadSlow(symbol: string, deps: ReplyDeps = realDeps) {
     deps.getMa(symbol).catch(() => null),
     deps.getName(symbol),
   ]);
-  const flags = { vwap: true, cdp: true, camarilla: false, volume: true, ma: true };
+  // bot 推播的分時圖不畫 MA5/MA20 兩條水平線;embed 的「均線」欄位仍保留(走 s.ma,不吃 flags)
+  const flags = { vwap: true, cdp: true, camarilla: false, volume: true, ma: false };
   const intraday = candlesR.data.filter((c) => {
     const m = minuteOfDay(c.date);
     return m >= MARKET_OPEN_MIN && m <= MARKET_CLOSE_MIN;

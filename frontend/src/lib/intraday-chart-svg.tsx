@@ -181,7 +181,8 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
     for (const k of visibleCdpKeys) {
       labelInputs.push({
         originalY: scaleY(cdp[k]),
-        text: formatTickPrice(cdp[k]),
+        // 中央 CDP 樞紐價標 *,在 5 條同色 CDP 線裡標出真正的樞紐
+        text: k === "cdp" ? `${formatTickPrice(cdp[k])}*` : formatTickPrice(cdp[k]),
         color: theme.accent,
       });
     }

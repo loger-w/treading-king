@@ -5,17 +5,20 @@ import type { QuoteResp } from "./data";
 
 const lvl = (price: number, size: number) => ({ price, size });
 
-describe("formatLadder", () => {
-  it("賣5→買5 排列、量單位張、不足補 —、price=0 顯示市價", () => {
+describe("formatLadder — 左右掛單(買左/賣右,最佳價在最上)", () => {
+  it("表頭買賣盤、首列含買1/賣1、│ 分隔、price=0 顯示市價、缺檔補 —", () => {
     const out = formatLadder(
       [lvl(634.5, 340), lvl(635.0, 210), lvl(635.5, 88)],  // bids: 買1..買3
       [lvl(636.0, 120), lvl(0, 0)],                          // asks: 賣1..賣2(賣2 鎖停=市價)
     );
     const lines = out.split("\n");
-    expect(lines[0]).toContain("賣5"); expect(lines[0]).toContain("—");      // 賣5 缺檔
-    expect(lines.some((l) => l.includes("市價"))).toBe(true);                 // 賣2 price=0 → 市價
-    expect(lines.some((l) => l.includes("買1") && l.includes("634.50") && l.includes("340"))).toBe(true);
-    expect(lines.some((l) => l.startsWith("───"))).toBe(true);
+    expect(lines[0]).toContain("買盤"); expect(lines[0]).toContain("賣盤");    // 表頭
+    // 首列:最佳買(買1 634.50/340)在左、最佳賣(賣1 636.00)在右、│ 分隔
+    expect(lines[1]).toContain("634.50"); expect(lines[1]).toContain("340");
+    expect(lines[1]).toContain("636.00"); expect(lines[1]).toContain("│");
+    expect(out).toContain("市價");        // 賣2 price=0 → 市價
+    expect(out).toContain("—");           // 缺檔(買4/買5、賣3..賣5)補 —
+    expect(lines).toHaveLength(6);        // 1 表頭 + 5 列
   });
 
   it("sumSize 加總五檔量", () => {
@@ -47,10 +50,12 @@ describe("buildReply — 降級 fallback(review #1 / spec §8 不讓整則炸)",
     const embed = r.embeds[0];
     expect(embed.data.image).toBeUndefined();            // embed 不設圖
     expect(embed.data.description).toContain("600.00");  // 現價還在
-    expect(embed.data.description).toContain("買1");      // 五檔還在
+    expect(embed.data.description).toContain("買盤");     // 五檔還在(左右掛單)
     const fieldNames = (embed.data.fields ?? []).map((f) => f.name);
     expect(fieldNames).toContain("CDP");                 // CDP 還在
     expect(fieldNames).toContain("均線");                 // MA 還在
+    const cdpField = (embed.data.fields ?? []).find((f) => f.name === "CDP");
+    expect(cdpField?.value).toContain("CDP*");           // 中樞標 *(功能 2)
   });
 
   it("五檔失敗(quote=null)仍回含圖/現價/CDP/MA 的 embed、五檔區降級且不丟例外", () => {

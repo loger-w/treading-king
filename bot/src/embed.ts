@@ -10,15 +10,15 @@ type Lvl = { price: number; size: number };
 const cell = (p: number) => (p === 0 ? "市價".padStart(5) : p.toFixed(2).padStart(7));
 const qty = (s: number) => (s > 0 ? String(s).padStart(6) : "—".padStart(6));
 
-// 建構五檔階梯文字(賣5→賣1 / 分隔線 / 買1→買5)
-// 不足 5 檔時補 "—";price=0(鎖漲跌停)顯示 "市價"
+// 單側一格:價 + 量,等寬右對齊;缺檔補 "—"
+const side = (lv: Lvl | undefined) =>
+  lv ? `${cell(lv.price)} ${qty(lv.size)}` : `${"—".padStart(7)} ${"—".padStart(6)}`;
+
+// 五檔左右掛單:買盤在左、賣盤在右,最佳價(買1/賣1)在最上、往下到第 5 檔。
+// 兩側數字欄等寬右對齊,在 code block 裡上下對齊;不足 5 檔補 "—"。
 export function formatLadder(bids: Lvl[], asks: Lvl[]): string {
-  const row = (label: string, lv: Lvl | undefined) =>
-    lv ? `${label} ${cell(lv.price)} ${qty(lv.size)}` : `${label} ${"—".padStart(7)} ${"—".padStart(6)}`;
-  const lines: string[] = [];
-  for (let i = 4; i >= 0; i--) lines.push(row(`賣${i + 1}`, asks[i]));
-  lines.push("───────────────");
-  for (let i = 0; i < 5; i++) lines.push(row(`買${i + 1}`, bids[i]));
+  const lines: string[] = ["    買盤         賣盤"];
+  for (let i = 0; i < 5; i++) lines.push(`${side(bids[i])} │ ${side(asks[i])}`);
   return lines.join("\n");
 }
 
@@ -39,7 +39,7 @@ export function buildReply(args: {
     : args.quote && (args.quote.is_limit_down_bid || args.quote.is_limit_down_ask) ? "　🔻鎖跌停" : "";
   const arrow = up ? "▲" : args.change < 0 ? "▾" : "—";
   const cdp = args.cdp
-    ? `AH ${args.cdp.ah} ／ NH ${args.cdp.nh} ／ CDP ${args.cdp.cdp} ／ NL ${args.cdp.nl} ／ AL ${args.cdp.al}`
+    ? `AH ${args.cdp.ah} ／ NH ${args.cdp.nh} ／ CDP* ${args.cdp.cdp} ／ NL ${args.cdp.nl} ／ AL ${args.cdp.al}`
     : "—";
   // MA 對齊台股 tick,跟圖上 MA 標籤一致(後端回的是原始 SMA,非 tick 值)
   const fmtMa = (v: number | null) => (v == null ? "—" : formatTickPrice(roundToNearestTick(v)));

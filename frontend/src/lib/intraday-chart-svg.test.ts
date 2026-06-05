@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { computeIntradayGeometry, IntradayChartStatic, CHART_W, PAD_L } from "./intraday-chart-svg";
 import type { IntradayCandle } from "./api";
+import { formatTickPrice } from "./tick";
 
 function candle(min: number, close: number): IntradayCandle {
   const hh = String(Math.floor(min / 60)).padStart(2, "0");
@@ -31,6 +32,16 @@ describe("computeIntradayGeometry", () => {
     const cdp = { ah: 200, nh: 105, cdp: 100, nl: 95, al: 1, as_of_date: "2026-06-04" };
     const g = computeIntradayGeometry({ candles, prevClose: 100, cdp, camarilla: null, ma: null, flags: FLAGS });
     expect(g.visibleCdpKeys.sort()).toEqual(["cdp", "nh", "nl"]); // ah(200)/al(1) 出界
+  });
+
+  it("CDP 樞紐 label 帶 *(5 條同色 CDP 線中標出中樞)", () => {
+    const candles = [candle(540, 100)];
+    const cdp = { ah: 108, nh: 104, cdp: 101, nl: 98, al: 95, as_of_date: "2026-06-04" };
+    const g = computeIntradayGeometry({ candles, prevClose: 100, cdp, camarilla: null, ma: null, flags: FLAGS });
+    const cdpLabels = g.resolvedLabels.filter((l) => l.color === "#e85a4f"); // theme.accent
+    const starred = cdpLabels.filter((l) => l.text.endsWith("*"));
+    expect(starred).toHaveLength(1);                           // 只有中樞帶 *
+    expect(starred[0].text).toBe(`${formatTickPrice(101)}*`);  // 中樞價 = cdp.cdp
   });
 
   it("空 candles 不爆,回安全空值", () => {
