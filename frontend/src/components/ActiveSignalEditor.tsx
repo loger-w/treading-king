@@ -1,10 +1,12 @@
 import { useState } from "react";
 import {
-  ALL_FIELDS, api, type ActiveFilter, type ActiveSignal, type CdpProximity,
-  type Condition, type ConditionField, type ConditionOperator,
-  type MAProximity,
+  ALL_FIELDS, api, type ActiveFilter, type ActiveSignal,
+  type BreakoutRetestStrategy, type CdpProximity, type Condition,
+  type ConditionField, type ConditionOperator, type LimitUpOpenTouchStrategy,
+  type MAProximity, type StrategyConfig,
   type WindowCondition, type WindowConditionType, type WindowSeconds,
 } from "../lib/api";
+import { PresetStrategyFields } from "./PresetStrategyFields";
 
 const FIELD_LABEL: Record<ConditionField, string> = {
   close: "即時價",
@@ -41,6 +43,16 @@ const MA_LEVEL_LABEL: Record<typeof ALL_MA_LEVELS[number], string> = {
   sma_5: "MA5", sma_20: "MA20",
 };
 
+const DEFAULT_LIMIT_UP: LimitUpOpenTouchStrategy = {
+  type: "limit_up_open_touch", lock_seconds: 60,
+  levels: [...ALL_CDP_LEVELS], tolerance_ticks: 1,
+};
+const DEFAULT_BREAKOUT: BreakoutRetestStrategy = {
+  type: "breakout_retest", early_window_minutes: 10, surge_pct: 3,
+  surge_window_seconds: 60, retest_within_minutes: 10,
+  levels: [...ALL_CDP_LEVELS], tolerance_ticks: 1,
+};
+
 interface Props {
   initial?: ActiveSignal;
   onClose: () => void;
@@ -52,6 +64,7 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   const [filter, setFilter] = useState<ActiveFilter>(initial?.filter_json ?? {
     conditions: [], window_conditions: [], logic: "AND",
   });
+  const [strategy, setStrategy] = useState<StrategyConfig | null>(initial?.filter_json?.strategy ?? null);
   const [notifyDiscord, setNotifyDiscord] = useState(initial?.notify_discord ?? true);
   const [cooldown, setCooldown] = useState(initial?.cooldown_seconds ?? 1800);
   const [enabled] = useState(initial?.enabled ?? true);
@@ -150,18 +163,24 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
 
   async function save() {
     if (!name.trim()) { setError("請輸入名稱"); return; }
-    if (filter.conditions.length === 0
-        && (filter.window_conditions ?? []).length === 0
-        && !filter.cdp_proximity
-        && !filter.ma_proximity) {
-      setError("至少要有一條條件"); return;
+    let filterToSave: ActiveFilter;
+    if (strategy) {
+      filterToSave = { schema_version: 5, conditions: [], window_conditions: [], logic: "AND", strategy };
+    } else {
+      if (filter.conditions.length === 0
+          && (filter.window_conditions ?? []).length === 0
+          && !filter.cdp_proximity
+          && !filter.ma_proximity) {
+        setError("至少要有一條條件"); return;
+      }
+      filterToSave = filter;
     }
     setSaving(true);
     setError(null);
     try {
       const payload = {
         name: name.trim(),
-        filter_json: filter,
+        filter_json: filterToSave,
         scope: { type: "watchlist" as const },  // legacy; backend ignores
         cooldown_seconds: cooldown,
         enabled,
@@ -188,6 +207,27 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
         <input value={name} onChange={(e) => setName(e.target.value)}
           className="w-full bg-bg-deep border border-line px-3 py-2 mb-5 text-sm text-ink outline-none focus:border-accent" />
 
+        {/* 預設策略 */}
+        <div className="border-t border-line pt-3 mb-4">
+          <div className="label-tiny mb-2">預設策略</div>
+          <select
+            value={strategy?.type ?? "none"}
+            onChange={(e) => {
+              const t = e.target.value;
+              if (t === "limit_up_open_touch") setStrategy({ ...DEFAULT_LIMIT_UP });
+              else if (t === "breakout_retest") setStrategy({ ...DEFAULT_BREAKOUT });
+              else setStrategy(null);
+            }}
+            className="bg-bg-deep border border-line text-sm px-2 py-1 mb-3"
+          >
+            <option value="none">無(自訂條件)</option>
+            <option value="limit_up_open_touch">漲停打開碰 CDP</option>
+            <option value="breakout_retest">順勢爆拉突破回踩</option>
+          </select>
+          {strategy && <PresetStrategyFields value={strategy} onChange={setStrategy} />}
+        </div>
+
+        {!strategy && (<>
         {/* WindowCondition 區塊 */}
         <div className="border-t border-line pt-3 mb-4">
           <div className="label-tiny mb-2">即時時窗條件</div>
@@ -342,13 +382,17 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
           )}
         </div>
 
+        </>)}
+
         {/* Logic / Discord / Cooldown */}
         <div className="border-t border-line pt-3 mb-4 grid grid-cols-2 gap-4">
+          {!strategy && (
           <div>
             <div className="label-tiny mb-1">邏輯</div>
             <label className="text-sm mr-3"><input type="radio" checked={filter.logic === "AND"} onChange={() => setFilter({ ...filter, logic: "AND" })} className="accent-accent mr-1" />AND</label>
             <label className="text-sm"><input type="radio" checked={filter.logic === "OR"} onChange={() => setFilter({ ...filter, logic: "OR" })} className="accent-accent mr-1" />OR</label>
           </div>
+          )}
           <div>
             <div className="label-tiny mb-1">Discord 通知</div>
             <label className="text-sm flex items-center gap-2 cursor-pointer">

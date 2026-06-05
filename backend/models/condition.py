@@ -9,7 +9,7 @@ Filter 的 JSON 形式存在 active_signals.filter_json,前端條件編輯器
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -136,26 +136,63 @@ class MAProximityCondition(BaseModel):
     tolerance_ticks: int = Field(default=0, ge=0, le=10)
 
 
-class ActiveFilter(Filter):
-    """即時訊號專用 Filter — 在 Filter 之上加時窗條件 + CDP/MA 觸發條件。
+CdpLevel = Literal["ah", "nh", "cdp", "nl", "al"]
 
-    跟 Filter 的差異:允許 conditions=[] 當 window_conditions / cdp_proximity / ma_proximity
-    任一非空(即時訊號可單獨用其中任一種觸發機制)。
+
+class LimitUpOpenTouchStrategy(BaseModel):
+    """策略 1:曾鎖死漲停 ≥ lock_seconds → 打開後由上而下碰所選 CDP 線。"""
+
+    type: Literal["limit_up_open_touch"]
+    lock_seconds: int = Field(default=60, ge=5, le=600)
+    levels: list[CdpLevel] = Field(
+        default_factory=lambda: ["ah", "nh", "cdp", "nl", "al"], min_length=1,
+    )
+    tolerance_ticks: int = Field(default=1, ge=0, le=10)
+
+
+class BreakoutRetestStrategy(BaseModel):
+    """策略 2:早盤爆拉由下突破某 CDP 線 → arm → retest_within_minutes 分內回踩同線。"""
+
+    type: Literal["breakout_retest"]
+    early_window_minutes: int = Field(default=10, ge=1, le=60)
+    surge_pct: float = Field(default=3.0, gt=0, le=20)
+    surge_window_seconds: WindowSeconds = 60
+    retest_within_minutes: int = Field(default=10, ge=1, le=120)
+    levels: list[CdpLevel] = Field(
+        default_factory=lambda: ["ah", "nh", "cdp", "nl", "al"], min_length=1,
+    )
+    tolerance_ticks: int = Field(default=1, ge=0, le=10)
+
+
+StrategyConfig = Annotated[
+    LimitUpOpenTouchStrategy | BreakoutRetestStrategy,
+    Field(discriminator="type"),
+]
+
+
+class ActiveFilter(Filter):
+    """即時訊號專用 Filter — 在 Filter 之上加時窗條件 + CDP/MA 觸發 + preset 策略。
+
+    跟 Filter 的差異:允許 conditions=[] 當 window_conditions / cdp_proximity /
+    ma_proximity / strategy 任一非空。
     """
 
-    schema_version: int = 4  # 3→4,加 day_change_pct / day_volume field
+    schema_version: int = 5  # 4→5,加 strategy(preset 策略)
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
     ma_proximity:  MAProximityCondition  | None = None
+    strategy: StrategyConfig | None = None
 
     @model_validator(mode="after")
     def conditions_non_empty(self):
-        # 覆蓋 Filter.conditions_non_empty
+        # 覆蓋 Filter.conditions_non_empty;strategy 存在時由 strategy 定義整條 filter
+        if self.strategy is not None:
+            return self
         if (not self.conditions
                 and not self.window_conditions
                 and self.cdp_proximity is None
                 and self.ma_proximity is None):
-            raise ValueError("至少要有一個 condition / window_condition / cdp_proximity / ma_proximity")
+            raise ValueError("至少要有一個 condition / window_condition / cdp_proximity / ma_proximity / strategy")
         return self
 
 
