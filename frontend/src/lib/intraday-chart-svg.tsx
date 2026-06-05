@@ -308,6 +308,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
               x: PAD_L - 4, y: y + 3, textAnchor: "end",
               fill: isBaseline ? t.ink : t.inkDim,
               fontSize: 12, fontFamily: t.fontFamily,
+              style: { fontVariantNumeric: "tabular-nums" },
             }, formatTickPrice(vTick)),
           );
         }),
@@ -374,6 +375,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       createElement("text", {
         x: CHART_W - PAD_R + 6, y: lbl.y + 3, textAnchor: "start",
         fill: lbl.color, fontSize: 12, fontFamily: t.fontFamily,
+        style: { fontVariantNumeric: "tabular-nums" },
       }, lbl.text),
     )),
 
@@ -409,6 +411,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         textAnchor: "middle",
         fill: priceColor(todayHigh, baseline, t),
         fontSize: 12, fontFamily: t.fontFamily,
+        style: { fontVariantNumeric: "tabular-nums", fontWeight: 500 },
       }, formatTickPrice(todayHigh)),
     ),
     todayLowIdx >= 0 && createElement("g", null,
@@ -422,6 +425,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         textAnchor: "middle",
         fill: priceColor(todayLow, baseline, t),
         fontSize: 12, fontFamily: t.fontFamily,
+        style: { fontVariantNumeric: "tabular-nums", fontWeight: 500 },
       }, formatTickPrice(todayLow)),
     ),
 
@@ -438,11 +442,13 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       createElement("text", {
         x: CHART_W - PAD_R - 2, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
         textAnchor: "end", fill: t.inkDim, fontSize: 11, fontFamily: t.fontFamily,
+        style: { fontVariantNumeric: "tabular-nums" },
       }, formatVolume(maxVolume)),
       // "VOL" label（top-left）
       createElement("text", {
         x: PAD_L - 4, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
         textAnchor: "end", fill: t.inkDim, fontSize: 11, fontFamily: t.fontFamily,
+        style: { textTransform: "uppercase" },
       }, "Vol"),
       // bars
       ...filteredCandles.map((c, i) => {
@@ -469,6 +475,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     ].map(({ min, label }) => createElement("text", {
       key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle",
       fill: t.inkDim, fontSize: 12, fontFamily: t.fontFamily,
+      style: { fontVariantNumeric: "tabular-nums" },
     }, label)),
   );
 }

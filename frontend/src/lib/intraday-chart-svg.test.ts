@@ -53,3 +53,19 @@ it("IntradayChartStatic 輸出 SVG snapshot(防漂移)", () => {
   const svg = renderToStaticMarkup(createElement(IntradayChartStatic, { ...input, geometry }));
   expect(svg).toMatchSnapshot();
 });
+
+it("數字 text 用 tabular-nums、今日高低 font-medium、Vol uppercase(§9 外觀不變 / review #3)", () => {
+  const candles = [candle(540, 100), candle(600, 103), candle(660, 99), candle(810, 102)];
+  const input = {
+    candles, prevClose: 100,
+    cdp: { ah: 108, nh: 104, cdp: 101, nl: 98, al: 95, as_of_date: "2026-06-04" },
+    camarilla: null,
+    ma: { symbol: "2330", sma_5: 100.5, sma_20: 99.2, as_of_date: "2026-06-04" },
+    flags: { vwap: true, cdp: true, camarilla: false, volume: true, ma: true },
+  };
+  const geometry = computeIntradayGeometry(input);
+  const svg = renderToStaticMarkup(createElement(IntradayChartStatic, { ...input, geometry }));
+  expect(svg).toContain("font-variant-numeric:tabular-nums"); // 價格/量/時間數字等寬對齊
+  expect(svg).toContain("font-weight:500");                    // 今日高低標籤(font-medium)
+  expect(svg).toContain("text-transform:uppercase");           // Vol
+});
