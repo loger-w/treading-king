@@ -5,7 +5,7 @@ import { formatTickPrice } from "../lib/tick";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
 import {
   CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, TOTAL_H,
-  computeIntradayGeometry, IntradayChartStatic,
+  computeIntradayGeometry, IntradayChartStatic, formatVolume,
 } from "../lib/intraday-chart-svg";
 
 interface Props {
@@ -216,11 +216,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
                     y={scaleVolY(candle.volume) + 3}
                     textAnchor="start"
                     className="fill-ink text-[11px] tabular-nums">
-                    {candle.volume >= 1_000_000
-                      ? `${(candle.volume / 1_000_000).toFixed(1)}M`
-                      : candle.volume >= 1_000
-                      ? `${Math.round(candle.volume / 1_000)}K`
-                      : String(candle.volume)}
+                    {formatVolume(candle.volume)}
                   </text>
                 )}
                 {/* candle close 上的 marker */}
