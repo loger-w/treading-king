@@ -8,6 +8,8 @@ import {
   IntradayChartStatic, computeIntradayGeometry, INTRADAY_THEME,
   CHART_W, CHART_H, TOTAL_H, type IntradayChartInput,
 } from "../../frontend/src/lib/intraday-chart-svg";
+import { QuoteBookSvg } from "../../frontend/src/lib/quote-book-svg";
+import type { QuoteResp } from "./data";
 
 // Windows 本機一定有 Microsoft JhengHei(正黑體),可同時顯示中文與數字。
 // 若 bot/assets/ 下有自帶字型則額外掛入並優先使用(選填,沒有也能跑)。
@@ -70,6 +72,12 @@ export function renderChartPng(args: IntradayChartInput & {
     ),
   );
 
+  return svgToPng(svg);
+}
+
+// SVG 字串 → PNG buffer 的共用 resvg 管線(分時圖 / 五檔圖共用)。
+// 2x zoom = retina 解析度(點開清楚);feed 顯示尺寸由 Discord 控,與此無關。
+function svgToPng(svg: string): Buffer {
   const resvg = new Resvg(svg, {
     fitTo: { mode: "zoom", value: 2 },
     font: {
@@ -79,6 +87,20 @@ export function renderChartPng(args: IntradayChartInput & {
     },
   });
   return Buffer.from(resvg.render().asPng());
+}
+
+// 委買賣五檔獨立 PNG。跟即時 quote 同產、不走 loadSlow 30s 快取。
+export function renderQuotePng(quote: QuoteResp): Buffer {
+  const svg = renderToStaticMarkup(
+    createElement(QuoteBookSvg, {
+      bids: quote.bids,
+      asks: quote.asks,
+      isLimitUp: quote.is_limit_up_bid || quote.is_limit_up_ask,
+      isLimitDown: quote.is_limit_down_bid || quote.is_limit_down_ask,
+      theme: THEME,
+    }),
+  );
+  return svgToPng(svg);
 }
 
 // renderChartPng 可能因 resvg／缺系統字型拋例外;包成 null 讓上層退純文字 embed(spec §8 不讓整則炸)
