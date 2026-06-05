@@ -1,0 +1,118 @@
+"""群益下單單例 —— 一條專屬 COM 執行緒(訊息幫浦 + 命令佇列),橋回 asyncio。
+
+所有群益呼叫都在 _run() 那條執行緒上(COM apartment 親和性)。
+送單前一律過安全閘 + 稽核。富邦完全不碰。
+"""
+from __future__ import annotations
+import asyncio
+import logging
+import queue
+import threading
+from pathlib import Path
+
+from services.capital_com import CapitalCom
+from services.capital_mapping import to_stockorder_fields
+from services.capital_models import StockOrderRequest, OrderResult
+from services.capital_safety import SafetyConfig, check_stock_order
+from services import capital_audit
+
+logger = logging.getLogger(__name__)
+
+
+class CapitalClient:
+    def __init__(
+        self,
+        com: CapitalCom,
+        *,
+        user_id: str,
+        password: str,
+        full_account: str,
+        env: str,
+        safety: SafetyConfig,
+        audit_path: Path | None,
+    ) -> None:
+        self._com = com
+        self._user_id = user_id
+        self._password = password
+        self._full_account = full_account
+        self._env = env
+        self._safety = safety
+        self._audit_path = audit_path or capital_audit.DEFAULT_PATH
+        self._cmd_q: "queue.Queue" = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._status = "error"      # error | ok | degraded
+        self._last_error: str | None = None
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+    @property
+    def last_error(self) -> str | None:
+        return self._last_error
+
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._thread = threading.Thread(target=self._run, daemon=True, name="capital-com")
+        self._thread.start()
+
+    def _run(self) -> None:
+        import pythoncom
+        pythoncom.CoInitialize()
+        try:
+            self._com.setup()
+            self._com.set_authority(2 if self._env == "test" else 0)
+            code = self._com.login(self._user_id, self._password)
+            if code != 0:
+                raise RuntimeError("Login: " + self._com.return_code_message(code))
+            self._com.init_order()
+            code = self._com.read_cert(self._user_id)
+            if code != 0:
+                raise RuntimeError("ReadCertByID: " + self._com.return_code_message(code))
+            self._status = "ok"
+            logger.info("Capital login + cert OK (env=%s)", self._env)
+        except Exception as e:  # noqa: BLE001
+            self._status = "error"
+            self._last_error = f"{type(e).__name__}: {e}"
+            logger.error("Capital init failed: %s", self._last_error)
+            return
+
+        while True:
+            self._com.pump()
+            try:
+                cmd = self._cmd_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if cmd is None:
+                break
+            fn, fut = cmd
+            try:
+                result = fn()
+                self._loop.call_soon_threadsafe(fut.set_result, result)
+            except Exception as e:  # noqa: BLE001
+                self._loop.call_soon_threadsafe(fut.set_exception, e)
+
+    async def submit_stock_order(self, req: StockOrderRequest) -> OrderResult:
+        gate = check_stock_order(req, self._safety)
+        if not gate.allowed:
+            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=gate.reason)
+            return OrderResult(ok=False, code=-1, message=gate.reason)
+        if self._status != "ok" or self._loop is None:
+            return OrderResult(ok=False, code=-1, message="群益未就緒(尚未登入或憑證失敗)")
+
+        fut: asyncio.Future = self._loop.create_future()
+
+        def _do() -> tuple[str, int]:
+            fields = to_stockorder_fields(req, self._full_account)
+            return self._com.send_stock_order(self._user_id, fields)
+
+        self._cmd_q.put((_do, fut))
+        message, code = await fut
+        result = OrderResult(
+            ok=(code == 0),
+            code=code,
+            message=f"{self._com.return_code_message(code)} {message}".strip(),
+        )
+        capital_audit.write(self._audit_path, env=self._env, req=req, result=result)
+        return result
