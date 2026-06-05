@@ -73,7 +73,8 @@ async function handle(msg: Message, symbol: string) {
     });
     await msg.reply(reply);
   } catch (e) {
-    await msg.reply(`\`${symbol}\` 查詢失敗(行情暫時不可用)。`);
+    // handle 以 void 呼叫;reply 本身也可能丟出(如缺少頻道權限),改為 fire-and-log 避免 unhandled rejection
+    msg.reply(`\`${symbol}\` 查詢失敗(行情暫時不可用)。`).catch(console.error);
     console.warn(`[bot] ${symbol} 失敗:`, e);
   }
 }

@@ -5,7 +5,8 @@ import type { CdpLevels, MaLevels } from "../../frontend/src/lib/api";
 type Lvl = { price: number; size: number };
 
 // 右對齊輔助:price=0 代表鎖漲跌停的市價單
-const cell = (p: number) => (p === 0 ? "市價".padStart(7) : p.toFixed(2).padStart(7));
+// 市價 兩個全形字顯示寬=4;padStart(5) 才對齊到數字價欄的顯示寬 7
+const cell = (p: number) => (p === 0 ? "市價".padStart(5) : p.toFixed(2).padStart(7));
 const qty = (s: number) => (s > 0 ? String(s).padStart(6) : "—".padStart(6));
 
 // 建構五檔階梯文字(賣5→賣1 / 分隔線 / 買1→買5)
@@ -20,7 +21,7 @@ export function formatLadder(bids: Lvl[], asks: Lvl[]): string {
   return lines.join("\n");
 }
 
-const sumSize = (a: Lvl[]) => a.reduce((n, x) => n + x.size, 0);
+export const sumSize = (a: Lvl[]) => a.reduce((n, x) => n + x.size, 0);
 
 export function buildReply(args: {
   symbol: string; name: string | null; lastClose: number; change: number; changePct: number;

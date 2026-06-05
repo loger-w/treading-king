@@ -58,7 +58,7 @@ export function renderChartPng(args: IntradayChartInput & {
       createElement("text", {
         x: 14, y: 30,
         fontSize: 22, fontFamily: FONT_FAMILY, fill: THEME.ink,
-      }, `${args.symbol} ${args.name ?? ""}`),
+      }, `${args.symbol}${args.name ? " " + args.name : ""}`),
       createElement("text", {
         x: CHART_W - 14, y: 30,
         fontSize: 22, textAnchor: "end", fontFamily: FONT_FAMILY, fill: dirColor,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatLadder } from "./embed";
+import { formatLadder, sumSize } from "./embed";
 
 const lvl = (price: number, size: number) => ({ price, size });
 
@@ -14,5 +14,10 @@ describe("formatLadder", () => {
     expect(lines.some((l) => l.includes("市價"))).toBe(true);                 // 賣2 price=0 → 市價
     expect(lines.some((l) => l.includes("買1") && l.includes("634.50") && l.includes("340"))).toBe(true);
     expect(lines.some((l) => l.startsWith("───"))).toBe(true);
+  });
+
+  it("sumSize 加總五檔量", () => {
+    expect(sumSize([{ price: 100, size: 3 }, { price: 200, size: 7 }])).toBe(10);
+    expect(sumSize([])).toBe(0);
   });
 });
