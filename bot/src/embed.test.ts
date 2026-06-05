@@ -55,7 +55,9 @@ describe("buildReply — 降級 fallback(review #1 / spec §8 不讓整則炸)",
     expect(fieldNames).toContain("CDP");                 // CDP 還在
     expect(fieldNames).toContain("均線");                 // MA 還在
     const cdpField = (embed.data.fields ?? []).find((f) => f.name === "CDP");
-    expect(cdpField?.value).toContain("CDP*");           // 中樞標 *(功能 2)
+    expect(cdpField?.value).toContain("AH*");   // 5 條全標 *(功能 2)
+    expect(cdpField?.value).toContain("CDP*");
+    expect(cdpField?.value).toContain("AL*");
   });
 
   it("五檔失敗(quote=null)仍回含圖/現價/CDP/MA 的 embed、五檔區降級且不丟例外", () => {

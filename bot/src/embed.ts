@@ -39,7 +39,7 @@ export function buildReply(args: {
     : args.quote && (args.quote.is_limit_down_bid || args.quote.is_limit_down_ask) ? "　🔻鎖跌停" : "";
   const arrow = up ? "▲" : args.change < 0 ? "▾" : "—";
   const cdp = args.cdp
-    ? `AH ${args.cdp.ah} ／ NH ${args.cdp.nh} ／ CDP* ${args.cdp.cdp} ／ NL ${args.cdp.nl} ／ AL ${args.cdp.al}`
+    ? `AH* ${args.cdp.ah} ／ NH* ${args.cdp.nh} ／ CDP* ${args.cdp.cdp} ／ NL* ${args.cdp.nl} ／ AL* ${args.cdp.al}`
     : "—";
   // MA 對齊台股 tick,跟圖上 MA 標籤一致(後端回的是原始 SMA,非 tick 值)
   const fmtMa = (v: number | null) => (v == null ? "—" : formatTickPrice(roundToNearestTick(v)));
