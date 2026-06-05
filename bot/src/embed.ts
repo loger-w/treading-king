@@ -27,15 +27,16 @@ export const sumSize = (a: Lvl[]) => a.reduce((n, x) => n + x.size, 0);
 export function buildReply(args: {
   symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
   open: number; high: number; low: number; vwap: number; volume: number;
-  cdp: CdpLevels | null; ma: MaLevels | null; quote: QuoteResp; png: Buffer; asOf: string;
+  cdp: CdpLevels | null; ma: MaLevels | null; quote: QuoteResp | null; png: Buffer | null; asOf: string;
 }) {
   const up = args.change > 0;
   // embed 顏色與圖表 theme 一致:漲紅 0xe85a4f / 跌綠 0x7fc99a / 平盤灰 0x8a8273
   const color = up ? 0xe85a4f : args.change < 0 ? 0x7fc99a : 0x8a8273;
-  const file = new AttachmentBuilder(args.png, { name: "chart.png" });
-  const ladder = formatLadder(args.quote.bids, args.quote.asks);
-  const limit = args.quote.is_limit_up_bid || args.quote.is_limit_up_ask ? "　🔺鎖漲停"
-    : args.quote.is_limit_down_bid || args.quote.is_limit_down_ask ? "　🔻鎖跌停" : "";
+  const file = args.png ? new AttachmentBuilder(args.png, { name: "chart.png" }) : null;
+  // 五檔失敗 quote=null:五檔區降級,不拖垮已備好的圖/現價/CDP/MA
+  const ladder = args.quote ? formatLadder(args.quote.bids, args.quote.asks) : "　五檔暫無資料";
+  const limit = args.quote && (args.quote.is_limit_up_bid || args.quote.is_limit_up_ask) ? "　🔺鎖漲停"
+    : args.quote && (args.quote.is_limit_down_bid || args.quote.is_limit_down_ask) ? "　🔻鎖跌停" : "";
   const arrow = up ? "▲" : args.change < 0 ? "▾" : "—";
   const cdp = args.cdp
     ? `AH ${args.cdp.ah} ／ NH ${args.cdp.nh} ／ CDP ${args.cdp.cdp} ／ NL ${args.cdp.nl} ／ AL ${args.cdp.al}`
@@ -54,12 +55,13 @@ export function buildReply(args: {
     .addFields(
       { name: "開 / 高 / 低", value: `${args.open} / ${args.high} / ${args.low}`, inline: true },
       { name: "均價 / 量", value: `${args.vwap.toFixed(2)} / ${args.volume}`, inline: true },
-      { name: "委買 / 委賣(張)", value: `${sumSize(args.quote.bids)} / ${sumSize(args.quote.asks)}`, inline: true },
+      { name: "委買 / 委賣(張)", value: args.quote ? `${sumSize(args.quote.bids)} / ${sumSize(args.quote.asks)}` : "—", inline: true },
       { name: "CDP", value: cdp, inline: false },
       { name: "均線", value: ma, inline: false },
     )
-    .setImage("attachment://chart.png")
     .setFooter({ text: `資料 ${args.asOf}` });
+  // 產圖失敗時 png=null:省略附圖,只回文字 embed(現價/五檔/CDP/MA 已備齊)
+  if (file) embed.setImage("attachment://chart.png");
 
-  return { embeds: [embed], files: [file] };
+  return { embeds: [embed], files: file ? [file] : [] };
 }

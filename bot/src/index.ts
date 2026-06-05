@@ -3,7 +3,7 @@ import { config } from "./config";
 import { parseSymbolCommand } from "./symbol";
 import { getQuote, getCandles, getCdp, getMa, getName } from "./data";
 import { TtlCache } from "./cache";
-import { renderChartPng } from "./render";
+import { renderChartPng, safeRender } from "./render";
 import { buildReply } from "./embed";
 import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, minuteOfDay } from "../../frontend/src/lib/intraday-time";
 
@@ -34,10 +34,11 @@ async function loadSlow(symbol: string) {
   const high = Math.max(...intraday.map((c) => c.high));
   const low = Math.min(...intraday.map((c) => c.low));
 
-  const png = renderChartPng({
+  // 產圖失敗(resvg／缺字型)不該炸掉整則:safeRender 失敗回 null,buildReply 退純文字(spec §8)
+  const png = safeRender(() => renderChartPng({
     candles: candlesR.data, prevClose: candlesR.prev_close, cdp, camarilla: null, ma, flags,
     symbol, name, lastClose: last.close, change, changePct,
-  });
+  }));
 
   return {
     empty: false as const, name, cdp, ma, png,
@@ -53,7 +54,7 @@ async function handle(msg: Message, symbol: string) {
   try {
     const [s, quote] = await Promise.all([
       slow.get(symbol, () => loadSlow(symbol)),
-      getQuote(symbol),
+      getQuote(symbol).catch(() => null),  // 五檔失敗 → null,不拖垮已備好的圖/CDP/MA(spec §8)
     ]);
 
     if (s.empty) {

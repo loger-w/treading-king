@@ -80,3 +80,13 @@ export function renderChartPng(args: IntradayChartInput & {
   });
   return Buffer.from(resvg.render().asPng());
 }
+
+// renderChartPng 可能因 resvg／缺系統字型拋例外;包成 null 讓上層退純文字 embed(spec §8 不讓整則炸)
+export function safeRender(render: () => Buffer): Buffer | null {
+  try {
+    return render();
+  } catch (e) {
+    console.warn("[bot] 產圖失敗,退純文字:", e);
+    return null;
+  }
+}

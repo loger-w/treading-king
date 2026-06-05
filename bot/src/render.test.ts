@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderChartPng } from "./render";
+import { renderChartPng, safeRender } from "./render";
 import type { IntradayCandle, CdpLevels, MaLevels } from "../../frontend/src/lib/api";
 
 // 輔助:建立一根分時 candle(時間格式對齊後端 ISO+08:00)
@@ -61,5 +61,16 @@ describe("renderChartPng — render pipeline smoke test", () => {
     // 確認 PNG magic bytes:89 50 4E 47 0D 0A 1A 0A
     const MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     expect(png.subarray(0, 8)).toEqual(MAGIC);
+  });
+});
+
+describe("safeRender — 產圖失敗降級(review #1 / spec §8 不讓整則炸)", () => {
+  it("render 丟錯時回 null(吞例外),讓上層退純文字 embed", () => {
+    expect(safeRender(() => { throw new Error("resvg crash / 缺字型"); })).toBeNull();
+  });
+
+  it("render 正常時原樣回傳 Buffer", () => {
+    const b = Buffer.from([0x89, 0x50]);
+    expect(safeRender(() => b)).toBe(b);
   });
 });
