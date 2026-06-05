@@ -1,5 +1,5 @@
 import { config } from "./config";
-import type { IntradayCandle, CdpLevels, CamarillaLevels, MaLevels } from "../../frontend/src/lib/api";
+import type { IntradayCandle, CdpLevels, MaLevels } from "../../frontend/src/lib/api";
 
 async function get<T>(path: string): Promise<T> {
   const headers: Record<string, string> = {};
