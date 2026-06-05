@@ -58,6 +58,8 @@ class SignalEngine:
         self._limit_at_since: dict[str, float] = {}    # 目前連續盯漲停價起點(離開即清)
         self._limit_lock_best: dict[str, float] = {}   # 今日達到過的最長連續鎖死秒數
         self._limit_up_active = False                  # 有無啟用 limit_up_open_touch 規則
+        # 突破 arming(per (rule_id, symbol),門檻/線依 rule 參數而異;daily reset)
+        self._breakout_armed: dict[tuple[str, str], dict[str, float]] = {}
         # 今日累積成交量 — backend 啟動後累積,daily refill 重置
         self._day_volume: dict[str, int] = {}
         # metrics
@@ -278,6 +280,8 @@ class SignalEngine:
         stype = strat.get("type")
         if stype == "limit_up_open_touch":
             return self._eval_limit_up_open_touch(strat, symbol, tick, prev)
+        if stype == "breakout_retest":
+            return self._eval_breakout_retest(strat, active, symbol, tick, prev, now)
         return None
 
     def _strategy_type(self, active: ActiveSignalOut) -> str | None:
@@ -330,11 +334,60 @@ class SignalEngine:
             return None                      # 只在「由上而下回落碰」時告警(測支撐)
         return {"level": level, "direction": "from_above", "role": "support"}
 
+    @staticmethod
+    def _minutes_since_open(now_ts: float) -> float:
+        """距開盤(09:00)幾分鐘(僅正盤內有意義)。"""
+        dt = datetime.fromtimestamp(now_ts, tz=TAIPEI_TZ)
+        return (dt.hour - MARKET_OPEN[0]) * 60 + (dt.minute - MARKET_OPEN[1]) + dt.second / 60.0
+
+    def _eval_breakout_retest(
+        self, strat: dict, active: ActiveSignalOut, symbol: str, tick: Tick,
+        prev: Tick | None, now: float,
+    ) -> dict | None:
+        """早盤爆拉由下突破某 CDP 線 → arm;之後 M 分內由上而下回踩同線 → 回 cdp_touch。"""
+        from services.cdp import tick_size
+
+        cache = self._field_cache.get(symbol, {})
+        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+        armed = self._breakout_armed.setdefault((active.id, symbol), {})
+
+        # 1. arming — 僅早盤內,偵測「由下而上穿越 + 突然爆拉」
+        if self._minutes_since_open(now) < strat["early_window_minutes"]:
+            surge_ok = self._eval_window(symbol, tick, {
+                "type": "price_change_pct",
+                "window_seconds": strat["surge_window_seconds"],
+                "operator": "gte",
+                "value": strat["surge_pct"],
+            })
+            if surge_ok:
+                for level in strat["levels"]:
+                    v = cache.get(field_map[level])
+                    if v is None:
+                        continue
+                    if self._direction_of_touch(prev, tick, v) == "from_below":
+                        armed[level] = now
+
+        # 2. retest — 已 arm 的線,M 分內由上而下回踩
+        window_s = strat["retest_within_minutes"] * 60
+        for level in list(armed.keys()):
+            if now - armed[level] > window_s:
+                del armed[level]                 # 逾時 disarm
+                continue
+            v = cache.get(field_map[level])
+            if v is None:
+                continue
+            tol = strat["tolerance_ticks"] * tick_size(v)
+            if abs(tick.price - v) <= tol and self._direction_of_touch(prev, tick, v) == "from_above":
+                del armed[level]                 # 觸發一次即 disarm
+                return {"level": level, "direction": "from_above", "role": "support"}
+        return None
+
     def _reset_daily_strategy_state(self) -> None:
         """跨午夜清 strategy 當日狀態。放 heartbeat daily 分支,不放 _refill_field_cache —
-        後者也在規則編輯時被呼叫,會誤清盤中累積的鎖死狀態。"""
+        後者也在規則編輯時被呼叫,會誤清盤中累積的鎖死 / arming 狀態。"""
         self._limit_at_since.clear()
         self._limit_lock_best.clear()
+        self._breakout_armed.clear()
 
     def _eval_with_touch_meta(
         self, active: ActiveSignalOut, symbol: str, tick: Tick, prev: Tick | None,
