@@ -58,11 +58,11 @@ export function QuoteBookSvg(input: QuoteBookSvgInput) {
     input.isLimitUp && createElement("text", {
       x: QUOTE_W - PAD, y: 34, fontSize: 18, textAnchor: "end",
       fontFamily: t.fontFamily, fill: t.bull,
-    }, "🔺 鎖漲停"),
+    }, "▲ 鎖漲停"),
     input.isLimitDown && createElement("text", {
       x: QUOTE_W - PAD, y: 34, fontSize: 18, textAnchor: "end",
       fontFamily: t.fontFamily, fill: t.bear,
-    }, "🔻 鎖跌停"),
+    }, "▼ 鎖跌停"),
     createElement("line", { x1: PAD, y1: 46, x2: QUOTE_W - PAD, y2: 46, stroke: t.line, strokeWidth: 1 }),
 
     // ── 委買總量(左紅)/ 委賣總量(右綠)大字 ──
