@@ -11,7 +11,7 @@ from models.condition import (
     ActiveSignalOut, Condition, Filter, WindowCondition,
 )
 from services import alerts, discord_notifier, ma_service
-from services.cdp import get_cdp_service
+from services.cdp import get_cdp_service, limit_up_price
 from services.local_store import get_local_store
 from services.ring_buffer import Tick, get_ring_buffer
 from services.signal_writer import get_signal_writer
@@ -54,6 +54,10 @@ class SignalEngine:
         # 當天觸碰次數計數 (symbol, level, date) → count,跨日 GC
         self._cdp_touch_count: dict[tuple[str, str, date], int] = {}
         self._ma_touch_count:  dict[tuple[str, str, date], int] = {}
+        # 漲停 latch(per-symbol,當日;daily reset)
+        self._limit_at_since: dict[str, float] = {}    # 目前連續盯漲停價起點(離開即清)
+        self._limit_lock_best: dict[str, float] = {}   # 今日達到過的最長連續鎖死秒數
+        self._limit_up_active = False                  # 有無啟用 limit_up_open_touch 規則
         # 今日累積成交量 — backend 啟動後累積,daily refill 重置
         self._day_volume: dict[str, int] = {}
         # metrics
@@ -88,6 +92,9 @@ class SignalEngine:
         """從本機 ConfigStore 讀 enabled active_signals，刷新 in-memory list 跟 field cache。"""
         rows = get_local_store().config.list_active_signals(enabled_only=True)
         self._active = [self._row_to_active(r) for r in rows]
+        self._limit_up_active = any(
+            self._strategy_type(a) == "limit_up_open_touch" for a in self._active
+        )
         await self._refill_field_cache()
         logger.info("active_signals reloaded: %d enabled", len(self._active))
 
@@ -181,6 +188,7 @@ class SignalEngine:
                 try:
                     await self._refill_field_cache()
                     self._gc_touch_counts()  # 順便清舊 date 的 touch_count
+                    self._reset_daily_strategy_state()
                     logger.info("signal_engine: daily field_cache refilled for %s", today)
                 except Exception as e:
                     # refill 失敗不影響 heartbeat — 下個 heartbeat 會再試
@@ -208,6 +216,8 @@ class SignalEngine:
             return
 
         now = time.time()
+        if self._limit_up_active:
+            self._update_limit_up_state(symbol, tick, now)
         # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染
         self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
@@ -265,7 +275,66 @@ class SignalEngine:
         prev: Tick | None, now: float,
     ) -> dict | None:
         """依 strategy.type 跑專用 evaluator,回 cdp_touch dict 或 None。"""
-        return None  # Task 4 / 5 填內容
+        stype = strat.get("type")
+        if stype == "limit_up_open_touch":
+            return self._eval_limit_up_open_touch(strat, symbol, tick, prev)
+        return None
+
+    def _strategy_type(self, active: ActiveSignalOut) -> str | None:
+        s = self._strategy_of(active)
+        return s.get("type") if s else None
+
+    def _update_limit_up_state(self, symbol: str, tick: Tick, now: float) -> None:
+        """維護 per-symbol 漲停鎖死狀態(每 tick + heartbeat 呼叫)。
+
+        用「最新成交價 == 漲停價且持續 ≥N 秒」近似鎖死;heartbeat 用 latest tick
+        推進 now,連續盯住就累積秒數,不依賴鎖死期間有無新成交。
+        """
+        prev_close = self._field_cache.get(symbol, {}).get("prev_close")
+        if prev_close is None:
+            return
+        lp = limit_up_price(prev_close)
+        if tick.price >= lp:
+            since = self._limit_at_since.get(symbol)
+            if since is None:
+                self._limit_at_since[symbol] = now
+                since = now
+            dur = now - since
+            if dur > self._limit_lock_best.get(symbol, 0.0):
+                self._limit_lock_best[symbol] = dur
+        else:
+            self._limit_at_since.pop(symbol, None)
+
+    def _eval_limit_up_open_touch(
+        self, strat: dict, symbol: str, tick: Tick, prev: Tick | None,
+    ) -> dict | None:
+        """曾鎖死漲停 ≥N 秒 → 打開後由上而下碰所選 CDP 線 → 回 cdp_touch。"""
+        cache = self._field_cache.get(symbol, {})
+        prev_close = cache.get("prev_close")
+        if prev_close is None:
+            return None
+        lp = limit_up_price(prev_close)
+        if self._limit_lock_best.get(symbol, 0.0) < strat["lock_seconds"]:
+            return None                      # 今天沒鎖死夠久
+        if tick.price >= lp:
+            return None                      # 還沒打開(仍在漲停價或之上)
+        ok, level = self._eval_cdp_proximity(symbol, tick, {
+            "levels": strat["levels"], "tolerance_ticks": strat["tolerance_ticks"],
+        })
+        if not ok or level is None:
+            return None
+        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+        v = cache.get(field_map[level])
+        direction = self._direction_of_touch(prev, tick, v) if v is not None else "horizontal"
+        if direction != "from_above":
+            return None                      # 只在「由上而下回落碰」時告警(測支撐)
+        return {"level": level, "direction": "from_above", "role": "support"}
+
+    def _reset_daily_strategy_state(self) -> None:
+        """跨午夜清 strategy 當日狀態。放 heartbeat daily 分支,不放 _refill_field_cache —
+        後者也在規則編輯時被呼叫,會誤清盤中累積的鎖死狀態。"""
+        self._limit_at_since.clear()
+        self._limit_lock_best.clear()
 
     def _eval_with_touch_meta(
         self, active: ActiveSignalOut, symbol: str, tick: Tick, prev: Tick | None,
