@@ -58,6 +58,30 @@ def test_no_arm_when_surge_below_threshold():
     assert engine._breakout_armed.get((active.id, "2330"), {}) == {}
 
 
+def test_surge_query_passes_correct_params_to_eval_window():
+    # 爆拉判定的查詢參數必須正確傳給 _eval_window。其餘測試 stub 掉 _eval_window,
+    # 若 surge_pct / surge_window_seconds 對調或 operator 寫錯,那些測試仍會綠;這條擋住。
+    engine = SignalEngine()
+    engine._field_cache["2330"] = {"cdp_nh": 100.0}
+    captured: list[dict] = []
+
+    def spy(symbol, tick, wc):
+        captured.append(wc)
+        return True
+
+    engine._eval_window = spy
+    active = _active()   # surge_pct=3.0, surge_window_seconds=60
+    strat = engine._strategy_of(active)
+    engine._eval_breakout_retest(
+        strat, active, "2330", Tick(100.0, 1, EARLY), prev=Tick(99.0, 1, EARLY - 1), now=EARLY)
+    assert captured == [{
+        "type": "price_change_pct",
+        "window_seconds": 60,
+        "operator": "gte",
+        "value": 3.0,
+    }]
+
+
 def test_no_arm_outside_early_window():
     engine = SignalEngine()
     engine._field_cache["2330"] = {"cdp_nh": 100.0}
