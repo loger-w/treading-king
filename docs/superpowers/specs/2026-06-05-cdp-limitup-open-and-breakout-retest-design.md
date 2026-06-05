@@ -34,6 +34,8 @@
 - **不改** CDP 五線計算、`daily_ohlc` 流程
 - **不做**台指期版本 — 漲停是個股概念、CDP 期貨資料未實作(見
   `project_mxf_intraday_cdpcam_deferred`)
+- **v1 不做策略 2「開高」分支** — 只做盤中極拉穿越;開盤跳空高開(首 tick 已在線上方)留 v2,
+  屆時再加 session-open 追蹤
 
 ## Architecture
 
@@ -168,13 +170,14 @@ fire 條件:
 
 **早盤閘門**:`09:00 ≤ wall-clock < 09:00 + early_window_minutes`。
 
-**arming**(僅早盤內):對所選 levels,偵測**由下而上穿越** line X 且當下夠強 → arm X
-(`_breakout_armed[(rule_id,sym)][X] = now`)。「夠強」二擇一(both 預設 3%,可調):
+**arming**(僅早盤內):對所選 levels,偵測**由下而上穿越** line X 且當下「突然爆拉」→ arm X
+(`_breakout_armed[(rule_id,sym)][X] = now`):
 
-- **極拉**:`_direction_of_touch(prev,tick,X)=="from_below"` 且
+- **極拉(v1 唯一觸發)**:`_direction_of_touch(prev,tick,X)=="from_below"` 且
   `window price_change_pct(surge_window_seconds) ≥ surge_pct`
-- **開高**:當日第一筆 session tick 已在 X 上方(`prev is None and tick.price > X`)且
-  `day_change_pct ≥ surge_pct`（開盤跳空就視為已突破 X — 見開放問題,可在 review 砍掉只留極拉）
+
+> v1 **不做開高**(開盤跳空已在 X 上方視為已突破)— 見 Non-goals / 後續。砍掉省去 session-open
+> 追蹤,實作更乾淨。
 
 **回踩觸發**:已 arm 的 line X,`now - armed_at ≤ retest_within_minutes`,且 tick **由上而下**
 碰回 X(±tolerance）→ fire、disarm X。逾時(超過 M 分)→ disarm 不發。
@@ -253,7 +256,6 @@ daily refill ─→ 清狀態層 + 觸碰計次 + day_volume
 - 突破在早盤**外**(W 分後才穿越)→ **不** arm
 - 回踩**超過** M 分 → disarm,不發
 - 多線爆拉穿越 → 全 arm → 回踩任一被突破線即發(設計選擇,見開放問題)
-- 開高(首 tick 已在 X 上方)+ day_change ≥ surge_pct → arm → 回踩發(若 review 保留此分支)
 
 **前端** — 沿用既有手動驗收;`signal-format` 若加格式化加對應單元測試。
 
@@ -263,11 +265,9 @@ daily refill ─→ 清狀態層 + 觸碰計次 + day_volume
    實作時實測一次(找一檔鎖漲停股或 mock latest 停在 lp)。
 2. **漲停價 TWSE 進位邊界** — `round_to_tick_tw(prev_close*1.1,"down")` 是否完全符合官方
    「尾數捨去」與跨級距規則;查 TWSE 漲跌幅計算規則精確化(必要時補 edge case 測試)。
-3. **開高分支去留 + 「當日第一筆」偵測** — 策略 2 是否納入「開高=已突破」(首 tick 在線上方
-   就 arm)。納入較貼合「開很高」原意,但與「突然爆拉」的 RATE 語意略有出入。**且實作上
-   「當日第一筆 session tick」不能用 `prev is None` 判**(`_prev_tick` 非盤中不更新、重啟殘留
-   昨日 tick),要顯式記錄 per-symbol 的 session-open 價/時間。**預設納入,review 可砍成只留
-   極拉**(砍掉就省去 session-open 追蹤,較簡單)。
+3. **開高分支** — ✅ **已定:v1 砍掉,只留極拉穿越**(user 2026-06-05 拍板)。v2 若要補開高,
+   需顯式記 per-symbol session-open 價/時間(不能用 `prev is None` 判當日第一筆 —`_prev_tick`
+   非盤中不更新、重啟殘留昨日 tick)。
 4. **多線 arming** — 一次爆拉穿多條 → 全 arm、回踩任一即發(已與 user 確認方向,符合
    「回踩原來那條」)。
 5. **早盤爆拉時窗吃到試撮** — `ring_buffer` 會累積 08:30–09:00 試撮 indicative tick;開盤頭
