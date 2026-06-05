@@ -143,12 +143,8 @@ async def delete_bookmark(bid: str) -> None:
     # 刪 group 連帶刪 items(ConfigStore.delete_group 內部處理)
     store.config.delete_group(bid)
 
-    # signal_engine refresh — scope=watchlist 改用「自選」書籤,不影響;但保險 refresh
-    try:
-        from services.signal_engine import get_signal_engine
-        await get_signal_engine().refresh_active_signals()
-    except Exception as e:
-        logger.warning("delete bookmark: refresh signal_engine failed: %s", e)
+    # 不 refresh signal_engine:書籤不在訊號評估範圍(monitor_list),refresh 多餘且慢
+    # (會對 monitor 全部 symbol 序列重算 CDP)。
     return None
 
 
@@ -228,13 +224,8 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
             logger.warning("add items: ws subscribe %s failed: %s", s, e)
         asyncio.create_task(get_cdp_service().backfill_from_fubon(s))
 
-    # signal_engine refresh
-    try:
-        from services.signal_engine import get_signal_engine
-        await get_signal_engine().refresh_active_signals()
-    except Exception as e:
-        logger.warning("add items: refresh signal_engine failed: %s", e)
-
+    # 不 refresh signal_engine:同 remove_item — 書籤股票不在訊號評估範圍
+    # (monitor_list),refresh 只會白白重算 monitor 的 CDP、拖慢加入。
     return {"added": to_insert, "skipped": list(already), "count": len(to_insert)}
 
 
@@ -255,11 +246,9 @@ async def remove_item(bid: str, symbol: str) -> None:
     # 簡化:不在 remove_item 做 discard、留給下次 cache eviction 或重啟。
     # (cdp cache 是 lazy-fill、留著無害)
 
-    try:
-        from services.signal_engine import get_signal_engine
-        await get_signal_engine().refresh_active_signals()
-    except Exception as e:
-        logger.warning("remove item: refresh signal_engine failed: %s", e)
+    # 不 refresh signal_engine:訊號評估範圍是 monitor_list,書籤股票增刪不改
+    # monitor_list。refresh 會對 monitor 全部 symbol 序列 await cdp.get()(實測
+    # 幾秒)→ 純粹拖慢刪除、對訊號毫無影響。
     return None
 
 
@@ -299,12 +288,7 @@ async def move_items(payload: ItemsMove) -> dict:
             except Exception as e:
                 logger.warning("move: ws unsub %s from %s failed: %s", s, payload.from_group_id, e)
 
-    try:
-        from services.signal_engine import get_signal_engine
-        await get_signal_engine().refresh_active_signals()
-    except Exception as e:
-        logger.warning("move: refresh signal_engine failed: %s", e)
-
+    # 不 refresh signal_engine:書籤股票搬移不改 monitor_list,refresh 多餘且慢。
     return {"status": "ok", "op": payload.op, "symbols": payload.symbols,
             "from_group_id": payload.from_group_id, "to_group_ids": payload.to_group_ids}
 

@@ -92,3 +92,72 @@ def test_watchlist_add_subscribes_default_group(local_store_tmp, monkeypatch):
     body = client.get("/api/watchlist").json()
     assert "watchlist" in body and body["count"] == 1
     assert body["watchlist"][0]["name"] == "台積電"
+
+
+def test_delete_item_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):
+    """刪書籤股票不該重載訊號引擎。
+
+    signal scope 用 monitor_list(_field_cache.keys()),watchlist(書籤)增刪
+    不改 monitor_list → refresh_active_signals 是多餘的。它會對 monitor_list
+    全部 symbol 序列 await cdp.get()(實測 ~2.2s)→ 刪除卡頓 bug。
+    """
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
+    fake_engine = AsyncMock()
+    monkeypatch.setattr("services.signal_engine.get_signal_engine", lambda: fake_engine)
+    get_local_store().market.replace_symbols(
+        [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
+    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
+    fake_engine.reset_mock()  # 清掉 add 階段的呼叫,只看 delete
+    r = client.delete(f"/api/bookmarks/{gid}/items/2330")
+    assert r.status_code == 204
+    fake_engine.refresh_active_signals.assert_not_awaited()
+
+
+def test_add_item_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):
+    """加書籤股票同理不該重載訊號引擎(watchlist 不影響 signal scope)。"""
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
+    fake_engine = AsyncMock()
+    monkeypatch.setattr("services.signal_engine.get_signal_engine", lambda: fake_engine)
+    get_local_store().market.replace_symbols(
+        [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
+    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
+    fake_engine.refresh_active_signals.assert_not_awaited()
+
+
+def test_delete_bookmark_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):
+    """刪整個書籤同理不該重載訊號引擎(同 root cause:多餘的 CDP 重算)。"""
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    fake_engine = AsyncMock()
+    monkeypatch.setattr("services.signal_engine.get_signal_engine", lambda: fake_engine)
+    bid = client.post("/api/bookmarks", json={"name": "臨時書籤"}).json()["id"]
+    fake_engine.reset_mock()
+    r = client.delete(f"/api/bookmarks/{bid}")
+    assert r.status_code == 204
+    fake_engine.refresh_active_signals.assert_not_awaited()
+
+
+def test_move_items_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):
+    """跨書籤搬移股票同理不該重載訊號引擎。"""
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
+    fake_engine = AsyncMock()
+    monkeypatch.setattr("services.signal_engine.get_signal_engine", lambda: fake_engine)
+    get_local_store().market.replace_symbols(
+        [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
+    g1 = client.post("/api/bookmarks", json={"name": "來源"}).json()["id"]
+    g2 = client.post("/api/bookmarks", json={"name": "目的"}).json()["id"]
+    client.post(f"/api/bookmarks/{g1}/items", json={"symbols": ["2330"]})
+    fake_engine.reset_mock()
+    r = client.patch("/api/bookmarks/items/move",
+                     json={"symbols": ["2330"], "from_group_id": g1,
+                           "to_group_ids": [g2], "op": "move"})
+    assert r.status_code == 200
+    fake_engine.refresh_active_signals.assert_not_awaited()

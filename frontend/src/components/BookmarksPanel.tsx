@@ -9,6 +9,7 @@ import { BookmarkNewDialog } from "./BookmarkNewDialog";
 import { BookmarkManageDialog } from "./BookmarkManageDialog";
 import { BookmarkEditMode } from "./BookmarkEditMode";
 import { SignalChip } from "./SignalChip";
+import { resolveDisplayChangePct } from "../lib/quote-display";
 
 /**
  * 書籤面板 — 取代舊 WatchlistWithChips。
@@ -392,7 +393,7 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
   const hasHit = totalHits > 0;
 
   const price = quote?.price;
-  const pct = quote?.changePct ?? null;
+  const pct = resolveDisplayChangePct(quote, item);
   const priceCls = pct == null ? "text-ink-dim"
     : pct > 0 ? "text-bull"
     : pct < 0 ? "text-bear" : "text-ink-dim";
