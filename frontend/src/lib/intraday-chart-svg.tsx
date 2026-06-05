@@ -216,7 +216,7 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
   }
   const resolvedLabels = resolveCollisions(
     labelInputs,
-    16,
+    20,
     [PAD_T, CHART_H - PAD_B],
   );
 
@@ -290,7 +290,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     baseline > 0 && (() => {
       const baselineTick = roundToNearestTick(baseline);
       const linePrices = Array.from(new Set(
-        [-10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10].map((pct) =>
+        [-10, -5, 0, 5, 10].map((pct) =>
           roundToNearestTick(baseline * (1 + pct / 100))
         )
       )).filter((v) => v >= props.geometry.yMin && v <= props.geometry.yMax);
@@ -308,7 +308,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
             createElement("text", {
               x: PAD_L - 4, y: y + 3, textAnchor: "end",
               fill: isBaseline ? t.ink : t.inkDim,
-              fontSize: 12, fontFamily: t.fontFamily,
+              fontSize: 15, fontFamily: t.fontFamily,
               style: { fontVariantNumeric: "tabular-nums" },
             }, formatTickPrice(vTick)),
           );
@@ -375,7 +375,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       }),
       createElement("text", {
         x: CHART_W - PAD_R + 6, y: lbl.y + 3, textAnchor: "start",
-        fill: lbl.color, fontSize: 12, fontFamily: t.fontFamily,
+        fill: lbl.color, fontSize: 15, fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums" },
       }, lbl.text),
     )),
@@ -411,7 +411,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         y: scaleY(todayHigh) - 6,
         textAnchor: "middle",
         fill: priceColor(todayHigh, baseline, t),
-        fontSize: 12, fontFamily: t.fontFamily,
+        fontSize: 15, fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums", fontWeight: 500 },
       }, formatTickPrice(todayHigh)),
     ),
@@ -425,7 +425,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         y: scaleY(todayLow) + 13,
         textAnchor: "middle",
         fill: priceColor(todayLow, baseline, t),
-        fontSize: 12, fontFamily: t.fontFamily,
+        fontSize: 15, fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums", fontWeight: 500 },
       }, formatTickPrice(todayLow)),
     ),
@@ -442,13 +442,13 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       // 最大值 label（top-right of pane）
       createElement("text", {
         x: CHART_W - PAD_R - 2, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
-        textAnchor: "end", fill: t.inkDim, fontSize: 11, fontFamily: t.fontFamily,
+        textAnchor: "end", fill: t.inkDim, fontSize: 13, fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums" },
       }, formatVolume(maxVolume)),
       // "VOL" label（top-left）
       createElement("text", {
         x: PAD_L - 4, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
-        textAnchor: "end", fill: t.inkDim, fontSize: 11, fontFamily: t.fontFamily,
+        textAnchor: "end", fill: t.inkDim, fontSize: 13, fontFamily: t.fontFamily,
         style: { textTransform: "uppercase" },
       }, "Vol"),
       // bars
@@ -475,7 +475,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       { min: 810, label: "13:30" },
     ].map(({ min, label }) => createElement("text", {
       key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle",
-      fill: t.inkDim, fontSize: 12, fontFamily: t.fontFamily,
+      fill: t.inkDim, fontSize: 15, fontFamily: t.fontFamily,
       style: { fontVariantNumeric: "tabular-nums" },
     }, label)),
   );
