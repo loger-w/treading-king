@@ -292,7 +292,12 @@ class SignalEngine:
         """維護 per-symbol 漲停鎖死狀態(每 tick + heartbeat 呼叫)。
 
         用「最新成交價 == 漲停價且持續 ≥N 秒」近似鎖死;heartbeat 用 latest tick
-        推進 now,連續盯住就累積秒數,不依賴鎖死期間有無新成交。
+        推進 now,連續盯住就累積秒數,不依賴鎖死期間有無新成交(無新 tick 時
+        ring_buffer 不 trim,latest 停在最後一筆漲停價成交,計時持續)。
+
+        已知前提:依賴 latest.price 反映「目前是否盯在漲停」。富邦鎖漲停期間的
+        trades 推送行為(見 spec 開放問題 1)上線前須用真實鎖漲停股實測,實測前
+        不可宣稱策略 1 已驗證。
         """
         prev_close = self._field_cache.get(symbol, {}).get("prev_close")
         if prev_close is None:
@@ -353,6 +358,9 @@ class SignalEngine:
 
         # 1. arming — 僅早盤內,偵測「由下而上穿越 + 突然爆拉」
         if self._minutes_since_open(now) < strat["early_window_minutes"]:
+            # 已知限制:surge 視窗(ring_buffer)在開盤頭 surge_window_seconds 秒內
+            # 可能含 08:30–09:00 試撮 indicative tick,扭曲 price_change_pct。
+            # 見 spec 開放問題 5,Task 8 早盤實測時確認是否需以 session-open 為左界。
             surge_ok = self._eval_window(symbol, tick, {
                 "type": "price_change_pct",
                 "window_seconds": strat["surge_window_seconds"],
