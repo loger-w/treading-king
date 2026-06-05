@@ -6,7 +6,7 @@ import { renderQuotePng, safeRender } from "./render";
 import { TtlCache } from "./cache";
 import { loadSlow, composeReply, type SlowResult } from "./reply";
 
-// 慢資料(分時 K / CDP / MA / 已 render PNG)30s 快取;五檔每次即時抓(見 handle)。
+// 慢資料(分時 K / CDP / MA / 分時圖 PNG)30s 快取;五檔 quote + quotePng 每次即時抓(見 handle)。
 const slow = new TtlCache<SlowResult>(30_000);
 
 async function handle(msg: Message, symbol: string) {
