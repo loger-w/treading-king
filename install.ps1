@@ -56,6 +56,11 @@ Write-Host "Installing frontend deps" -ForegroundColor Cyan
 Set-Location (Join-Path $root "frontend")
 npm install
 
+# ---------- Install Discord bot deps ----------
+Write-Host ""
+Write-Host "Installing Discord bot deps" -ForegroundColor Cyan
+Set-Location (Join-Path $root "bot"); npm install
+
 Set-Location $root
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
