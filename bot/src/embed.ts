@@ -15,6 +15,7 @@ export function buildReply(args: {
   const chartFile = args.png ? new AttachmentBuilder(args.png, { name: "chart.png" }) : null;
   // 五檔改成獨立第二張圖(quote.png),不被 embed 引用 → Discord 顯示在 embed 下方
   const quoteFile = args.quotePng ? new AttachmentBuilder(args.quotePng, { name: "quote.png" }) : null;
+  // quote 僅用於偵測鎖漲/跌停標記;五檔內容已改走 quotePng 圖片
   const limit = args.quote && (args.quote.is_limit_up_bid || args.quote.is_limit_up_ask) ? "　🔺鎖漲停"
     : args.quote && (args.quote.is_limit_down_bid || args.quote.is_limit_down_ask) ? "　🔻鎖跌停" : "";
   const arrow = up ? "▲" : args.change < 0 ? "▾" : "—";
