@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Events, type Message } from "discord.js";
-import { config } from "./config";
+import { config, requireToken } from "./config";
 import { parseSymbolCommand } from "./symbol";
 import { getQuote, getCandles, getCdp, getMa, getName } from "./data";
 import { TtlCache } from "./cache";
@@ -98,4 +98,4 @@ client.on(Events.MessageCreate, (msg) => {
   void handle(msg, symbol);
 });
 
-client.login(config.token);
+client.login(requireToken());
