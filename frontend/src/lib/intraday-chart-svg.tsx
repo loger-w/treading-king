@@ -284,8 +284,8 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       );
     })(),
 
-    // ── 2. Y 軸 ±2% 格線 ─────────────────────────────────────────────────────
-    // 以昨收 baseline 為中心 (0%)，每 ±2% 一條 (±0/±2/±4/.../±10)
+    // ── 2. Y 軸 ±5% 格線 ─────────────────────────────────────────────────────
+    // 以昨收 baseline 為中心 (0%)，每 ±5% 一條 (±0/±5/±10)
     // 每條 snap 到合法台股 tick，超出 [yMin, yMax] 範圍的不畫、tick 重複的 dedupe
     baseline > 0 && (() => {
       const baselineTick = roundToNearestTick(baseline);
