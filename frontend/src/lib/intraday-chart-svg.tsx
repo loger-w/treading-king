@@ -26,13 +26,13 @@ export const INTRADAY_THEME = {
 export type ChartTheme = typeof INTRADAY_THEME;
 
 export const CHART_W = 820;
-export const CHART_H = 460;
+export const CHART_H = 600;
 export const PAD_L = 56;
 export const PAD_R = 56;
 export const PAD_T = 12;
 export const PAD_B = 28;
 export const VOL_GAP = 4;
-export const VOL_H = 72;
+export const VOL_H = 144;
 export const VOL_PAD_T = 6;
 export const TOTAL_H = CHART_H + VOL_GAP + VOL_H;
 
