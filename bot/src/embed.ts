@@ -3,19 +3,17 @@ import type { QuoteResp } from "./data";
 import type { CdpLevels, MaLevels } from "../../frontend/src/lib/api";
 import { formatTickPrice, roundToNearestTick } from "../../frontend/src/lib/tick";
 
+// 文字訊息那則 — 現價/開高低/均價量/CDP/均線。分時圖、五檔圖各自獨立一則(見 reply.composeReply),
+// 不放進這個 embed,避免被 Discord 內嵌縮小。
 export function buildReply(args: {
   symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
   open: number; high: number; low: number; vwap: number; volume: number;
-  cdp: CdpLevels | null; ma: MaLevels | null; quote: QuoteResp | null;
-  png: Buffer | null; quotePng: Buffer | null; asOf: string;
+  cdp: CdpLevels | null; ma: MaLevels | null; quote: QuoteResp | null; asOf: string;
 }) {
   const up = args.change > 0;
   // embed 顏色與圖表 theme 一致:漲紅 0xe85a4f / 跌綠 0x7fc99a / 平盤灰 0x8a8273
   const color = up ? 0xe85a4f : args.change < 0 ? 0x7fc99a : 0x8a8273;
-  const chartFile = args.png ? new AttachmentBuilder(args.png, { name: "chart.png" }) : null;
-  // 五檔改成獨立第二張圖(quote.png),不被 embed 引用 → Discord 顯示在 embed 下方
-  const quoteFile = args.quotePng ? new AttachmentBuilder(args.quotePng, { name: "quote.png" }) : null;
-  // quote 僅用於偵測鎖漲/跌停標記;五檔內容已改走 quotePng 圖片
+  // quote 僅用於偵測鎖漲/跌停標記;五檔內容走獨立的五檔圖
   const limit = args.quote && (args.quote.is_limit_up_bid || args.quote.is_limit_up_ask) ? "　🔺鎖漲停"
     : args.quote && (args.quote.is_limit_down_bid || args.quote.is_limit_down_ask) ? "　🔻鎖跌停" : "";
   const arrow = up ? "▲" : args.change < 0 ? "▾" : "—";
@@ -39,8 +37,10 @@ export function buildReply(args: {
       { name: "均線", value: ma, inline: false },
     )
     .setFooter({ text: `資料 ${args.asOf}` });
-  // 分時圖放進 embed;五檔圖當額外附件(不被 embed 引用 → 顯示在 embed 下方)
-  if (chartFile) embed.setImage("attachment://chart.png");
-  const files = [chartFile, quoteFile].filter((f): f is AttachmentBuilder => f !== null);
-  return { embeds: [embed], files };
+  return { embeds: [embed] };
+}
+
+// 圖片各自獨立一則:頂層附件(不被 embed 引用)→ Discord feed 放大顯示,比內嵌 embed 明顯。
+export function imageMessage(buf: Buffer, name: string) {
+  return { files: [new AttachmentBuilder(buf, { name })] };
 }
