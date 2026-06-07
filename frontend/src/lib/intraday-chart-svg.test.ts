@@ -11,6 +11,24 @@ function candle(min: number, close: number): IntradayCandle {
   return { date: `2026-06-05T${hh}:${mm}:00.000+08:00`, open: close, high: close, low: close, close, volume: 100, average: close };
 }
 
+// 從 renderToStaticMarkup 的 SVG 字串抽出每個 <text> 的實際 x / font-size / text-anchor / 內容。
+// 用來「真的」量 label 渲染後落點,而非只驗 geometry 算術。
+function extractTextElements(svg: string): Array<{ x: number; fontSize: number; textAnchor: string; text: string }> {
+  const out: Array<{ x: number; fontSize: number; textAnchor: string; text: string }> = [];
+  const re = /<text\b([^>]*)>(.*?)<\/text>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(svg)) !== null) {
+    const attrs = m[1];
+    const x = Number(/\bx="([-\d.]+)"/.exec(attrs)?.[1]);
+    const fontSize = Number(/\bfont-size="([-\d.]+)"/.exec(attrs)?.[1]);
+    const textAnchor = /\btext-anchor="([^"]+)"/.exec(attrs)?.[1] ?? "start"; // SVG 預設 start
+    if (Number.isFinite(x) && Number.isFinite(fontSize)) {
+      out.push({ x, fontSize, textAnchor, text: m[2] });
+    }
+  }
+  return out;
+}
+
 const FLAGS = { vwap: true, cdp: true, camarilla: false, volume: true, ma: true };
 
 describe("computeIntradayGeometry", () => {
@@ -154,15 +172,28 @@ it("scale=1.6:圖內 label 字級放大到 24(font-size:24)", () => {
   expect(svg).not.toContain('font-size="15"'); // 原始字級不該再出現
 });
 
-it("scale=1.6:中價股最長 CDP label(6 字含 *)右緣不超出畫布", () => {
-  // 384.5* 是 formatTickPrice 下最長的 label(100–500 元股,1 位小數 + *)
+it("scale=1.6:最長 CDP label 從 padR 右緣 margin 起排,字級 24、向右展開(幾何位置)", () => {
+  // 純 geometry 位置測試 —— 釘住 label 的「起排錨點」與「字級」這兩個程式碼決定、
+  // 且可在無字型量測引擎下確定的事實。
+  // 不宣稱「不超出畫布」:24px 下 6 字寬的實際像素端視 resvg+JhengHei 字型 metrics,
+  // jsdom/vitest 無法量;保守上界(6×24×0.62≈90px > 可用 84px)甚至可能超界。
+  // 真正的像素邊界把關交給盤中肉眼複核(設計 §6 / 計畫 Task 4),這裡只守落點與字級。
+  // 384.5* 是 formatTickPrice 下最長的 label(100–500 元股,1 位小數 + *)。
   const candles = [candle(540, 384.5), candle(810, 384.5)];
   const cdp = { ah: 400, nh: 392, cdp: 384.5, nl: 376, al: 368, as_of_date: "2026-06-04" };
-  const g = computeIntradayGeometry({ candles, prevClose: 384.5, cdp, camarilla: null, ma: null,
-    flags: { vwap: false, cdp: true, camarilla: false, volume: false, ma: false }, scale: 1.6 });
-  // label 從右側 margin 起排:錨點 x = CHART_W - padR + 6;餘給 label 的寬 = padR - 6
-  const labelRoom = g.padR - 6;
-  // 最長 6 字 @ 24px、JhengHei 數字 ~0.5em → 保守上界 6 * 24 * 0.62 ≈ 89px... 但實測 padR=90 足夠
-  expect(g.padR).toBe(90);
-  expect(labelRoom).toBeGreaterThanOrEqual(80); // 容 6 字(~65–80px)有餘
+  const input = {
+    candles, prevClose: 384.5, cdp, camarilla: null, ma: null,
+    flags: { vwap: false, cdp: true, camarilla: false, volume: false, ma: false }, scale: 1.6,
+  };
+  const g = computeIntradayGeometry(input);
+  const svg = renderToStaticMarkup(createElement(IntradayChartStatic, { ...input, geometry: g }));
+
+  const cdpLabels = extractTextElements(svg).filter((el) => el.text.endsWith("*"));
+  expect(cdpLabels.some((el) => el.text === "384.5*")).toBe(true); // 最長 6 字 label 真的被渲染
+  for (const el of cdpLabels) {
+    expect(el.textAnchor).toBe("start");                  // 向右展開,錨點是左緣
+    expect(el.fontSize).toBe(24);                          // 15 * 1.6,跟著 fontScale 放大
+    expect(el.x).toBe(CHART_W - g.padR + 6);               // 錨點 = 右側 margin 起排點(=736)
+  }
+  expect(g.padR).toBe(90);                                 // round(56 * 1.6),撐出右側 margin
 });
