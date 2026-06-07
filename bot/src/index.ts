@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, Events, type Message, type BaseMessageOption
 import { config, requireToken } from "./config";
 import { parseSymbolCommand } from "./symbol";
 import { buildSymbolMessages } from "./messages";
+import { startPushServer } from "./push-server";
 
 async function handle(msg: Message, symbol: string) {
   let messages: BaseMessageOptions[];
@@ -31,7 +32,10 @@ const client = new Client({
   ],
 });
 
-client.once(Events.ClientReady, (c) => console.log(`[bot] 上線:${c.user.tag}`));
+client.once(Events.ClientReady, (c) => {
+  console.log(`[bot] 上線:${c.user.tag}`);
+  startPushServer(c);   // 登入後才起 server,確保能 fetch/send 頻道
+});
 
 client.on(Events.MessageCreate, (msg) => {
   if (msg.author.bot) return;
