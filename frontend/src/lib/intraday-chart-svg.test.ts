@@ -48,6 +48,28 @@ describe("computeIntradayGeometry", () => {
     expect(g.filteredCandles).toEqual([]);
     expect(g.polyClose).toBe("");
   });
+
+  it("scale=1.6:effective padding 與 fontScale 隨 scale 放大", () => {
+    const candles = [candle(540, 100), candle(810, 100)];
+    const g = computeIntradayGeometry({ candles, prevClose: 100, cdp: null, camarilla: null, ma: null, flags: FLAGS, scale: 1.6 });
+    expect(g.fontScale).toBe(1.6);
+    expect(g.padL).toBe(90);   // round(56 * 1.6)
+    expect(g.padR).toBe(90);
+    expect(g.padT).toBe(19);   // round(12 * 1.6)
+    expect(g.padB).toBe(45);   // round(28 * 1.6)
+    // scaleX 內緣跟著 effective padding 走
+    expect(g.scaleX(540)).toBeCloseTo(90, 5);
+    expect(g.scaleX(810)).toBeCloseTo(CHART_W - 90, 5);
+  });
+
+  it("不傳 scale:padding/fontScale 為原值(網頁回歸保護)", () => {
+    const candles = [candle(540, 100), candle(810, 100)];
+    const g = computeIntradayGeometry({ candles, prevClose: 100, cdp: null, camarilla: null, ma: null, flags: FLAGS });
+    expect(g.fontScale).toBe(1);
+    expect(g.padL).toBe(56);
+    expect(g.padR).toBe(56);
+    expect(g.scaleX(810)).toBeCloseTo(CHART_W - 56, 5);
+  });
 });
 
 it("IntradayChartStatic 輸出 SVG snapshot(防漂移)", () => {

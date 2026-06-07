@@ -48,12 +48,17 @@ export interface IntradayChartInput {
   ma: MaLevels | null;
   flags: ChartFlags;
   theme?: ChartTheme;
+  // 圖內元素(字級/留白/間距/線寬)相對畫布的放大倍率。網頁=1(預設、不變),bot=1.6。
+  // 畫布總尺寸 CHART_W/CHART_H/VOL_H 不隨 scale 變 —— 只放大裡面的內容,即字佔比變大。
+  scale?: number;
 }
 
 export interface IntradayGeometry {
   yMin: number; yMax: number;
   scaleX: (m: number) => number;
   scaleY: (v: number) => number;
+  padL: number; padR: number; padT: number; padB: number;  // effective(已 ×scale、四捨五入)
+  fontScale: number;                                        // = scale,給 IntradayChartStatic 算字級/線寬
   polyClose: string; polyVwap: string;
   visibleCdpKeys: Array<"ah" | "nh" | "cdp" | "nl" | "al">;
   visibleCamKeys: Array<"h4" | "h3" | "h2" | "h1" | "l1" | "l2" | "l3" | "l4">;
@@ -82,6 +87,13 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
   const { candles, prevClose, cdp, camarilla, ma, flags } = input;
   const theme = input.theme ?? INTRADAY_THEME;
 
+  const scale = input.scale ?? 1;
+  const padL = Math.round(PAD_L * scale);
+  const padR = Math.round(PAD_R * scale);
+  const padT = Math.round(PAD_T * scale);
+  const padB = Math.round(PAD_B * scale);
+  const labelGap = Math.round(20 * scale);  // resolveCollisions 撐開間距,跟著字放大
+
   // 擋試撮 / 盤後 candle:只留正盤時段(9:00 ≤ 分鐘 ≤ 13:30)
   const filteredCandles: IntradayCandle[] = candles.filter((c) => {
     const m = minuteOfDay(c.date);
@@ -92,6 +104,7 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
     return {
       yMin: 0, yMax: 0,
       scaleX: () => 0, scaleY: () => 0,
+      padL, padR, padT, padB, fontScale: scale,
       polyClose: "", polyVwap: "",
       visibleCdpKeys: [] as Array<"ah" | "nh" | "cdp" | "nl" | "al">,
       visibleCamKeys: [] as Array<"h4" | "h3" | "h2" | "h1" | "l1" | "l2" | "l3" | "l4">,
@@ -144,13 +157,13 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
     if (filteredCandles[i].low < todayLow) { todayLow = filteredCandles[i].low; todayLowIdx = i; }
   }
 
-  const xRange = CHART_W - PAD_L - PAD_R;
-  const yRange = CHART_H - PAD_T - PAD_B;
+  const xRange = CHART_W - padL - padR;
+  const yRange = CHART_H - padT - padB;
   // X 軸固定 9:00~13:30(分鐘 540~810);scaleX 吃「分鐘 of day」非 candle index
   const minutesByIdx = filteredCandles.map((c) => minuteOfDay(c.date));
   const scaleX = (m: number) =>
-    PAD_L + ((m - MARKET_OPEN_MIN) / TRADING_MINUTES) * xRange;
-  const scaleY = (v: number) => PAD_T + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
+    padL + ((m - MARKET_OPEN_MIN) / TRADING_MINUTES) * xRange;
+  const scaleY = (v: number) => padT + (1 - (v - yMin) / (yMax - yMin || 1)) * yRange;
   const polyClose = filteredCandles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.close)}`).join(" ");
   const polyVwap = filteredCandles.map((c, i) => `${scaleX(minutesByIdx[i])},${scaleY(c.average)}`).join(" ");
 
@@ -216,12 +229,13 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
   }
   const resolvedLabels = resolveCollisions(
     labelInputs,
-    20,
-    [PAD_T, CHART_H - PAD_B],
+    labelGap,
+    [padT, CHART_H - padB],
   );
 
   return {
     yMin, yMax, scaleX, scaleY,
+    padL, padR, padT, padB, fontScale: scale,
     polyClose, polyVwap, visibleCdpKeys, visibleCamKeys, visibleMaKeys,
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
     maxVolume, scaleVolY, volBarW,
