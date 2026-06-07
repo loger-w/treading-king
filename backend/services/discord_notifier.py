@@ -1,22 +1,24 @@
-"""Discord notifier — 訊號觸發推送(跟 alerts.py 系統異常 webhook 分開)。"""
+"""Discord notifier — 訊號觸發 → POST 給 bot 的 localhost 入口(bot 端渲三則圖卡)。
+
+跟 alerts.py 的系統異常 webhook 是兩條獨立路徑。
+"""
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_WEBHOOK_URL: str | None = None
+_PUSH_URL: str | None = None
 
 
-def _get_webhook_url() -> str | None:
-    global _WEBHOOK_URL
-    if _WEBHOOK_URL is None:
-        _WEBHOOK_URL = os.getenv("SIGNALS_DISCORD_WEBHOOK_URL", "").strip() or ""
-    return _WEBHOOK_URL or None
+def _get_push_url() -> str | None:
+    global _PUSH_URL
+    if _PUSH_URL is None:
+        _PUSH_URL = os.getenv("SIGNALS_BOT_PUSH_URL", "").strip() or ""
+    return _PUSH_URL or None
 
 
 async def send_signal(
@@ -29,39 +31,22 @@ async def send_signal(
     cdp_touch: dict | None = None,
     ma_touch: dict | None = None,
 ) -> None:
-    """訊號觸發推 Discord;失敗 silent log(不影響主流程)。"""
-    url = _get_webhook_url()
+    """訊號觸發 → POST 給 bot;URL 未設則 no-op。失敗 silent log,不影響主流程。"""
+    url = _get_push_url()
     if not url:
         return
-
-    fields: list[dict[str, Any]] = [
-        {"name": "代號", "value": symbol, "inline": True},
-        {"name": "價格", "value": f"{price:.2f}", "inline": True},
-        {"name": "量", "value": str(volume), "inline": True},
-    ]
-    if cdp_touch:
-        fields.append({
-            "name": "CDP",
-            "value": f"{cdp_touch['level']} ({cdp_touch.get('role', 'touch')})",
-            "inline": True,
-        })
-    if ma_touch:
-        fields.append({
-            "name": "MA",
-            "value": f"{ma_touch['level']} ({ma_touch.get('role', 'touch')})",
-            "inline": True,
-        })
-
-    embed = {
-        "title": f"📈 {rule_name}",
-        "description": f"`{symbol}` 觸發",
-        "color": 0x32D27C,
-        "fields": fields,
-        "timestamp": triggered_at_iso,
+    payload = {
+        "symbol": symbol,
+        "rule_name": rule_name,
+        "price": price,
+        "volume": volume,
+        "triggered_at": triggered_at_iso,
+        "cdp_touch": cdp_touch,
+        "ma_touch": ma_touch,
     }
-
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(url, json={"embeds": [embed]})
+        # 3s timeout:bot 立刻回 202,渲圖走 bot 背景;localhost 連不上(bot 沒開)會很快失敗
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(url, json=payload)
     except Exception as e:
-        logger.warning("Discord signal notify failed: %s", e)
+        logger.warning("Discord signal push failed: %s", e)
