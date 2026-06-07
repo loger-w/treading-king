@@ -99,7 +99,7 @@ export interface PushDeps {
 
 export async function handleSignalPush(p: SignalPayload, deps: PushDeps): Promise<void> {
   if (!deps.channelConfigured) {
-    console.warn(`[bot] 訊號頻道未設定(SIGNALS_DISCORD_CHANNEL_ID),略過:${p.symbol} / ${p.rule_name}`);
+    console.warn(`[bot] 訊號頻道不可用(未設 SIGNALS_DISCORD_CHANNEL_ID 或抓不到),略過:${p.symbol} / ${p.rule_name}`);
     return;
   }
   const messages = await deps.buildSymbolMessages(p.symbol);
