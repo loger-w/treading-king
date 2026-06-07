@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { renderChartPng, safeRender } from "./render";
+import { renderChartPng, safeRender, renderQuotePng, buildChartSvg, fitTitle } from "./render";
 import type { IntradayCandle, CdpLevels, MaLevels } from "../../frontend/src/lib/api";
+import type { QuoteResp } from "./data";
 
 // 輔助:建立一根分時 candle(時間格式對齊後端 ISO+08:00)
 function candle(hourMin: number, close: number, volume = 1000): IntradayCandle {
@@ -72,5 +73,55 @@ describe("safeRender — 產圖失敗降級(review #1 / spec §8 不讓整則炸
   it("render 正常時原樣回傳 Buffer", () => {
     const b = Buffer.from([0x89, 0x50]);
     expect(safeRender(() => b)).toBe(b);
+  });
+});
+
+describe("buildChartSvg — 字級放大 + 標題帶", () => {
+  const base = {
+    candles: CANDLES, prevClose: 588, cdp: CDP, camarilla: null, ma: MA,
+    flags: { vwap: true, cdp: true, camarilla: false, volume: true, ma: true },
+    symbol: "2330", name: "台積電", lastClose: 600, change: 12, changePct: 2.04,
+  };
+
+  it("圖內字級放大到 24(共用層 scale 1.6)", () => {
+    expect(buildChartSvg(base)).toContain('font-size="24"');
+  });
+
+  it("標題帶字級放大到 33(150%)", () => {
+    expect(buildChartSvg(base)).toContain('font-size="33"');
+  });
+
+  it("含量時 viewBox 高度 = TOTAL_H(748) + TITLE_H(58) = 806", () => {
+    expect(buildChartSvg(base)).toContain('height="806"');
+  });
+});
+
+describe("fitTitle — 超長股名截斷,避免撞右側現價", () => {
+  it("一般長度原樣保留", () => {
+    expect(fitTitle("2330", "台積電")).toBe("2330 台積電");
+  });
+  it("超長截斷補 …,長度受限", () => {
+    const out = fitTitle("00940", "元大臺灣價值高息成分股ETF基金");
+    expect(out.endsWith("…")).toBe(true);
+    expect([...out].length).toBeLessThanOrEqual(14);
+  });
+  it("name 為 null 只回代號", () => {
+    expect(fitTitle("2330", null)).toBe("2330");
+  });
+});
+
+describe("renderQuotePng — 五檔圖 pipeline smoke test", () => {
+  it("回傳有效 PNG(magic bytes + size > 1000)", () => {
+    const quote: QuoteResp = {
+      bids: [{ price: 384, size: 5 }, { price: 383.5, size: 1 }],
+      asks: [{ price: 385, size: 13 }, { price: 386, size: 1 }],
+      is_limit_up_bid: false, is_limit_up_ask: false,
+      is_limit_down_bid: false, is_limit_down_ask: false,
+    };
+    const png = renderQuotePng(quote);
+    expect(png).toBeInstanceOf(Buffer);
+    expect(png.length).toBeGreaterThan(1000);
+    const MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(png.subarray(0, 8)).toEqual(MAGIC);
   });
 });

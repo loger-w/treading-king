@@ -1,9 +1,9 @@
 import { getCandles, getCdp, getMa, getName } from "./data";
 import type { QuoteResp } from "./data";
 import { renderChartPng, safeRender } from "./render";
-import { buildReply } from "./embed";
+import { buildReply, imageMessage } from "./embed";
 import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, minuteOfDay } from "../../frontend/src/lib/intraday-time";
-import type { MessageReplyOptions } from "discord.js";
+import type { BaseMessageOptions } from "discord.js";
 
 // orchestration 的外部相依抽成介面,測試可注入假資料／強迫產圖失敗(review #5)
 export interface ReplyDeps {
@@ -24,7 +24,8 @@ export async function loadSlow(symbol: string, deps: ReplyDeps = realDeps) {
     deps.getMa(symbol).catch(() => null),
     deps.getName(symbol),
   ]);
-  const flags = { vwap: true, cdp: true, camarilla: false, volume: true, ma: true };
+  // bot 推播的分時圖不畫 MA5/MA20 兩條水平線;embed 的「均線」欄位仍保留(走 s.ma,不吃 flags)
+  const flags = { vwap: true, cdp: true, camarilla: false, volume: true, ma: false };
   const intraday = candlesR.data.filter((c) => {
     const m = minuteOfDay(c.date);
     return m >= MARKET_OPEN_MIN && m <= MARKET_CLOSE_MIN;
@@ -58,21 +59,29 @@ export async function loadSlow(symbol: string, deps: ReplyDeps = realDeps) {
 
 export type SlowResult = Awaited<ReturnType<typeof loadSlow>>;
 
-// 把 slow 結果 + 即時五檔組成 discord 回覆:空盤前 → 純文字(仍給 CDP/MA5);否則 → buildReply。
-// 純函式,好測;降級判斷(png=null / quote=null)交給 buildReply。
-export function composeReply(symbol: string, s: SlowResult, quote: QuoteResp | null): MessageReplyOptions {
+// 組「三則」discord 訊息:① 文字(現價/CDP/均線)② 分時圖 ③ 五檔圖。
+// 圖各自獨立一則 → Discord 頂層附件放大顯示,比內嵌 embed 明顯;空盤前只回一則純文字。
+// 降級:某張圖 null 就跳過該則(不炸整體,spec §8)。
+export function composeReply(
+  symbol: string, s: SlowResult, quote: QuoteResp | null, quotePng: Buffer | null,
+): BaseMessageOptions[] {
   if (s.empty) {
-    return {
+    return [{
       content:
         `\`${symbol}\` 目前無分時資料(盤前/非交易日)。` +
         `CDP:${s.cdp ? `${s.cdp.cdp}` : "—"} MA5:${s.ma?.sma_5 ?? "—"}`,
-    };
+    }];
   }
-  return buildReply({
-    symbol, name: s.name,
-    lastClose: s.lastClose, change: s.change, changePct: s.changePct,
-    open: s.open, high: s.high, low: s.low,
-    vwap: s.vwap, volume: s.volume,
-    cdp: s.cdp, ma: s.ma, quote, png: s.png, asOf: s.asOf,
-  });
+  const messages: BaseMessageOptions[] = [
+    buildReply({
+      symbol, name: s.name,
+      lastClose: s.lastClose, change: s.change, changePct: s.changePct,
+      open: s.open, high: s.high, low: s.low,
+      vwap: s.vwap, volume: s.volume,
+      cdp: s.cdp, ma: s.ma, quote, asOf: s.asOf,
+    }),
+  ];
+  if (s.png) messages.push(imageMessage(s.png, "chart.png"));
+  if (quotePng) messages.push(imageMessage(quotePng, "quote.png"));
+  return messages;
 }
