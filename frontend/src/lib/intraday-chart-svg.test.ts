@@ -137,3 +137,32 @@ it("snapshot variant — Camarilla 開(8 線、CDP/MA 關)", () => {
     flags: { vwap: true, cdp: false, camarilla: true, volume: true, ma: false },
   })).toMatchSnapshot();
 });
+
+it("scale=1.6:圖內 label 字級放大到 24(font-size:24)", () => {
+  const candles = [candle(540, 100), candle(600, 103), candle(810, 102)];
+  const input = {
+    candles, prevClose: 100,
+    cdp: { ah: 108, nh: 104, cdp: 101, nl: 98, al: 95, as_of_date: "2026-06-04" },
+    camarilla: null, ma: null,
+    flags: { vwap: true, cdp: true, camarilla: false, volume: true, ma: false },
+    scale: 1.6,
+  };
+  const geometry = computeIntradayGeometry(input);
+  const svg = renderToStaticMarkup(createElement(IntradayChartStatic, { ...input, geometry }));
+  expect(svg).toContain('font-size="24"');   // 15 * 1.6
+  expect(svg).toContain('font-size="21"');   // 13 * 1.6(量區)
+  expect(svg).not.toContain('font-size="15"'); // 原始字級不該再出現
+});
+
+it("scale=1.6:中價股最長 CDP label(6 字含 *)右緣不超出畫布", () => {
+  // 384.5* 是 formatTickPrice 下最長的 label(100–500 元股,1 位小數 + *)
+  const candles = [candle(540, 384.5), candle(810, 384.5)];
+  const cdp = { ah: 400, nh: 392, cdp: 384.5, nl: 376, al: 368, as_of_date: "2026-06-04" };
+  const g = computeIntradayGeometry({ candles, prevClose: 384.5, cdp, camarilla: null, ma: null,
+    flags: { vwap: false, cdp: true, camarilla: false, volume: false, ma: false }, scale: 1.6 });
+  // label 從右側 margin 起排:錨點 x = CHART_W - padR + 6;餘給 label 的寬 = padR - 6
+  const labelRoom = g.padR - 6;
+  // 最長 6 字 @ 24px、JhengHei 數字 ~0.5em → 保守上界 6 * 24 * 0.62 ≈ 89px... 但實測 padR=90 足夠
+  expect(g.padR).toBe(90);
+  expect(labelRoom).toBeGreaterThanOrEqual(80); // 容 6 字(~65–80px)有餘
+});

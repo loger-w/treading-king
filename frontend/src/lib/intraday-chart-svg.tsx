@@ -259,7 +259,10 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     visibleCdpKeys, visibleCamKeys, visibleMaKeys,
     todayHigh, todayHighIdx, todayLow, todayLowIdx,
     maxVolume, volBarW, resolvedLabels, minutesByIdx, filteredCandles,
+    padL, padR, padT, padB, fontScale,
   } = props.geometry;
+  const fs = (base: number) => Math.round(base * fontScale);  // 字級:scale=1 時 === 原值
+  const sw = (base: number) => base * fontScale;              // 線寬/marker 半徑
   const baseline = props.prevClose ?? (filteredCandles[0]?.open ?? 0);
   if (filteredCandles.length === 0) return null;
 
@@ -280,16 +283,16 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         createElement("defs", null,
           createElement("clipPath", { id: "above-baseline" },
             createElement("rect", {
-              x: PAD_L, y: PAD_T,
-              width: CHART_W - PAD_L - PAD_R,
-              height: Math.max(0, baselineY - PAD_T),
+              x: padL, y: padT,
+              width: CHART_W - padL - padR,
+              height: Math.max(0, baselineY - padT),
             }),
           ),
           createElement("clipPath", { id: "below-baseline" },
             createElement("rect", {
-              x: PAD_L, y: baselineY,
-              width: CHART_W - PAD_L - PAD_R,
-              height: Math.max(0, CHART_H - PAD_B - baselineY),
+              x: padL, y: baselineY,
+              width: CHART_W - padL - padR,
+              height: Math.max(0, CHART_H - padB - baselineY),
             }),
           ),
         ),
@@ -314,15 +317,15 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
           const isBaseline = vTick === baselineTick;
           return createElement("g", { key: vTick },
             createElement("line", {
-              x1: PAD_L, y1: y, x2: CHART_W - PAD_R, y2: y,
+              x1: padL, y1: y, x2: CHART_W - padR, y2: y,
               stroke: t.line,
               strokeWidth: isBaseline ? 0.8 : 0.5,
               opacity: isBaseline ? 1 : 0.55,
             }),
             createElement("text", {
-              x: PAD_L - 4, y: y + 3, textAnchor: "end",
+              x: padL - 4, y: y + 3, textAnchor: "end",
               fill: isBaseline ? t.ink : t.inkDim,
-              fontSize: 15, fontFamily: t.fontFamily,
+              fontSize: fs(15), fontFamily: t.fontFamily,
               style: { fontVariantNumeric: "tabular-nums" },
             }, formatTickPrice(vTick)),
           );
@@ -335,8 +338,8 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     flags.cdp && cdp && visibleCdpKeys.length > 0 && createElement(Fragment, null,
       ...visibleCdpKeys.map((k) => createElement("line", {
         key: k,
-        x1: PAD_L, y1: scaleY(cdp[k]), x2: CHART_W - PAD_R, y2: scaleY(cdp[k]),
-        stroke: t.accent, strokeWidth: "0.6", strokeDasharray: "4 3", opacity: "0.6",
+        x1: padL, y1: scaleY(cdp[k]), x2: CHART_W - padR, y2: scaleY(cdp[k]),
+        stroke: t.accent, strokeWidth: sw(0.6), strokeDasharray: "4 3", opacity: "0.6",
       })),
     ),
 
@@ -347,9 +350,9 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         const isMain = k === "h3" || k === "h4" || k === "l3" || k === "l4";
         return createElement("line", {
           key: `cam-${k}`,
-          x1: PAD_L, y1: scaleY(camarilla[k]), x2: CHART_W - PAD_R, y2: scaleY(camarilla[k]),
+          x1: padL, y1: scaleY(camarilla[k]), x2: CHART_W - padR, y2: scaleY(camarilla[k]),
           stroke: t.camarilla,
-          strokeWidth: isMain ? "0.8" : "0.6",
+          strokeWidth: sw(isMain ? 0.8 : 0.6),
           strokeDasharray: "2 4",
           opacity: isMain ? "0.75" : "0.4",
         });
@@ -365,9 +368,9 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         const isShort = k === "sma_5";
         return createElement("line", {
           key: k,
-          x1: PAD_L, y1: scaleY(v), x2: CHART_W - PAD_R, y2: scaleY(v),
+          x1: padL, y1: scaleY(v), x2: CHART_W - padR, y2: scaleY(v),
           stroke: isShort ? t.ma5 : t.ma20,
-          strokeWidth: "0.6", strokeDasharray: "2 4", opacity: "0.7",
+          strokeWidth: sw(0.6), strokeDasharray: "2 4", opacity: "0.7",
         });
       }),
     ),
@@ -376,20 +379,20 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     // label 由 resolvedLabels 處理
     flags.vwap && polyVwap && createElement("polyline", {
       points: polyVwap, fill: "none",
-      stroke: t.inkDim, strokeWidth: "1", strokeDasharray: "3 2",
+      stroke: t.inkDim, strokeWidth: sw(1), strokeDasharray: "3 2",
     }),
 
     // ── 7. 右側 margin label(resolvedLabels) ─────────────────────────────────
     // 自動碰撞撐開,需要時加引導線
     ...resolvedLabels.map((lbl, i) => createElement("g", { key: `lbl-${i}` },
       lbl.y !== lbl.originalY && createElement("line", {
-        x1: CHART_W - PAD_R, y1: lbl.originalY,
-        x2: CHART_W - PAD_R + 4, y2: lbl.y,
-        stroke: lbl.color, strokeWidth: "0.7", opacity: "0.5",
+        x1: CHART_W - padR, y1: lbl.originalY,
+        x2: CHART_W - padR + 4, y2: lbl.y,
+        stroke: lbl.color, strokeWidth: sw(0.7), opacity: "0.5",
       }),
       createElement("text", {
-        x: CHART_W - PAD_R + 6, y: lbl.y + 3, textAnchor: "start",
-        fill: lbl.color, fontSize: 15, fontFamily: t.fontFamily,
+        x: CHART_W - padR + 6, y: lbl.y + 3, textAnchor: "start",
+        fill: lbl.color, fontSize: fs(15), fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums" },
       }, lbl.text),
     )),
@@ -399,17 +402,17 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     polyClose && baseline > 0 && createElement(Fragment, null,
       createElement("polyline", {
         points: polyClose, fill: "none",
-        stroke: t.bull, strokeWidth: "1", clipPath: "url(#above-baseline)",
+        stroke: t.bull, strokeWidth: sw(1), clipPath: "url(#above-baseline)",
       }),
       createElement("polyline", {
         points: polyClose, fill: "none",
-        stroke: t.bear, strokeWidth: "1", clipPath: "url(#below-baseline)",
+        stroke: t.bear, strokeWidth: sw(1), clipPath: "url(#below-baseline)",
       }),
     ),
     // baseline 沒值時(極罕見)fallback 單條白線
     polyClose && !(baseline > 0) && createElement("polyline", {
       points: polyClose, fill: "none",
-      stroke: t.ink, strokeWidth: "1",
+      stroke: t.ink, strokeWidth: sw(1),
     }),
 
     // ── 9. 今日高低 marker ────────────────────────────────────────────────────
@@ -417,7 +420,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     // (例:低點若仍在平盤上,代表整天都漲,低點也用紅色)
     todayHighIdx >= 0 && createElement("g", null,
       createElement("circle", {
-        cx: scaleX(minutesByIdx[todayHighIdx]), cy: scaleY(todayHigh), r: "2.5",
+        cx: scaleX(minutesByIdx[todayHighIdx]), cy: scaleY(todayHigh), r: sw(2.5),
         fill: priceColor(todayHigh, baseline, t),
       }),
       createElement("text", {
@@ -425,13 +428,13 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         y: scaleY(todayHigh) - 6,
         textAnchor: "middle",
         fill: priceColor(todayHigh, baseline, t),
-        fontSize: 15, fontFamily: t.fontFamily,
+        fontSize: fs(15), fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums", fontWeight: 500 },
       }, formatTickPrice(todayHigh)),
     ),
     todayLowIdx >= 0 && createElement("g", null,
       createElement("circle", {
-        cx: scaleX(minutesByIdx[todayLowIdx]), cy: scaleY(todayLow), r: "2.5",
+        cx: scaleX(minutesByIdx[todayLowIdx]), cy: scaleY(todayLow), r: sw(2.5),
         fill: priceColor(todayLow, baseline, t),
       }),
       createElement("text", {
@@ -439,7 +442,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
         y: scaleY(todayLow) + 13,
         textAnchor: "middle",
         fill: priceColor(todayLow, baseline, t),
-        fontSize: 15, fontFamily: t.fontFamily,
+        fontSize: fs(15), fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums", fontWeight: 500 },
       }, formatTickPrice(todayLow)),
     ),
@@ -449,20 +452,20 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
     flags.volume && filteredCandles.length > 0 && createElement("g", null,
       // 分隔線：主圖底部與成交量 pane 之間
       createElement("line", {
-        x1: PAD_L, y1: CHART_H + VOL_GAP / 2,
-        x2: CHART_W - PAD_R, y2: CHART_H + VOL_GAP / 2,
+        x1: padL, y1: CHART_H + VOL_GAP / 2,
+        x2: CHART_W - padR, y2: CHART_H + VOL_GAP / 2,
         stroke: t.line, strokeWidth: "0.5", opacity: "0.6",
       }),
       // 最大值 label（top-right of pane）
       createElement("text", {
-        x: CHART_W - PAD_R - 2, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
-        textAnchor: "end", fill: t.inkDim, fontSize: 13, fontFamily: t.fontFamily,
+        x: CHART_W - padR - 2, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
+        textAnchor: "end", fill: t.inkDim, fontSize: fs(13), fontFamily: t.fontFamily,
         style: { fontVariantNumeric: "tabular-nums" },
       }, formatVolume(maxVolume)),
       // "VOL" label（top-left）
       createElement("text", {
-        x: PAD_L - 4, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
-        textAnchor: "end", fill: t.inkDim, fontSize: 13, fontFamily: t.fontFamily,
+        x: padL - 4, y: CHART_H + VOL_GAP + VOL_PAD_T + 8,
+        textAnchor: "end", fill: t.inkDim, fontSize: fs(13), fontFamily: t.fontFamily,
         style: { textTransform: "uppercase" },
       }, "Vol"),
       // bars
@@ -489,7 +492,7 @@ export function IntradayChartStatic(props: IntradayChartStaticProps) {
       { min: 810, label: "13:30" },
     ].map(({ min, label }) => createElement("text", {
       key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle",
-      fill: t.inkDim, fontSize: 15, fontFamily: t.fontFamily,
+      fill: t.inkDim, fontSize: fs(15), fontFamily: t.fontFamily,
       style: { fontVariantNumeric: "tabular-nums" },
     }, label)),
   );
