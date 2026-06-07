@@ -14,7 +14,7 @@ import type { QuoteResp } from "./data";
 // Windows 本機一定有 Microsoft JhengHei(正黑體),可同時顯示中文與數字。
 // 若 bot/assets/ 下有自帶字型則額外掛入並優先使用(選填,沒有也能跑)。
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../assets");
-const TITLE_H = 44;
+const TITLE_H = 58;  // 標題帶 150% 字級(33px)需要更高的帶子
 
 // 字型 family 名稱 — 對齊 loadSystemFonts + defaultFontFamily 設定
 const FONT_FAMILY = "Microsoft JhengHei";
@@ -22,6 +22,15 @@ const FONT_FAMILY = "Microsoft JhengHei";
 // INTRADAY_THEME 預設 fontFamily 是 "Inter Tight, system-ui, sans-serif"。
 // Override 成 Windows CJK 字型,確保 resvg 能正確 render 中文與數字。
 const THEME = { ...INTRADAY_THEME, fontFamily: `"${FONT_FAMILY}", sans-serif` };
+
+// 標題帶左側「代號 + 名稱」過長會撞到右側現價(33px 字、820 寬)。
+// 上界 14 字元(代號 ~5 + 空格 + 中文名),超過截斷補 …。
+export function fitTitle(symbol: string, name: string | null): string {
+  const full = `${symbol}${name ? " " + name : ""}`;
+  const MAX = 14;
+  const chars = [...full];
+  return chars.length > MAX ? chars.slice(0, MAX - 1).join("") + "…" : full;
+}
 
 // 掃描 bot/assets/*.ttf 選填字型(授權 OFL 可內嵌);模組載入時執行一次
 // 用 existsSync guard — 目錄不存在或無 .ttf 都安全略過
@@ -38,17 +47,17 @@ function discoverFontFiles(): string[] {
 
 const EXTRA_FONTS = discoverFontFiles();
 
-export function renderChartPng(args: IntradayChartInput & {
+export function buildChartSvg(args: IntradayChartInput & {
   symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
-}): Buffer {
-  const input: IntradayChartInput = { ...args, theme: THEME };
+}): string {
+  const input: IntradayChartInput = { ...args, theme: THEME, scale: 1.6 };  // bot 圖內字 160%
   const geometry = computeIntradayGeometry(input);
   const dirColor = args.change > 0 ? THEME.bull : args.change < 0 ? THEME.bear : THEME.ink;
   const chartH = args.flags.volume ? TOTAL_H : CHART_H;
   const totalH = chartH + TITLE_H;
   const arrow = args.change > 0 ? "▲" : args.change < 0 ? "▾" : "—";
 
-  const svg = renderToStaticMarkup(
+  return renderToStaticMarkup(
     createElement("svg", {
       xmlns: "http://www.w3.org/2000/svg",
       viewBox: `0 0 ${CHART_W} ${totalH}`,
@@ -56,14 +65,14 @@ export function renderChartPng(args: IntradayChartInput & {
       height: totalH,
     },
       createElement("rect", { x: 0, y: 0, width: CHART_W, height: totalH, fill: THEME.bg }),
-      // 標題帶:左側股票代號 + 名稱,右側現價與漲跌
+      // 標題帶:左側代號+名稱(超長截斷),右側現價與漲跌;字級 150% = 33
       createElement("text", {
-        x: 14, y: 30,
-        fontSize: 22, fontFamily: FONT_FAMILY, fill: THEME.ink,
-      }, `${args.symbol}${args.name ? " " + args.name : ""}`),
+        x: 14, y: 40,
+        fontSize: 33, fontFamily: FONT_FAMILY, fill: THEME.ink,
+      }, fitTitle(args.symbol, args.name)),
       createElement("text", {
-        x: CHART_W - 14, y: 30,
-        fontSize: 22, textAnchor: "end", fontFamily: FONT_FAMILY, fill: dirColor,
+        x: CHART_W - 14, y: 40,
+        fontSize: 33, textAnchor: "end", fontFamily: FONT_FAMILY, fill: dirColor,
       }, `${args.lastClose.toFixed(2)}  ${arrow}${Math.abs(args.change).toFixed(2)} (${args.changePct >= 0 ? "+" : ""}${args.changePct.toFixed(2)}%)`),
       // 圖表主體下移 TITLE_H,在標題帶下方
       createElement("g", { transform: `translate(0, ${TITLE_H})` },
@@ -71,8 +80,12 @@ export function renderChartPng(args: IntradayChartInput & {
       ),
     ),
   );
+}
 
-  return svgToPng(svg);
+export function renderChartPng(args: IntradayChartInput & {
+  symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
+}): Buffer {
+  return svgToPng(buildChartSvg(args));
 }
 
 // SVG 字串 → PNG buffer 的共用 resvg 管線(分時圖 / 五檔圖共用)。
