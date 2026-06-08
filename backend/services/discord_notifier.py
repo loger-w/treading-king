@@ -25,6 +25,7 @@ async def send_signal(
     *,
     rule_name: str,
     symbol: str,
+    name: str | None = None,
     price: float,
     volume: int,
     triggered_at_iso: str,
@@ -37,6 +38,7 @@ async def send_signal(
         return
     payload = {
         "symbol": symbol,
+        "name": name,
         "rule_name": rule_name,
         "price": price,
         "volume": volume,
