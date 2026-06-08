@@ -17,6 +17,7 @@ import { useSnapshotCache } from "../hooks/useSnapshotCache";
 import { useSymbolNames } from "../hooks/useSymbolNames";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
+import { buildSymbolNames } from "../lib/symbol-name";
 
 /**
  * 即時監控頁 — grid-4 等高 layout。
@@ -125,10 +126,11 @@ function MonitorInner() {
   );
   const resolvedNames = useSymbolNames(unknownTriggerSymbols);
 
-  // BookmarksPanel 回報的 symbol → name 映射(觸發歷史用);書籤/搜尋來源優先
+  // chart header / 觸發列表的 symbol → name:書籤/搜尋 + 監聽 + 觸發解析三來源合併。
+  // 監聽來源不可漏 — 純監聽股不在書籤、當日未觸發時名稱會變「—」。
   const symbolNames = useMemo(
-    () => ({ ...resolvedNames, ...bookmarkSymbolNames }),
-    [resolvedNames, bookmarkSymbolNames]
+    () => buildSymbolNames(resolvedNames, monitorItems, bookmarkSymbolNames),
+    [resolvedNames, monitorItems, bookmarkSymbolNames]
   );
 
   function handleSelect(sym: string) {

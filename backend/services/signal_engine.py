@@ -132,6 +132,12 @@ class SignalEngine:
         """
         symbols_needed: set[str] = await self._load_monitor_symbols()
 
+        # 逐出已不在 monitor_list 的 symbol。field_cache 是 _scope_includes /
+        # _scope_symbols 的唯一閘門,殘留會讓已從監聽移除的股票仍通過 scope 檢查,
+        # tick-driven 與 heartbeat 兩條路徑都繼續評估 → 持續觸發已刪股票的訊號。
+        for stale in self._field_cache.keys() - symbols_needed:
+            self._field_cache.pop(stale, None)
+
         # cdp 5 值 + 昨日收盤(供 day_change_pct 算式分母)
         cdp = get_cdp_service()
         for sym in symbols_needed:

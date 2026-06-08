@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IntradayCandle } from "../lib/api";
+import { resolveCandleUpdate } from "../lib/intraday-candle-update";
 
 const REFRESH_MS = 30_000;
 
@@ -7,13 +8,19 @@ export function useIntradayCandles(symbol: string | null) {
   const [candles, setCandles] = useState<IntradayCandle[]>([]);
   const [prevClose, setPrevClose] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 追蹤當前選中的 symbol,讓飛行中的舊請求回來時辨識出自己已過期。
+  const symbolRef = useRef(symbol);
+  symbolRef.current = symbol;
 
   const fetchOnce = useCallback(async (s: string) => {
     try {
       const r = await api.candlesIntraday(s);
-      setCandles(r.data ?? []);
-      setPrevClose(r.prev_close);
+      const next = resolveCandleUpdate(s, symbolRef.current, r.data);
+      if (next) setCandles(next);
+      // prevClose 同樣只在非過期回應時更新(過期回應整筆丟棄)
+      if (s === symbolRef.current) setPrevClose(r.prev_close);
     } catch (e) {
+      // 失敗不清掉已顯示的圖(免得變回載入中);下一輪輪詢會再試
       console.warn("useIntradayCandles fetch failed:", e);
     }
   }, []);

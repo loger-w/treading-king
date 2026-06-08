@@ -1,5 +1,5 @@
 """驗 signal_engine 改成讀 monitor_list 評估(不再讀 active.scope)。"""
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
@@ -123,3 +123,27 @@ async def test_fanout_continues_when_discord_raises(monkeypatch):
 
     broadcaster.broadcast.assert_awaited_once()
     writer.append.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refill_evicts_symbol_removed_from_monitor():
+    """從 monitor_list 移除的 symbol,refill 後不該殘留在 field_cache。
+
+    field_cache 是 _scope_includes / _scope_symbols 的唯一閘門;殘留會讓已刪除的
+    股票仍通過 scope 檢查 → tick-driven 與 heartbeat 兩條路徑都繼續評估、繼續
+    觸發訊號(對應使用者回報「刪除監聽後訊號仍跳」)。
+    """
+    engine = SignalEngine()
+    # 模擬先前 refill 後 cache 內有兩檔
+    engine._field_cache = {"2330": {"cdp": 600.0}, "2317": {"cdp": 100.0}}
+    # monitor_list 現在只剩 2317(2330 已被刪除)
+    engine._load_monitor_symbols = AsyncMock(return_value={"2317"})
+
+    with patch("services.signal_engine.get_cdp_service") as mock_cdp, \
+         patch("services.signal_engine.ma_service") as mock_ma:
+        mock_cdp.return_value.get = AsyncMock(return_value=None)
+        mock_ma.fetch_sma_5_20 = AsyncMock(return_value=(None, None))
+        await engine._refill_field_cache()
+
+    assert "2330" not in engine._field_cache   # 被刪的要被逐出
+    assert "2317" in engine._field_cache       # 還在 monitor 的要保留
