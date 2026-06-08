@@ -75,6 +75,15 @@ describe("formatBanner", () => {
     expect(b).toContain("｜ 2330 ｜");
     expect(b).not.toContain("undefined");
   });
+  it("CDP 中軸線(level cdp)→「碰 CDP 中軸」,不再 CDP CDP", () => {
+    const b = formatBanner({ ...base, cdp_touch: { level: "cdp", role: "resistance", touch_index: 9 } });
+    expect(b).toContain("碰 CDP 中軸");
+    expect(b).not.toContain("碰 CDP CDP");
+  });
+  it("CDP 其他線(level al)不受影響 → 碰 CDP AL", () => {
+    const b = formatBanner({ ...base, cdp_touch: { level: "al", role: "support", touch_index: 5 } });
+    expect(b).toContain("碰 CDP AL");
+  });
 });
 
 describe("withBanner", () => {
