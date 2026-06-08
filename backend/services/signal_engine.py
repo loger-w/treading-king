@@ -680,9 +680,11 @@ class SignalEngine:
         # 3. Discord notify(per-rule 開關;失敗 swallowed,不影響上面兩條)
         if active.notify_discord:
             try:
+                meta = get_local_store().market.get_symbol(symbol)
                 await discord_notifier.send_signal(
                     rule_name=active.name,
                     symbol=symbol,
+                    name=meta["name"] if meta else None,
                     price=tick.price,
                     volume=tick.size,
                     triggered_at_iso=data["triggered_at"],
