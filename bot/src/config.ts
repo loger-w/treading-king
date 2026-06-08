@@ -13,6 +13,9 @@ export const config = {
   bffApiKey: (process.env.BFF_API_KEY ?? "").trim(),
   allowedChannels: (process.env.BOT_ALLOWED_CHANNELS ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean),
+  // 訊號 push:目標頻道(空 = 不推)、push-server 埠
+  signalsChannelId: (process.env.SIGNALS_DISCORD_CHANNEL_ID ?? "").trim(),
+  pushPort: Number(process.env.BOT_PUSH_PORT ?? "8787") || 8787,
 };
 
 export function requireToken(): string {
