@@ -56,4 +56,13 @@ describe("push-server HTTP 殼", () => {
     expect(got).toHaveLength(1);
     expect(got[0].symbol).toBe("2330");
   });
+  it("中文 rule_name(UTF-8)→ onSignal 收到正確中文(HTTP 層 UTF-8 解碼)", async () => {
+    const got: SignalPayload[] = [];
+    const port = await start((p) => got.push(p));
+    const res = await fetch(`http://127.0.0.1:${port}/push-signal`, {
+      method: "POST", headers: json, body: JSON.stringify({ ...VALID, rule_name: "煙霧測試" }),
+    });
+    expect(res.status).toBe(202);
+    expect(got[0].rule_name).toBe("煙霧測試");
+  });
 });

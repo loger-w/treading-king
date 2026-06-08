@@ -102,7 +102,14 @@ export async function handleSignalPush(p: SignalPayload, deps: PushDeps): Promis
     console.warn(`[bot] 訊號頻道不可用(未設 SIGNALS_DISCORD_CHANNEL_ID 或抓不到),略過:${p.symbol} / ${p.rule_name}`);
     return;
   }
-  const messages = await deps.buildSymbolMessages(p.symbol);
+  let messages: BaseMessageOptions[];
+  try {
+    messages = await deps.buildSymbolMessages(p.symbol);
+  } catch (e) {
+    // 後端抓不到(重啟/斷線)→ 仍用 payload 送純文字橫幅,別讓訊號完全消失
+    console.warn(`[bot] ${p.symbol} 圖卡資料抓取失敗,退純文字橫幅:`, e);
+    messages = [{ content: "（圖卡資料暫時無法取得）" }];
+  }
   if (messages.length === 0) return;
   messages[0] = withBanner(messages[0], formatBanner(p));
   for (const m of messages) await deps.sendToChannel(m);

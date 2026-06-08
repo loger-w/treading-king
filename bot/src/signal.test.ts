@@ -105,4 +105,11 @@ describe("handleSignalPush", () => {
     await handleSignalPush(base, deps);
     expect(sent).toHaveLength(0);
   });
+  it("buildSymbolMessages 拋錯(後端不在/重啟)→ 仍送一則含橫幅的純文字,不漏訊號", async () => {
+    const { deps, sent } = makeDeps({ buildSymbolMessages: async () => { throw new Error("fetch failed"); } });
+    await handleSignalPush(base, deps);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].content).toContain("漲停打開碰CDP");        // 橫幅(規則名)仍送出
+    expect(sent[0].content).toContain("圖卡資料暫時無法取得");  // 標明降級原因
+  });
 });
