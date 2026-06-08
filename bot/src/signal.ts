@@ -10,6 +10,7 @@ export interface TouchMeta {
 export interface SignalPayload {
   symbol: string;
   rule_name: string;
+  name?: string | null;
   price: number;
   volume: number;
   triggered_at: string;   // UTC ISO(後端 datetime.isoformat())
@@ -42,6 +43,7 @@ export function parseSignalPayload(raw: unknown): SignalPayload | null {
   return {
     symbol: r.symbol,
     rule_name: r.rule_name,
+    name: typeof r.name === "string" ? r.name : undefined,
     price: r.price,
     volume: r.volume,
     triggered_at: r.triggered_at,
@@ -77,7 +79,8 @@ function taipeiTime(iso: string): string {
 }
 
 export function formatBanner(p: SignalPayload): string {
-  const lines = [`🔔 **${p.rule_name}** 觸發 ｜ 觸發價 ${p.price} ｜ ${taipeiTime(p.triggered_at)}`];
+  const target = p.name ? `${p.name} ${p.symbol}` : p.symbol;
+  const lines = [`🔔 **${p.rule_name}** 觸發 ｜ ${target} ｜ 觸發價 ${p.price} ｜ ${taipeiTime(p.triggered_at)}`];
   if (p.cdp_touch) lines.push(touchLine("CDP", p.cdp_touch));
   if (p.ma_touch) lines.push(touchLine("MA", p.ma_touch));
   return lines.join("\n");

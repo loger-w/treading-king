@@ -36,6 +36,10 @@ describe("parseSignalPayload", () => {
     const p = parseSignalPayload({ ...base, cdp_touch: { role: "support" } });
     expect(p!.cdp_touch).toBeNull();
   });
+  it("帶 name → 解析出;不帶 name 仍 valid(name undefined)", () => {
+    expect(parseSignalPayload({ ...base, name: "台積電" })!.name).toBe("台積電");
+    expect(parseSignalPayload({ ...base })!.name).toBeUndefined();
+  });
 });
 
 describe("formatBanner", () => {
@@ -61,6 +65,15 @@ describe("formatBanner", () => {
   it("無 cdp/ma → 只有標題一行", () => {
     const b = formatBanner({ ...base, cdp_touch: null, ma_touch: null });
     expect(b.split("\n")).toHaveLength(1);
+  });
+  it("有 name → 第一行含「名稱 代號」", () => {
+    const b = formatBanner({ ...base, name: "台積電" });
+    expect(b).toContain("台積電 2330");
+  });
+  it("無 name(期貨/查不到)→ 第一行只含代號,不出現 undefined / 多餘前綴空格", () => {
+    const b = formatBanner({ ...base, name: null });
+    expect(b).toContain("｜ 2330 ｜");
+    expect(b).not.toContain("undefined");
   });
 });
 
