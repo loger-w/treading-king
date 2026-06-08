@@ -36,6 +36,7 @@ async def test_send_signal_posts_to_bot_when_url_set(monkeypatch):
         await discord_notifier.send_signal(
             rule_name="漲停打開碰CDP",
             symbol="2330",
+            name="台積電",
             price=600.0,
             volume=10,
             triggered_at_iso="2026-06-08T05:30:00+00:00",
@@ -47,6 +48,7 @@ async def test_send_signal_posts_to_bot_when_url_set(monkeypatch):
         assert call.args[0] == "http://127.0.0.1:8787/push-signal"
         body = call.kwargs["json"]
         assert body["symbol"] == "2330"
+        assert body["name"] == "台積電"
         assert body["rule_name"] == "漲停打開碰CDP"
         assert body["price"] == 600.0
         assert body["volume"] == 10
@@ -69,3 +71,20 @@ async def test_send_signal_swallows_errors(monkeypatch, caplog):
             triggered_at_iso="2026-06-08T05:30:00+00:00",
         )
     assert "Discord signal push failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_send_signal_name_defaults_to_none_in_body(monkeypatch):
+    """未帶 name(期貨 / symbols 快取查不到)→ payload name 為 None。"""
+    monkeypatch.setenv("SIGNALS_BOT_PUSH_URL", "http://127.0.0.1:8787/push-signal")
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = False
+    fake_client.post = AsyncMock()
+    with patch("services.discord_notifier.httpx.AsyncClient", return_value=fake_client):
+        await discord_notifier.send_signal(
+            rule_name="t", symbol="MXFF6", price=20000.0, volume=1,
+            triggered_at_iso="2026-06-08T05:30:00+00:00",
+        )
+        body = fake_client.post.call_args.kwargs["json"]
+        assert body["name"] is None

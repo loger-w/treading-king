@@ -10,6 +10,7 @@ export interface TouchMeta {
 export interface SignalPayload {
   symbol: string;
   rule_name: string;
+  name?: string | null;
   price: number;
   volume: number;
   triggered_at: string;   // UTC ISO(後端 datetime.isoformat())
@@ -42,6 +43,7 @@ export function parseSignalPayload(raw: unknown): SignalPayload | null {
   return {
     symbol: r.symbol,
     rule_name: r.rule_name,
+    name: typeof r.name === "string" ? r.name : undefined,
     price: r.price,
     volume: r.volume,
     triggered_at: r.triggered_at,
@@ -53,9 +55,11 @@ export function parseSignalPayload(raw: unknown): SignalPayload | null {
 const ROLE_ZH: Record<string, string> = { support: "支撐", resistance: "壓力", touch: "觸碰" };
 const MA_LABEL: Record<string, string> = { sma_5: "MA5", sma_20: "MA20" };
 
-// CDP 線一律大寫顯示(AH/NH/CDP/NL/AL);MA 內部欄位 sma_5/sma_20 → MA5/MA20
+// CDP 線大寫顯示(AH/NH/NL/AL);中軸線代號本身就是 cdp,大寫會變「碰 CDP CDP」撞字 → 顯示「中軸」。
+// MA 內部欄位 sma_5/sma_20 → MA5/MA20。
 function levelLabel(kind: "CDP" | "MA", level: string): string {
-  return kind === "MA" ? MA_LABEL[level] ?? level.toUpperCase() : level.toUpperCase();
+  if (kind === "MA") return MA_LABEL[level] ?? level.toUpperCase();
+  return level.toLowerCase() === "cdp" ? "中軸" : level.toUpperCase();
 }
 
 function touchLine(kind: "CDP" | "MA", t: TouchMeta): string {
@@ -77,7 +81,8 @@ function taipeiTime(iso: string): string {
 }
 
 export function formatBanner(p: SignalPayload): string {
-  const lines = [`🔔 **${p.rule_name}** 觸發 ｜ 觸發價 ${p.price} ｜ ${taipeiTime(p.triggered_at)}`];
+  const target = p.name ? `${p.name} ${p.symbol}` : p.symbol;
+  const lines = [`🔔 **${p.rule_name}** 觸發 ｜ ${target} ｜ 觸發價 ${p.price} ｜ ${taipeiTime(p.triggered_at)}`];
   if (p.cdp_touch) lines.push(touchLine("CDP", p.cdp_touch));
   if (p.ma_touch) lines.push(touchLine("MA", p.ma_touch));
   return lines.join("\n");

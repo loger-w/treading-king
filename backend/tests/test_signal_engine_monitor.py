@@ -53,6 +53,11 @@ async def test_fanout_calls_discord_when_notify_enabled(monkeypatch):
     monkeypatch.setattr(se, "get_broadcaster", lambda: MagicMock(broadcast=AsyncMock()))
     fake_writer = MagicMock(append=MagicMock())
     monkeypatch.setattr(se, "get_signal_writer", lambda: fake_writer)
+    monkeypatch.setattr(
+        se, "get_local_store",
+        lambda: MagicMock(market=MagicMock(
+            get_symbol=lambda s: {"symbol": s, "name": "台積電", "market": "TSE", "is_etf": False})),
+    )
 
     engine = SignalEngine()
     active = ActiveSignalOut(
@@ -67,6 +72,7 @@ async def test_fanout_calls_discord_when_notify_enabled(monkeypatch):
     assert len(sent) == 1
     assert sent[0]["rule_name"] == "r1"
     assert sent[0]["symbol"] == "2330"
+    assert sent[0]["name"] == "台積電"
 
 
 @pytest.mark.asyncio
@@ -109,6 +115,8 @@ async def test_fanout_continues_when_discord_raises(monkeypatch):
     monkeypatch.setattr(se, "get_broadcaster", lambda: broadcaster)
     writer = MagicMock(append=MagicMock())
     monkeypatch.setattr(se, "get_signal_writer", lambda: writer)
+    monkeypatch.setattr(se, "get_local_store",
+                        lambda: MagicMock(market=MagicMock(get_symbol=lambda s: None)))
 
     engine = SignalEngine()
     active = ActiveSignalOut(
