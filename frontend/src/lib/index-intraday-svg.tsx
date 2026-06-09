@@ -15,6 +15,18 @@ export function fmtIndex(v: number): string {
   return v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/** 指數成交值格式化:元 → 億(四捨五入整數)+ 千分位。指數 candle.volume 是成交值(元)非張數。 */
+export function fmtIndexVol(valueYuan: number): string {
+  const yi = Math.round(valueYuan / 1e8);
+  return `${String(yi).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}億`;
+}
+
+/** 振幅 = (今日高 − 今日低) / 昨收 × 100。無昨收回 null。 */
+export function indexAmplitude(high: number, low: number, prevClose: number | null): number | null {
+  if (prevClose == null || prevClose === 0) return null;
+  return ((high - low) / prevClose) * 100;
+}
+
 export interface IndexChartInput {
   candles: IntradayCandle[];
   prevClose: number | null;

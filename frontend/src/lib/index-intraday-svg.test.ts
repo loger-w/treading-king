@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { computeIndexGeometry, fmtIndex, IndexIntradayStatic } from "./index-intraday-svg";
+import { computeIndexGeometry, fmtIndex, fmtIndexVol, indexAmplitude, IndexIntradayStatic } from "./index-intraday-svg";
 import type { IntradayCandle } from "./api";
 
 function c(min: number, close: number, high = close, low = close): IntradayCandle {
@@ -32,6 +32,23 @@ describe("computeIndexGeometry", () => {
   it("fmtIndex 千分位 2 位(不套股票 tick)", () => {
     expect(fmtIndex(45231.5)).toBe("45,231.50");
     expect(fmtIndex(428.3)).toBe("428.30");
+  });
+});
+
+describe("fmtIndexVol", () => {
+  it("元 → 億 + 千分位(指數量是成交值,不是張數)", () => {
+    expect(fmtIndexVol(1151930775120)).toBe("11,519億"); // 全日 1.15 兆
+    expect(fmtIndexVol(71496161960)).toBe("715億");        // 單分鐘最大
+    expect(fmtIndexVol(0)).toBe("0億");
+  });
+});
+
+describe("indexAmplitude", () => {
+  it("(高−低)/昨收×100;2026-06-09 加權實值 ≈ 2.61", () => {
+    expect(indexAmplitude(44821.71, 43687.62, 43502.78)).toBeCloseTo(2.61, 2);
+  });
+  it("無昨收 → null(振幅以昨收為分母,不硬算)", () => {
+    expect(indexAmplitude(100, 90, null)).toBeNull();
   });
 });
 
