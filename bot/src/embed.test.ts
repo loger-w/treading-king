@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildReply, imageMessage } from "./embed";
+import { buildReply, buildIndexReply, imageMessage } from "./embed";
 import type { CdpLevels, MaLevels } from "../../frontend/src/lib/api";
 import type { QuoteResp } from "./data";
 
@@ -41,5 +41,24 @@ describe("buildReply — 文字訊息那則(不含圖,圖各自獨立一則)", (
     const m = imageMessage(Buffer.from([0x89, 0x50]), "chart.png");
     expect(m.files).toHaveLength(1);
     expect((m as { embeds?: unknown[] }).embeds ?? []).toHaveLength(0);
+  });
+});
+
+describe("buildIndexReply — 指數文字(振幅 / 成交值)", () => {
+  const idxBase = {
+    symbol: "IX0001", name: "加權指數", lastClose: 44704.44, change: 1201.66, changePct: 2.76,
+    open: 43687.62, high: 44821.71, low: 43687.62, asOf: "13:30",
+  };
+  it("含振幅% 與成交值(億)", () => {
+    const embed = buildIndexReply({ ...idxBase, amplitude: 2.61, volume: 1151930775120 }).embeds[0];
+    const v = (embed.data.fields ?? []).find((f) => f.name === "振幅 / 成交值")?.value ?? "";
+    expect(v).toContain("2.61%");
+    expect(v).toContain("11,519億");
+  });
+  it("無昨收 → 振幅顯 —、成交值仍計", () => {
+    const embed = buildIndexReply({ ...idxBase, amplitude: null, volume: 0 }).embeds[0];
+    const v = (embed.data.fields ?? []).find((f) => f.name === "振幅 / 成交值")?.value ?? "";
+    expect(v).toContain("—");
+    expect(v).toContain("0億");
   });
 });

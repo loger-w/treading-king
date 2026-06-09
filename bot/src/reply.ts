@@ -4,6 +4,7 @@ import { renderChartPng, renderIndexChartPng, safeRender } from "./render";
 import { buildReply, buildIndexReply, imageMessage } from "./embed";
 import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, minuteOfDay } from "../../frontend/src/lib/intraday-time";
 import { isIndexCode } from "../../frontend/src/lib/index-symbols";
+import { indexAmplitude } from "../../frontend/src/lib/index-intraday-svg";
 import type { BaseMessageOptions } from "discord.js";
 
 // orchestration 的外部相依抽成介面,測試可注入假資料／強迫產圖失敗(review #5)
@@ -84,6 +85,8 @@ async function loadSlowIndex(symbol: string, deps: ReplyDeps) {
     empty: false as const, isIndex: true as const, name, png,
     lastClose: last.close, change, changePct,
     open: intraday[0].open, high, low, asOf: last.date.slice(11, 16),
+    amplitude: indexAmplitude(high, low, candlesR.prev_close),
+    volume: intraday.reduce((n, c) => n + c.volume, 0),
   };
 }
 
@@ -103,6 +106,7 @@ export function composeReply(
     const idxMsgs: BaseMessageOptions[] = [buildIndexReply({
       symbol, name: s.name, lastClose: s.lastClose, change: s.change, changePct: s.changePct,
       open: s.open, high: s.high, low: s.low, asOf: s.asOf,
+      amplitude: s.amplitude, volume: s.volume,
     })];
     if (s.png) idxMsgs.push(imageMessage(s.png, "chart.png"));
     return idxMsgs;

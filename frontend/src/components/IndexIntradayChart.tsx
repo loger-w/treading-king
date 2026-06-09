@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
-import { CHART_W, CHART_H } from "../lib/intraday-chart-svg";
-import { IndexIntradayStatic, computeIndexGeometry, fmtIndex } from "../lib/index-intraday-svg";
+import { CHART_W, CHART_H, TOTAL_H } from "../lib/intraday-chart-svg";
+import { IndexIntradayStatic, computeIndexGeometry, fmtIndex, fmtIndexVol, indexAmplitude } from "../lib/index-intraday-svg";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
 
 export function IndexIntradayChart({ code, name }: { code: string; name: string }) {
@@ -16,6 +16,8 @@ export function IndexIntradayChart({ code, name }: { code: string; name: string 
   const changePct = latest && baseline ? (change / baseline) * 100 : 0;
   const isUp = change > 0;
   const dirCls = isUp ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
+  const amp = latest ? indexAmplitude(geometry.todayHigh, geometry.todayLow, prevClose) : null;
+  const totalVal = filteredCandles.reduce((n, cd) => n + cd.volume, 0);
 
   function handleMove(e: React.MouseEvent<SVGSVGElement>) {
     if (minutesByIdx.length === 0) return;
@@ -47,13 +49,18 @@ export function IndexIntradayChart({ code, name }: { code: string; name: string 
             {isUp ? "▲" : change < 0 ? "▾" : "—"} {Math.abs(change).toFixed(2)}　{changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%
           </div>
         )}
+        {latest && (
+          <div className="text-[13px] text-ink-muted tabular-nums mt-1">
+            振幅 {amp != null ? `${amp.toFixed(2)}%` : "—"}　成交值 {fmtIndexVol(totalVal)}
+          </div>
+        )}
       </div>
 
       {filteredCandles.length === 0 ? (
         <div className="h-[300px] flex items-center justify-center text-ink-dim font-serif italic">無資料</div>
       ) : (
         <svg
-          viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+          viewBox={`0 0 ${CHART_W} ${TOTAL_H}`}
           className="w-full h-auto cursor-crosshair"
           onMouseMove={handleMove}
           onMouseLeave={() => setHover(null)}

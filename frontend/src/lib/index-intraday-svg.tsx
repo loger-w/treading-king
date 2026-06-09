@@ -4,7 +4,7 @@
 import { createElement, Fragment } from "react";
 import type { IntradayCandle } from "./api";
 import {
-  CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, INTRADAY_THEME, type ChartTheme,
+  CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, VOL_GAP, VOL_PAD_T, TOTAL_H, INTRADAY_THEME, type ChartTheme,
 } from "./intraday-chart-svg";
 import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, minuteOfDay } from "./intraday-time";
 
@@ -13,6 +13,18 @@ const Y_BUFFER = 0.0015; // autofit 上下各留 0.15%
 /** 指數價格格式化:千分位 + 2 位小數,不依賴 ICU、不套股票 tick。 */
 export function fmtIndex(v: number): string {
   return v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** 指數成交值格式化:元 → 億(四捨五入整數)+ 千分位。指數 candle.volume 是成交值(元)非張數。 */
+export function fmtIndexVol(valueYuan: number): string {
+  const yi = Math.round(valueYuan / 1e8);
+  return `${String(yi).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}億`;
+}
+
+/** 振幅 = (今日高 − 今日低) / 昨收 × 100。無昨收回 null。 */
+export function indexAmplitude(high: number, low: number, prevClose: number | null): number | null {
+  if (prevClose == null || prevClose === 0) return null;
+  return ((high - low) / prevClose) * 100;
 }
 
 export interface IndexChartInput {
@@ -33,6 +45,7 @@ export interface IndexGeometry {
   filteredCandles: IntradayCandle[];
   todayHigh: number; todayHighIdx: number;
   todayLow: number; todayLowIdx: number;
+  maxVolume: number; scaleVolY: (v: number) => number; volBarW: number;
 }
 
 export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
@@ -53,6 +66,7 @@ export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
       padL, padR, padT, padB, fontScale: scale, polyClose: "",
       minutesByIdx: [], filteredCandles: [],
       todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
+      maxVolume: 0, scaleVolY: () => 0, volBarW: 0,
     };
   }
 
@@ -72,6 +86,11 @@ export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
   const polyClose = filteredCandles
     .map((cd, i) => `${scaleX(minutesByIdx[i])},${scaleY(cd.close)}`).join(" ");
 
+  const maxVolume = Math.max(1, ...filteredCandles.map((cd) => cd.volume));
+  const volTop = CHART_H + VOL_GAP + VOL_PAD_T;
+  const scaleVolY = (v: number) => volTop + (1 - v / maxVolume) * (TOTAL_H - volTop);
+  const volBarW = Math.max(1, (xRange / TRADING_MINUTES) * 0.7);
+
   let todayHigh = filteredCandles[0].high, todayHighIdx = 0;
   let todayLow = filteredCandles[0].low, todayLowIdx = 0;
   for (let i = 1; i < filteredCandles.length; i++) {
@@ -82,6 +101,7 @@ export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
   return {
     yMin, yMax, scaleX, scaleY, padL, padR, padT, padB, fontScale: scale,
     polyClose, minutesByIdx, filteredCandles, todayHigh, todayHighIdx, todayLow, todayLowIdx,
+    maxVolume, scaleVolY, volBarW,
   };
 }
 
@@ -105,6 +125,7 @@ export function IndexIntradayStatic(props: IndexIntradayStaticProps) {
   const {
     scaleX, scaleY, polyClose, minutesByIdx, filteredCandles,
     todayHigh, todayHighIdx, todayLow, todayLowIdx, padL, padR, padT, padB, fontScale,
+    maxVolume, scaleVolY, volBarW,
   } = props.geometry;
   const fs = (base: number) => Math.round(base * fontScale);
   const sw = (base: number) => base * fontScale;
@@ -150,6 +171,29 @@ export function IndexIntradayStatic(props: IndexIntradayStaticProps) {
     todayLowIdx >= 0 && createElement("g", null,
       createElement("circle", { cx: scaleX(minutesByIdx[todayLowIdx]), cy: scaleY(todayLow), r: sw(2.5), fill: priceColor(todayLow, baseline, t) }),
       createElement("text", { x: scaleX(minutesByIdx[todayLowIdx]), y: scaleY(todayLow) + 13, textAnchor: "middle", fill: priceColor(todayLow, baseline, t), fontSize: fs(14), fontFamily: t.fontFamily }, fmtIndex(todayLow)),
+    ),
+    // 4.5 量能副圖(成交值):每分鐘成交值 bar,顏色比照個股 close vs open
+    filteredCandles.length > 0 && createElement("g", null,
+      createElement("line", {
+        x1: padL, y1: CHART_H + VOL_GAP / 2, x2: CHART_W - padR, y2: CHART_H + VOL_GAP / 2,
+        stroke: t.line, strokeWidth: sw(0.5), opacity: "0.6",
+      }),
+      createElement("text", {
+        x: padL, y: CHART_H + VOL_GAP + VOL_PAD_T + 8, textAnchor: "start",
+        fill: t.inkDim, fontSize: fs(13), fontFamily: t.fontFamily,
+      }, "成交值(億)"),
+      createElement("text", {
+        x: CHART_W - padR - 2, y: CHART_H + VOL_GAP + VOL_PAD_T + 8, textAnchor: "end",
+        fill: t.inkDim, fontSize: fs(13), fontFamily: t.fontFamily,
+      }, fmtIndexVol(maxVolume)),
+      ...filteredCandles.map((cd, i) => {
+        const x = scaleX(minutesByIdx[i]) - volBarW / 2;
+        const y = scaleVolY(cd.volume);
+        const fill = cd.close > cd.open ? t.bull : cd.close < cd.open ? t.bear : t.inkDim;
+        return createElement("rect", {
+          key: i, x, y, width: volBarW, height: Math.max(0, TOTAL_H - y), fill, fillOpacity: "0.7",
+        });
+      }),
     ),
     // 5. X 軸時間 label(固定 6 點)
     ...[

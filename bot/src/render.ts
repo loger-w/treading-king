@@ -98,7 +98,7 @@ export function buildIndexChartSvg(args: IndexChartInput & {
   const input: IndexChartInput = { ...args, theme: THEME, scale: 1.6 };
   const geometry = computeIndexGeometry(input);
   const dirColor = args.change > 0 ? THEME.bull : args.change < 0 ? THEME.bear : THEME.ink;
-  const totalH = CHART_H + TITLE_H; // 指數無量子圖
+  const totalH = TOTAL_H + TITLE_H; // 含成交值量子圖
   const arrow = args.change > 0 ? "▲" : args.change < 0 ? "▾" : "—";
 
   return renderToStaticMarkup(
