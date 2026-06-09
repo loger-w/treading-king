@@ -8,6 +8,9 @@ import {
   IntradayChartStatic, computeIntradayGeometry, INTRADAY_THEME,
   CHART_W, CHART_H, TOTAL_H, type IntradayChartInput,
 } from "../../frontend/src/lib/intraday-chart-svg";
+import {
+  IndexIntradayStatic, computeIndexGeometry, fmtIndex, type IndexChartInput,
+} from "../../frontend/src/lib/index-intraday-svg";
 import { QuoteBookSvg } from "../../frontend/src/lib/quote-book-svg";
 import type { QuoteResp } from "./data";
 
@@ -86,6 +89,43 @@ export function renderChartPng(args: IntradayChartInput & {
   symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
 }): Buffer {
   return svgToPng(buildChartSvg(args));
+}
+
+// 指數圖:精簡(無量子圖),沿用同一標題帶 + 160% scale + resvg 管線。
+export function buildIndexChartSvg(args: IndexChartInput & {
+  symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
+}): string {
+  const input: IndexChartInput = { ...args, theme: THEME, scale: 1.6 };
+  const geometry = computeIndexGeometry(input);
+  const dirColor = args.change > 0 ? THEME.bull : args.change < 0 ? THEME.bear : THEME.ink;
+  const totalH = CHART_H + TITLE_H; // 指數無量子圖
+  const arrow = args.change > 0 ? "▲" : args.change < 0 ? "▾" : "—";
+
+  return renderToStaticMarkup(
+    createElement("svg", {
+      xmlns: "http://www.w3.org/2000/svg",
+      viewBox: `0 0 ${CHART_W} ${totalH}`,
+      width: CHART_W,
+      height: totalH,
+    },
+      createElement("rect", { x: 0, y: 0, width: CHART_W, height: totalH, fill: THEME.bg }),
+      createElement("text", {
+        x: 14, y: 40, fontSize: 33, fontFamily: FONT_FAMILY, fill: THEME.ink,
+      }, fitTitle(args.symbol, args.name)),
+      createElement("text", {
+        x: CHART_W - 14, y: 40, fontSize: 33, textAnchor: "end", fontFamily: FONT_FAMILY, fill: dirColor,
+      }, `${fmtIndex(args.lastClose)}  ${arrow}${Math.abs(args.change).toFixed(2)} (${args.changePct >= 0 ? "+" : ""}${args.changePct.toFixed(2)}%)`),
+      createElement("g", { transform: `translate(0, ${TITLE_H})` },
+        createElement(IndexIntradayStatic, { ...input, geometry }),
+      ),
+    ),
+  );
+}
+
+export function renderIndexChartPng(args: IndexChartInput & {
+  symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
+}): Buffer {
+  return svgToPng(buildIndexChartSvg(args));
 }
 
 // SVG 字串 → PNG buffer 的共用 resvg 管線(分時圖 / 五檔圖共用)。
