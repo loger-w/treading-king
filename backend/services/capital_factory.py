@@ -17,7 +17,7 @@ def get_capital() -> CapitalClient | None:
     if not user_id:
         return None
     _client = CapitalClient(
-        SkcomCapitalCom(),
+        SkcomCapitalCom(dll_dir=os.getenv("CAPITAL_DLL_DIR", "").strip() or None),
         user_id=user_id,
         password=os.getenv("CAPITAL_PASSWORD", "").strip(),
         full_account=os.getenv("CAPITAL_FULL_ACCOUNT", "").strip(),

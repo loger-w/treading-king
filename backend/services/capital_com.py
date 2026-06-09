@@ -4,6 +4,8 @@
 (COM apartment 親和性)—— 由 CapitalClient 的專屬執行緒保證。
 """
 from __future__ import annotations
+
+import os
 from typing import Protocol
 
 
@@ -18,10 +20,24 @@ class CapitalCom(Protocol):
     def pump(self) -> None: ...
 
 
+def _resolve_skcom_load(dll_dir: str | None) -> tuple[str | None, str]:
+    """決定 SKCOM.dll 載入方式 → (要加進 DLL 搜尋路徑的資料夾 or None, 給 GetModule 的引數)。
+
+    有設 dll_dir → 絕對路徑載入(穩,不靠行程 CWD/PATH,且把元件資料夾加進搜尋路徑,
+    SKCOM.dll 的相依 DLL 才載得到);沒設(None/空白)→ 裸檔名,沿用舊行為。
+    """
+    d = (dll_dir or "").strip()
+    if not d:
+        return None, "SKCOM.dll"
+    return d, os.path.join(d, "SKCOM.dll")
+
+
 class SkcomCapitalCom:
     """真實群益 SKCOM 實作(comtypes)。"""
 
-    def __init__(self) -> None:
+    def __init__(self, dll_dir: str | None = None) -> None:
+        self._dll_dir = dll_dir
+        self._dll_cookie = None      # os.add_dll_directory handle,存著避免被 GC 後移除路徑
         self._sk = None
         self._center = None
         self._order = None
@@ -29,7 +45,13 @@ class SkcomCapitalCom:
 
     def setup(self) -> None:
         import comtypes.client
-        comtypes.client.GetModule("SKCOM.dll")
+        add_dir, module_arg = _resolve_skcom_load(self._dll_dir)
+        if add_dir:
+            if not os.path.isdir(add_dir):
+                raise FileNotFoundError(f"CAPITAL_DLL_DIR 不存在: {add_dir}")
+            # Python 3.8+ 安全 DLL 搜尋:把元件資料夾加進去,SKCOM.dll 的相依(SKWebCALib 等)才載得到
+            self._dll_cookie = os.add_dll_directory(add_dir)
+        comtypes.client.GetModule(module_arg)
         import comtypes.gen.SKCOMLib as sk
         self._sk = sk
         self._center = comtypes.client.CreateObject(sk.SKCenterLib, interface=sk.ISKCenterLib)
