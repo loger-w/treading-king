@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, bookmarks, camarilla, candles, cdp as cdp_route,
+    active_signals, bookmarks, camarilla, candles, capital, cdp as cdp_route,
     config_io, ma, monitor_list as monitor_list_route, mxf,
     preview, quote, signals_history, symbols,
     watchlist, ws,
@@ -87,7 +87,15 @@ async def lifespan(app: FastAPI):
         from services.capital_factory import get_capital
         capital = get_capital()
         if capital is not None:
-            capital.start(asyncio.get_running_loop())
+            loop = asyncio.get_running_loop()
+            # 群益回報事件在 COM 執行緒回呼 → 跨執行緒丟回 asyncio 推 WS(同 fubon_ws 慣例)
+            from ws_broadcaster import get_broadcaster
+            capital.set_broadcast(
+                lambda payload: loop.call_soon_threadsafe(
+                    asyncio.create_task, get_broadcaster().broadcast(payload)
+                )
+            )
+            capital.start(loop)
             logger.info("Capital client started (env=%s)", os.getenv("CAPITAL_ENV", "test"))
     except Exception as e:  # noqa: BLE001
         logger.error("Capital startup skipped: %s", e)
@@ -141,3 +149,4 @@ app.include_router(ma.router)
 app.include_router(mxf.router)
 app.include_router(config_io.router)
 app.include_router(ws.router)
+app.include_router(capital.router)
