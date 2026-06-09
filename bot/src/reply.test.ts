@@ -107,8 +107,8 @@ describe("指數精簡路徑", () => {
     getCandles: async () => ({
       date: "2026-06-09", symbol: "IX0001",
       data: [
-        { date: "2026-06-09T09:00:00.000+08:00", open: 45000, high: 45050, low: 44980, close: 45010, volume: 0, average: 0 },
-        { date: "2026-06-09T13:30:00.000+08:00", open: 45200, high: 45260, low: 45100, close: 45231, volume: 0, average: 0 },
+        { date: "2026-06-09T09:00:00.000+08:00", open: 45000, high: 45050, low: 44980, close: 45010, volume: 50_000_000_000, average: 0 },
+        { date: "2026-06-09T13:30:00.000+08:00", open: 45200, high: 45260, low: 45100, close: 45231, volume: 60_000_000_000, average: 0 },
       ],
       prev_close: 45000,
     }),
@@ -125,6 +125,8 @@ describe("指數精簡路徑", () => {
     if (!s.empty && s.isIndex) {
       expect(s.isIndex).toBe(true);
       expect(s.lastClose).toBe(45231);
+      expect(s.volume).toBe(110_000_000_000);          // 兩分鐘成交值加總
+      expect(s.amplitude).toBeCloseTo(0.62, 2);          // (45260−44980)/45000×100
       expect(s.png).not.toBeNull();
     }
   });
