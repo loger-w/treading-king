@@ -14,6 +14,7 @@ from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
 from services.capital_models import StockOrderRequest, OrderResult
 from services.capital_safety import SafetyConfig, check_stock_order
+from services.capital_store import CapitalStore
 from services import capital_audit
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ class CapitalClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._status = "error"      # error | ok | degraded
         self._last_error: str | None = None
+        self.store = CapitalStore()      # 委託/部位快取:回報事件寫入、REST 讀
+        self._broadcast = None           # Callable[[dict], None] | None;由 app 注入推 WS
 
     @property
     def status(self) -> str:
@@ -51,6 +54,21 @@ class CapitalClient:
     @property
     def last_error(self) -> str | None:
         return self._last_error
+
+    def set_broadcast(self, fn) -> None:
+        """fn(payload: dict) —— 由 app 注入,通常包成 call_soon_threadsafe + broadcaster。"""
+        self._broadcast = fn
+
+    def _handle_reply(self, bstr_data: str) -> None:
+        """收到 OnNewData 主動回報 → 更新 store + 推 WS。在 COM 執行緒上被呼叫。"""
+        from services.capital_reply import parse_onnewdata
+        rec = parse_onnewdata(bstr_data)
+        self.store.apply_reply(rec)
+        if self._broadcast and rec.seq_no:
+            self._broadcast({"event": "capital_order", "data": {
+                "seq_no": rec.seq_no, "stock_no": rec.stock_no,
+                "status_label": rec.status_label, "price": rec.price, "qty": rec.qty,
+            }})
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -61,7 +79,7 @@ class CapitalClient:
         import pythoncom
         pythoncom.CoInitialize()
         try:
-            self._com.setup()
+            self._com.setup(self._handle_reply)
             self._com.set_authority(2 if self._env == "test" else 0)
             code = self._com.login(self._user_id, self._password)
             if code != 0:

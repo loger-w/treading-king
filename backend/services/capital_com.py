@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import os
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 class CapitalCom(Protocol):
-    def setup(self) -> None: ...
+    def setup(self, on_reply: "Callable[[str], None] | None" = None) -> None: ...
     def set_authority(self, flag: int) -> int: ...        # 0=正式 2=測試
     def login(self, user_id: str, password: str) -> int: ...
     def init_order(self) -> int: ...
@@ -45,7 +45,7 @@ class SkcomCapitalCom:
         self._order = None
         self._reply = None
 
-    def setup(self) -> None:
+    def setup(self, on_reply: "Callable[[str], None] | None" = None) -> None:
         import comtypes.client
         add_dir, module_arg = _resolve_skcom_load(self._dll_dir)
         if add_dir:
@@ -59,9 +59,10 @@ class SkcomCapitalCom:
         self._center = comtypes.client.CreateObject(sk.SKCenterLib, interface=sk.ISKCenterLib)
         self._order = comtypes.client.CreateObject(sk.SKOrderLib, interface=sk.ISKOrderLib)
         self._reply = comtypes.client.CreateObject(sk.SKReplyLib, interface=sk.ISKReplyLib)
-        # OnReplyMessage 回 -1 抑制群益彈窗(spec §4.6)。sink 與 advise 連線都存住:
-        # 丟掉會被 GC → Unadvise,登入即報 SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。
-        self._reply_sink = _ReplyEvents()
+        # OnReplyMessage 回 -1 抑制群益彈窗(spec §4.6);OnNewData 主動回報轉給 on_reply。
+        # sink 與 advise 連線都存住:丟掉會被 GC → Unadvise,登入即報
+        # SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。
+        self._reply_sink = _ReplyEvents(on_reply)
         self._reply_conn = comtypes.client.GetEvents(self._reply, self._reply_sink)
 
     def set_authority(self, flag: int) -> int:
@@ -93,5 +94,16 @@ class SkcomCapitalCom:
 
 
 class _ReplyEvents:
+    def __init__(self, on_reply: "Callable[[str], None] | None" = None) -> None:
+        self._on_reply = on_reply
+
     def OnReplyMessage(self, bstrUserID, bstrMessage):
         return -1  # 群益慣例:回 -1 抑制彈窗
+
+    def OnNewData(self, bstrUserID, bstrData):
+        # 主動回報(委託/成交)轉給 client;回呼自身的例外不可炸掉 COM 事件迴圈
+        if self._on_reply:
+            try:
+                self._on_reply(bstrData)
+            except Exception:
+                pass

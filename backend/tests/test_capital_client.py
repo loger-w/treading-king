@@ -8,7 +8,7 @@ class FakeCom:
     def __init__(self):
         self.sent = []
 
-    def setup(self): ...
+    def setup(self, on_reply=None): ...
     def set_authority(self, flag): return 0
     def login(self, u, p): return 0
     def init_order(self): return 0
