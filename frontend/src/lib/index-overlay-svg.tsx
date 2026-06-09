@@ -77,6 +77,19 @@ export function computeOverlayGeometry(a: OverlaySeries, b: OverlaySeries, input
 
 function fmtPct(p: number): string { return `${p >= 0 ? "+" : ""}${p.toFixed(2)}%`; }
 
+// 均勻 nice-step 刻度(落在 0.25/0.5/1/2.5/5/10 的整齊百分點),取代硬塞 0% 的不均分。
+// yMin<=0<=yMax(computeOverlayGeometry 保證),故刻度必含 0%。
+export function niceTicks(yMin: number, yMax: number): number[] {
+  const range = yMax - yMin || 1;
+  const step = [0.25, 0.5, 1, 2, 2.5, 5, 10].find((s) => range / s <= 5) ?? 10;
+  const ticks: number[] = [];
+  for (let v = Math.ceil(yMin / step) * step; v <= yMax + 1e-9; v += step) {
+    const t = Math.round(v * 100) / 100;
+    ticks.push(t === 0 ? 0 : t); // 正規化 -0 → 0(Math.ceil(-0.1) 會給 -0)
+  }
+  return ticks;
+}
+
 export interface IndexOverlayStaticProps extends OverlayInput { geometry: OverlayGeometry; }
 
 export function IndexOverlayStatic(props: IndexOverlayStaticProps) {
@@ -85,8 +98,7 @@ export function IndexOverlayStatic(props: IndexOverlayStaticProps) {
   const fs = (base: number) => Math.round(base * fontScale);
   const sw = (base: number) => base * fontScale;
 
-  const ticks = [yMin, yMin + (yMax - yMin) / 4, 0, yMax - (yMax - yMin) / 4, yMax]
-    .filter((v, i, arr) => arr.indexOf(v) === i);
+  const ticks = niceTicks(yMin, yMax);
 
   return createElement(Fragment, null,
     // Y 軸格線 + %

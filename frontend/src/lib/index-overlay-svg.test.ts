@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeOverlayGeometry, type OverlaySeries } from "./index-overlay-svg";
+import { computeOverlayGeometry, niceTicks, type OverlaySeries } from "./index-overlay-svg";
 import type { IntradayCandle } from "./api";
 
 function c(min: number, close: number): IntradayCandle {
@@ -33,5 +33,14 @@ describe("computeOverlayGeometry", () => {
     const g = computeOverlayGeometry(A, B);
     expect(g.pctByCodeAtMinute("IX0001", 600)).toBeCloseTo(1.0, 5);
     expect(g.pctByCodeAtMinute("IX0001", 540)).toBeCloseTo(0, 5);
+  });
+});
+
+describe("niceTicks", () => {
+  it("大波動用整數 step、必含 0%", () => {
+    expect(niceTicks(-0.1, 3.12)).toEqual([0, 1, 2, 3]);
+  });
+  it("小波動降到細 step、含 0%", () => {
+    expect(niceTicks(-0.3, 0.5)).toEqual([-0.25, 0, 0.25, 0.5]);
   });
 });
