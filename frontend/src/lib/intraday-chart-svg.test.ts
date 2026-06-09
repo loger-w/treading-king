@@ -3,7 +3,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { computeIntradayGeometry, IntradayChartStatic, CHART_W, PAD_L } from "./intraday-chart-svg";
 import type { IntradayCandle } from "./api";
-import { formatTickPrice } from "./tick";
 
 function candle(min: number, close: number): IntradayCandle {
   const hh = String(Math.floor(min / 60)).padStart(2, "0");
