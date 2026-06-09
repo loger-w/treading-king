@@ -106,6 +106,7 @@ export function composeReply(
     const idxMsgs: BaseMessageOptions[] = [buildIndexReply({
       symbol, name: s.name, lastClose: s.lastClose, change: s.change, changePct: s.changePct,
       open: s.open, high: s.high, low: s.low, asOf: s.asOf,
+      amplitude: s.amplitude, volume: s.volume,
     })];
     if (s.png) idxMsgs.push(imageMessage(s.png, "chart.png"));
     return idxMsgs;

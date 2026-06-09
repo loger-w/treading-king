@@ -2,6 +2,7 @@ import { EmbedBuilder, AttachmentBuilder } from "discord.js";
 import type { QuoteResp } from "./data";
 import type { CdpLevels, MaLevels } from "../../frontend/src/lib/api";
 import { formatTickPrice, roundToNearestTick } from "../../frontend/src/lib/tick";
+import { fmtIndexVol } from "../../frontend/src/lib/index-intraday-svg";
 
 // 文字訊息那則 — 現價/開高低/均價量/CDP/均線。分時圖、五檔圖各自獨立一則(見 reply.composeReply),
 // 不放進這個 embed,避免被 Discord 內嵌縮小。
@@ -44,6 +45,7 @@ export function buildReply(args: {
 export function buildIndexReply(args: {
   symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
   open: number; high: number; low: number; asOf: string;
+  amplitude: number | null; volume: number;
 }) {
   const up = args.change > 0;
   const color = up ? 0xe85a4f : args.change < 0 ? 0x7fc99a : 0x8a8273;
@@ -55,7 +57,10 @@ export function buildIndexReply(args: {
     .setDescription(
       `**${fmt(args.lastClose)}**　${arrow}${Math.abs(args.change).toFixed(2)} (${args.changePct >= 0 ? "+" : ""}${args.changePct.toFixed(2)}%)`,
     )
-    .addFields({ name: "開 / 高 / 低", value: `${fmt(args.open)} / ${fmt(args.high)} / ${fmt(args.low)}`, inline: true })
+    .addFields(
+      { name: "開 / 高 / 低", value: `${fmt(args.open)} / ${fmt(args.high)} / ${fmt(args.low)}`, inline: true },
+      { name: "振幅 / 成交值", value: `${args.amplitude != null ? args.amplitude.toFixed(2) + "%" : "—"} / ${fmtIndexVol(args.volume)}`, inline: true },
+    )
     .setFooter({ text: `資料 ${args.asOf}` });
   return { embeds: [embed] };
 }
