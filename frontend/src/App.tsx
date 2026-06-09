@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sidebar, type Page } from './components/Sidebar';
 import { Monitor } from './pages/Monitor';
 import { MXFBacktest } from './pages/MXFBacktest';
+import { IndexBoard } from './pages/IndexBoard';
 
 export default function App() {
   const [page, setPage] = useState<Page>('monitor');
@@ -19,6 +20,9 @@ export default function App() {
         </div>
         <div hidden={page !== 'mxf_backtest'} className="h-full">
           <MXFBacktest />
+        </div>
+        <div hidden={page !== 'index_board'} className="h-full">
+          <IndexBoard />
         </div>
       </div>
     </div>

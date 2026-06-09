@@ -9,3 +9,16 @@ describe("parseSymbolCommand", () => {
     expect(parseSymbolCommand(msg)).toBeNull();
   });
 });
+
+describe("parseSymbolCommand — 指數中文別名", () => {
+  it("加權/大盤 → IX0001、櫃買/上櫃 → IX0043", () => {
+    expect(parseSymbolCommand("p加權")).toBe("IX0001");
+    expect(parseSymbolCommand("p大盤")).toBe("IX0001");
+    expect(parseSymbolCommand("p櫃買")).toBe("IX0043");
+    expect(parseSymbolCommand("p上櫃")).toBe("IX0043");
+  });
+  it("p + 未知中文 → null、無 p 前綴 → null", () => {
+    expect(parseSymbolCommand("p亂碼")).toBeNull();
+    expect(parseSymbolCommand("加權")).toBeNull();
+  });
+});

@@ -23,6 +23,7 @@ const okDeps: ReplyDeps = {
   getMa: async () => MA,
   getName: async () => "台積電",
   render: () => Buffer.from([0x89, 0x50]),
+  renderIndex: () => Buffer.from([0x89, 0x50]),
 };
 
 describe("loadSlow — orchestration 降級(review #5)", () => {
@@ -38,7 +39,7 @@ describe("loadSlow — orchestration 降級(review #5)", () => {
       getCandles: async () => ({ date: "2026-06-05", symbol: "2330", data: [], prev_close: 100 }),
     });
     expect(s.empty).toBe(true);
-    if (s.empty) { expect(s.cdp).toEqual(CDP); expect(s.ma).toEqual(MA); }
+    if (s.empty && !s.isIndex) { expect(s.cdp).toEqual(CDP); expect(s.ma).toEqual(MA); }
   });
 
   it("推播分時圖不畫 MA 線:render 收到 flags.ma===false(均線改由 embed 文字呈現)", async () => {
@@ -57,7 +58,7 @@ describe("loadSlow — orchestration 降級(review #5)", () => {
 
 describe("composeReply — 三則訊息(文字 / 分時圖 / 五檔圖)", () => {
   const slowOk = {
-    empty: false as const, name: "台積電", cdp: CDP, ma: MA, png: Buffer.from([0x89]) as Buffer | null,
+    empty: false as const, isIndex: false as const, name: "台積電", cdp: CDP, ma: MA, png: Buffer.from([0x89]) as Buffer | null,
     lastClose: 102, change: 2, changePct: 2, open: 100, high: 103, low: 99, vwap: 101, volume: 4000, asOf: "13:30",
   };
   const quotePng = Buffer.from([0x89, 0x51]);
@@ -92,10 +93,45 @@ describe("composeReply — 三則訊息(文字 / 分時圖 / 五檔圖)", () => 
   });
 
   it("空盤前(empty)→ 一則純文字 content(含 CDP/MA5)、無圖", () => {
-    const msgs = composeReply("2330", { empty: true as const, cdp: CDP, ma: MA, name: "台積電", prevClose: 100 }, null, null);
+    const msgs = composeReply("2330", { empty: true as const, isIndex: false as const, cdp: CDP, ma: MA, name: "台積電", prevClose: 100 }, null, null);
     expect(msgs).toHaveLength(1);
     expect(msgs[0].content).toContain("無分時資料");
     expect(msgs[0].content).toContain("MA5");
     expect(filesOf(msgs[0])).toHaveLength(0);
+  });
+});
+
+describe("指數精簡路徑", () => {
+  const indexDeps: ReplyDeps = {
+    ...okDeps,
+    getCandles: async () => ({
+      date: "2026-06-09", symbol: "IX0001",
+      data: [
+        { date: "2026-06-09T09:00:00.000+08:00", open: 45000, high: 45050, low: 44980, close: 45010, volume: 0, average: 0 },
+        { date: "2026-06-09T13:30:00.000+08:00", open: 45200, high: 45260, low: 45100, close: 45231, volume: 0, average: 0 },
+      ],
+      prev_close: 45000,
+    }),
+    getCdp: async () => { throw new Error("指數不該抓 CDP"); },
+    getMa: async () => { throw new Error("指數不該抓 MA"); },
+    getName: async () => "加權指數",
+    render: () => { throw new Error("指數應走 renderIndex"); },
+    renderIndex: () => Buffer.from("PNG"),
+  };
+
+  it("走精簡路徑:isIndex、現價正確、有圖", async () => {
+    const s = await loadSlow("IX0001", indexDeps);
+    expect(s.empty).toBe(false);
+    if (!s.empty && s.isIndex) {
+      expect(s.isIndex).toBe(true);
+      expect(s.lastClose).toBe(45231);
+      expect(s.png).not.toBeNull();
+    }
+  });
+
+  it("composeReply 指數:2 則(文字 + 走勢圖),不含五檔", async () => {
+    const s = await loadSlow("IX0001", indexDeps);
+    const msgs = composeReply("IX0001", s, null, null);
+    expect(msgs).toHaveLength(2);
   });
 });

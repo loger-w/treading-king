@@ -1,5 +1,6 @@
 import { config } from "./config";
 import type { IntradayCandle, CdpLevels, MaLevels } from "../../frontend/src/lib/api";
+import { isIndexCode, indexName } from "../../frontend/src/lib/index-symbols";
 
 async function get<T>(path: string): Promise<T> {
   const headers: Record<string, string> = {};
@@ -27,6 +28,7 @@ export const getMa = (s: string) => get<MaLevels>(`/api/ma/${encodeURIComponent(
 
 interface SymbolRow { symbol: string; name: string; }
 export async function getName(s: string): Promise<string | null> {
+  if (isIndexCode(s)) return indexName(s); // 指數不在 symbols 表,走常數
   try {
     const r = await get<{ results: SymbolRow[] }>(`/api/symbols?search=${encodeURIComponent(s)}&limit=20`);
     return r.results.find((row) => row.symbol === s)?.name ?? null;

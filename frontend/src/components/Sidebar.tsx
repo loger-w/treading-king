@@ -1,6 +1,6 @@
 import { useSidebarState } from '../hooks/useSidebarState';
 
-export type Page = 'monitor' | 'mxf_backtest';
+export type Page = 'monitor' | 'mxf_backtest' | 'index_board';
 
 interface NavItem {
   id: Page;
@@ -18,6 +18,11 @@ const NAV_ITEMS: NavItem[] = [
     id: 'mxf_backtest',
     label: '小台指策略回測 (MXF)',
     iconPath: 'M3 3v18h18 M7 14l4-4 3 3 5-7',
+  },
+  {
+    id: 'index_board',
+    label: '大盤指數',
+    iconPath: 'M3 17l5-6 4 4 5-8 4 5 M3 17v4h18',
   },
 ];
 

@@ -40,6 +40,26 @@ export function buildReply(args: {
   return { embeds: [embed] };
 }
 
+// 指數精簡文字訊息:現價/漲跌/開高低。指數無 CDP/均線/VWAP/量/五檔,故欄位精簡。
+export function buildIndexReply(args: {
+  symbol: string; name: string | null; lastClose: number; change: number; changePct: number;
+  open: number; high: number; low: number; asOf: string;
+}) {
+  const up = args.change > 0;
+  const color = up ? 0xe85a4f : args.change < 0 ? 0x7fc99a : 0x8a8273;
+  const arrow = up ? "▲" : args.change < 0 ? "▾" : "—";
+  const fmt = (v: number) => v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`${args.name ?? ""} ${args.symbol}`.trim())
+    .setDescription(
+      `**${fmt(args.lastClose)}**　${arrow}${Math.abs(args.change).toFixed(2)} (${args.changePct >= 0 ? "+" : ""}${args.changePct.toFixed(2)}%)`,
+    )
+    .addFields({ name: "開 / 高 / 低", value: `${fmt(args.open)} / ${fmt(args.high)} / ${fmt(args.low)}`, inline: true })
+    .setFooter({ text: `資料 ${args.asOf}` });
+  return { embeds: [embed] };
+}
+
 // 圖片各自獨立一則:頂層附件(不被 embed 引用)→ Discord feed 放大顯示,比內嵌 embed 明顯。
 export function imageMessage(buf: Buffer, name: string) {
   return { files: [new AttachmentBuilder(buf, { name })] };
