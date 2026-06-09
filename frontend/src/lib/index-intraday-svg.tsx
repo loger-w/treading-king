@@ -125,6 +125,7 @@ export function IndexIntradayStatic(props: IndexIntradayStaticProps) {
   const {
     scaleX, scaleY, polyClose, minutesByIdx, filteredCandles,
     todayHigh, todayHighIdx, todayLow, todayLowIdx, padL, padR, padT, padB, fontScale,
+    maxVolume, scaleVolY, volBarW,
   } = props.geometry;
   const fs = (base: number) => Math.round(base * fontScale);
   const sw = (base: number) => base * fontScale;
@@ -170,6 +171,29 @@ export function IndexIntradayStatic(props: IndexIntradayStaticProps) {
     todayLowIdx >= 0 && createElement("g", null,
       createElement("circle", { cx: scaleX(minutesByIdx[todayLowIdx]), cy: scaleY(todayLow), r: sw(2.5), fill: priceColor(todayLow, baseline, t) }),
       createElement("text", { x: scaleX(minutesByIdx[todayLowIdx]), y: scaleY(todayLow) + 13, textAnchor: "middle", fill: priceColor(todayLow, baseline, t), fontSize: fs(14), fontFamily: t.fontFamily }, fmtIndex(todayLow)),
+    ),
+    // 4.5 量能副圖(成交值):每分鐘成交值 bar,顏色比照個股 close vs open
+    filteredCandles.length > 0 && createElement("g", null,
+      createElement("line", {
+        x1: padL, y1: CHART_H + VOL_GAP / 2, x2: CHART_W - padR, y2: CHART_H + VOL_GAP / 2,
+        stroke: t.line, strokeWidth: sw(0.5), opacity: "0.6",
+      }),
+      createElement("text", {
+        x: padL, y: CHART_H + VOL_GAP + VOL_PAD_T + 8, textAnchor: "start",
+        fill: t.inkDim, fontSize: fs(13), fontFamily: t.fontFamily,
+      }, "成交值(億)"),
+      createElement("text", {
+        x: CHART_W - padR - 2, y: CHART_H + VOL_GAP + VOL_PAD_T + 8, textAnchor: "end",
+        fill: t.inkDim, fontSize: fs(13), fontFamily: t.fontFamily,
+      }, fmtIndexVol(maxVolume)),
+      ...filteredCandles.map((cd, i) => {
+        const x = scaleX(minutesByIdx[i]) - volBarW / 2;
+        const y = scaleVolY(cd.volume);
+        const fill = cd.close > cd.open ? t.bull : cd.close < cd.open ? t.bear : t.inkDim;
+        return createElement("rect", {
+          key: i, x, y, width: volBarW, height: Math.max(0, TOTAL_H - y), fill, fillOpacity: "0.7",
+        });
+      }),
     ),
     // 5. X 軸時間 label(固定 6 點)
     ...[

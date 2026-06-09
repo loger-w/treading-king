@@ -66,15 +66,16 @@ describe("indexAmplitude", () => {
 });
 
 describe("IndexIntradayStatic", () => {
-  it("渲染主價線 + 昨收基準線,且不含量/VWAP", () => {
-    const candles = [c(540, 45000, 45010, 44990), c(600, 45200, 45210, 45190)];
+  it("渲染主價線 + 昨收基準線 + 量副圖(成交值)", () => {
+    const candles = [c(540, 45000, 45010, 44990, 5_000_000_000), c(600, 45200, 45210, 45190, 3_000_000_000)];
     const input = { candles, prevClose: 45000 };
     const svg = renderToStaticMarkup(
       createElement(IndexIntradayStatic, { ...input, geometry: computeIndexGeometry(input) }),
     );
-    expect(svg).toContain("polyline");
-    expect(svg).toContain("昨收");
-    expect(svg).not.toContain("Vol");
+    expect(svg).toContain("polyline");        // 主價線
+    expect(svg).toContain("昨收");             // 昨收基準線
+    expect(svg).toContain("成交值(億)");       // 量副圖標籤(指數量是成交值)
+    expect(svg).not.toContain("Vol");          // 不沿用個股的 "Vol" 英文標(單位不同)
   });
   it("idPrefix 讓 clipPath id 唯一(並排不衝突)", () => {
     const candles = [c(540, 45000, 45010, 44990), c(600, 45200, 45210, 45190)];
