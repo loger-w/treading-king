@@ -38,6 +38,8 @@ class SkcomCapitalCom:
     def __init__(self, dll_dir: str | None = None) -> None:
         self._dll_dir = dll_dir
         self._dll_cookie = None      # os.add_dll_directory handle,存著避免被 GC 後移除路徑
+        self._reply_sink = None
+        self._reply_conn = None      # GetEvents advise 連線,存著避免被 GC → Unadvise
         self._sk = None
         self._center = None
         self._order = None
@@ -57,8 +59,10 @@ class SkcomCapitalCom:
         self._center = comtypes.client.CreateObject(sk.SKCenterLib, interface=sk.ISKCenterLib)
         self._order = comtypes.client.CreateObject(sk.SKOrderLib, interface=sk.ISKOrderLib)
         self._reply = comtypes.client.CreateObject(sk.SKReplyLib, interface=sk.ISKReplyLib)
-        # OnReplyMessage 必須回 -1 抑制群益彈窗(spec §4.6)
-        comtypes.client.GetEvents(self._reply, _ReplyEvents())
+        # OnReplyMessage 回 -1 抑制群益彈窗(spec §4.6)。sink 與 advise 連線都存住:
+        # 丟掉會被 GC → Unadvise,登入即報 SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。
+        self._reply_sink = _ReplyEvents()
+        self._reply_conn = comtypes.client.GetEvents(self._reply, self._reply_sink)
 
     def set_authority(self, flag: int) -> int:
         return self._center.SKCenterLib_SetAuthority(flag)

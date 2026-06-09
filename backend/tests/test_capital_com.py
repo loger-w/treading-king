@@ -45,3 +45,49 @@ def test_factory_no_dll_dir_is_none(monkeypatch):
     client = capital_factory.get_capital()
     assert client is not None
     assert client._com._dll_dir is None
+
+
+def test_setup_retains_reply_event_refs(monkeypatch):
+    """根因防呆:setup() 必須存住 reply 事件 sink + GetEvents 連線。
+
+    若丟掉(像 `GetEvents(reply, _ReplyEvents())` 不接回傳),CPython refcount 歸零即 GC
+    → comtypes Unadvise → 登入時群益看不到 OnReplyMessage → 回
+    SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。官方範例把 sink 與 handler 都存
+    在長生命變數。這裡 mock 掉 comtypes 層,驗證 setup() 有把兩者存到 self。
+    """
+    import sys
+    import types
+
+    sentinel_conn = types.SimpleNamespace(tag="advise-connection")
+    captured = {}
+
+    client = types.ModuleType("comtypes.client")
+    client.GetModule = lambda *a, **k: None
+    client.CreateObject = lambda coclass, interface=None: types.SimpleNamespace(coclass=coclass)
+
+    def fake_get_events(source, sink):
+        captured["sink"] = sink
+        return sentinel_conn
+
+    client.GetEvents = fake_get_events
+
+    comtypes_mod = types.ModuleType("comtypes")
+    gen = types.ModuleType("comtypes.gen")
+    skcomlib = types.ModuleType("comtypes.gen.SKCOMLib")
+    for nm in ("SKCenterLib", "ISKCenterLib", "SKOrderLib", "ISKOrderLib", "SKReplyLib", "ISKReplyLib"):
+        setattr(skcomlib, nm, nm)
+    comtypes_mod.client = client
+    comtypes_mod.gen = gen
+    gen.SKCOMLib = skcomlib
+
+    monkeypatch.setitem(sys.modules, "comtypes", comtypes_mod)
+    monkeypatch.setitem(sys.modules, "comtypes.client", client)
+    monkeypatch.setitem(sys.modules, "comtypes.gen", gen)
+    monkeypatch.setitem(sys.modules, "comtypes.gen.SKCOMLib", skcomlib)
+
+    com = SkcomCapitalCom()
+    com.setup()
+
+    assert com._reply_conn is sentinel_conn          # GetEvents 回傳的 advise 連線要存住
+    assert com._reply_sink is captured["sink"]        # 傳給 GetEvents 的 sink 就是被存住那個
+    assert com._reply_sink is not None
