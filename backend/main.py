@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, bookmarks, camarilla, candles, cdp as cdp_route,
+    active_signals, bookmarks, camarilla, candles, capital, cdp as cdp_route,
     config_io, ma, monitor_list as monitor_list_route, mxf,
     preview, quote, signals_history, symbols,
     watchlist, ws,
@@ -82,6 +82,24 @@ async def lifespan(app: FastAPI):
     # 大漲股排程 — 盤中每 1 分鐘更新 top_gainers 記憶體快取
     top_gainers_task = asyncio.create_task(top_gainers_loop())
 
+    # 群益下單(可選,未設定或失敗都不影響富邦)
+    try:
+        from services.capital_factory import get_capital
+        capital = get_capital()
+        if capital is not None:
+            loop = asyncio.get_running_loop()
+            # 群益回報事件在 COM 執行緒回呼 → 跨執行緒丟回 asyncio 推 WS(同 fubon_ws 慣例)
+            from ws_broadcaster import get_broadcaster
+            capital.set_broadcast(
+                lambda payload: loop.call_soon_threadsafe(
+                    asyncio.create_task, get_broadcaster().broadcast(payload)
+                )
+            )
+            capital.start(loop)
+            logger.info("Capital client started (env=%s)", os.getenv("CAPITAL_ENV", "test"))
+    except Exception as e:  # noqa: BLE001
+        logger.error("Capital startup skipped: %s", e)
+
     logger.info("Startup done — fubon=%s, ws_pool=%s",
                 fubon.status.value, pool.status.value)
     yield
@@ -131,3 +149,4 @@ app.include_router(ma.router)
 app.include_router(mxf.router)
 app.include_router(config_io.router)
 app.include_router(ws.router)
+app.include_router(capital.router)

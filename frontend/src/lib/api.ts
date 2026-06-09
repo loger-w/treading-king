@@ -338,6 +338,27 @@ export interface SignalEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Capital 下單面板
+// ---------------------------------------------------------------------------
+
+export interface CapitalOrder {
+  seq_no: string; stock_no: string | null; book_no: string | null;
+  status_raw: string | null; status_label: string | null;
+  price: number | null; qty: number;
+}
+export interface CapitalPosition {
+  stock_no: string; name: string; qty: number; avg_price: number;
+}
+export interface CapitalStockOrderReq {
+  stock_no: string; buy_sell: "buy" | "sell"; price: number; qty: number;
+  price_type?: "limit" | "market"; time_in_force?: "ROD" | "IOC" | "FOK";
+  trade_kind?: "cash" | "margin" | "short";
+}
+export interface CapitalOrderResult {
+  ok: boolean; code: number; message: string; seq_no: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // API surface
 // ---------------------------------------------------------------------------
 
@@ -499,4 +520,16 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+
+  capitalStatus: () =>
+    fetchJSON<{ status: string; last_error?: string | null }>("/api/capital/status"),
+  capitalOrders: () =>
+    fetchJSON<{ orders: CapitalOrder[] }>("/api/capital/orders"),
+  capitalPositions: () =>
+    fetchJSON<{ positions: CapitalPosition[] }>("/api/capital/positions"),
+  capitalSubmitStock: (req: CapitalStockOrderReq) =>
+    fetchJSON<CapitalOrderResult>("/api/capital/order/stock", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
 };

@@ -1,4 +1,5 @@
 import { useQuoteBook } from "../hooks/useQuoteBook";
+import { emitOrderTicket } from "../hooks/useSignalsStream";
 
 interface Props {
   symbol: string | null;
@@ -60,7 +61,11 @@ export function QuoteBook({ symbol }: Props) {
             <div className="text-xs text-ink-dim italic py-2">—</div>
           ) : (
             bids.map((b, i) => (
-              <div key={i} className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums">
+              <div
+                key={i}
+                onClick={() => b.price > 0 && emitOrderTicket({ symbol, price: b.price })}
+                className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums cursor-pointer hover:bg-bg-card/40"
+              >
                 <span
                   className="absolute top-0 bottom-0 right-0 bg-bull/10 pointer-events-none"
                   style={{ width: `${(b.size / maxQty) * 100}%` }}
@@ -78,7 +83,11 @@ export function QuoteBook({ symbol }: Props) {
             <div className="text-xs text-ink-dim italic py-2">—</div>
           ) : (
             asks.map((a, i) => (
-              <div key={i} className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums">
+              <div
+                key={i}
+                onClick={() => a.price > 0 && emitOrderTicket({ symbol, price: a.price })}
+                className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums cursor-pointer hover:bg-bg-card/40"
+              >
                 <span
                   className="absolute top-0 bottom-0 left-0 bg-bear/10 pointer-events-none"
                   style={{ width: `${(a.size / maxQty) * 100}%` }}

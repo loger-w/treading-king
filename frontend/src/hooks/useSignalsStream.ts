@@ -44,6 +44,26 @@ export function subscribeMxfCandles(handler: (e: MXFCandleEvent) => void): () =>
   return () => mxfCandleBus.removeEventListener("mxf_candle", fn);
 }
 
+// 群益委託回報:WS 一推就讓委託/部位 hook 重抓
+const capitalOrderBus = new EventTarget();
+export function subscribeCapitalOrders(handler: () => void): () => void {
+  const fn = () => handler();
+  capitalOrderBus.addEventListener("capital_order", fn);
+  return () => capitalOrderBus.removeEventListener("capital_order", fn);
+}
+
+// 五檔點價 → 下單匣帶價
+export interface OrderTicketHint { symbol: string | null; price: number; }
+const orderTicketBus = new EventTarget();
+export function emitOrderTicket(hint: OrderTicketHint): void {
+  orderTicketBus.dispatchEvent(new CustomEvent<OrderTicketHint>("ticket", { detail: hint }));
+}
+export function subscribeOrderTicket(handler: (h: OrderTicketHint) => void): () => void {
+  const fn = (ev: Event) => handler((ev as CustomEvent<OrderTicketHint>).detail);
+  orderTicketBus.addEventListener("ticket", fn);
+  return () => orderTicketBus.removeEventListener("ticket", fn);
+}
+
 interface ManagedWS {
   ws: WebSocket;
   reconnect: boolean;
@@ -101,6 +121,8 @@ export function useSignalsStream(opts?: {
         } else if (msg.event === "mxf_candle") {
           const evt: MXFCandleEvent = { symbol: msg.data.symbol, candle: msg.data.candle };
           mxfCandleBus.dispatchEvent(new CustomEvent<MXFCandleEvent>("mxf_candle", { detail: evt }));
+        } else if (msg.event === "capital_order") {
+          capitalOrderBus.dispatchEvent(new Event("capital_order"));
         }
       } catch { /* ignore */ }
     };
