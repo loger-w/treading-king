@@ -4,10 +4,10 @@ import { createElement } from "react";
 import { computeIndexGeometry, fmtIndex, fmtIndexVol, indexAmplitude, IndexIntradayStatic } from "./index-intraday-svg";
 import type { IntradayCandle } from "./api";
 
-function c(min: number, close: number, high = close, low = close): IntradayCandle {
+function c(min: number, close: number, high = close, low = close, vol = 0): IntradayCandle {
   const hh = String(Math.floor(min / 60)).padStart(2, "0");
   const mm = String(min % 60).padStart(2, "0");
-  return { date: `2026-06-09T${hh}:${mm}:00.000+08:00`, open: close, high, low, close, volume: 0, average: close };
+  return { date: `2026-06-09T${hh}:${mm}:00.000+08:00`, open: close, high, low, close, volume: vol, average: close };
 }
 
 describe("computeIndexGeometry", () => {
@@ -32,6 +32,19 @@ describe("computeIndexGeometry", () => {
   it("fmtIndex 千分位 2 位(不套股票 tick)", () => {
     expect(fmtIndex(45231.5)).toBe("45,231.50");
     expect(fmtIndex(428.3)).toBe("428.30");
+  });
+  it("量 pane:maxVolume / volBarW / scaleVolY 方向正確", () => {
+    const candles = [c(540, 45000, 45010, 44990, 5_000_000_000), c(600, 45100, 45110, 45090, 3_000_000_000)];
+    const g = computeIndexGeometry({ candles, prevClose: 45000 });
+    expect(g.maxVolume).toBe(5_000_000_000);
+    expect(g.volBarW).toBeGreaterThan(0);
+    // y 軸向下:最大量 bar 頂端(小 y)在 0 量(大 y)之上
+    expect(g.scaleVolY(5_000_000_000)).toBeLessThan(g.scaleVolY(0));
+  });
+  it("空 candles → 量幾何安全值", () => {
+    const g = computeIndexGeometry({ candles: [], prevClose: 45000 });
+    expect(g.maxVolume).toBe(0);
+    expect(g.volBarW).toBe(0);
   });
 });
 

@@ -4,7 +4,7 @@
 import { createElement, Fragment } from "react";
 import type { IntradayCandle } from "./api";
 import {
-  CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, INTRADAY_THEME, type ChartTheme,
+  CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, VOL_GAP, VOL_PAD_T, TOTAL_H, INTRADAY_THEME, type ChartTheme,
 } from "./intraday-chart-svg";
 import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, minuteOfDay } from "./intraday-time";
 
@@ -45,6 +45,7 @@ export interface IndexGeometry {
   filteredCandles: IntradayCandle[];
   todayHigh: number; todayHighIdx: number;
   todayLow: number; todayLowIdx: number;
+  maxVolume: number; scaleVolY: (v: number) => number; volBarW: number;
 }
 
 export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
@@ -65,6 +66,7 @@ export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
       padL, padR, padT, padB, fontScale: scale, polyClose: "",
       minutesByIdx: [], filteredCandles: [],
       todayHigh: 0, todayHighIdx: -1, todayLow: 0, todayLowIdx: -1,
+      maxVolume: 0, scaleVolY: () => 0, volBarW: 0,
     };
   }
 
@@ -84,6 +86,11 @@ export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
   const polyClose = filteredCandles
     .map((cd, i) => `${scaleX(minutesByIdx[i])},${scaleY(cd.close)}`).join(" ");
 
+  const maxVolume = Math.max(1, ...filteredCandles.map((cd) => cd.volume));
+  const volTop = CHART_H + VOL_GAP + VOL_PAD_T;
+  const scaleVolY = (v: number) => volTop + (1 - v / maxVolume) * (TOTAL_H - volTop);
+  const volBarW = Math.max(1, (xRange / TRADING_MINUTES) * 0.7);
+
   let todayHigh = filteredCandles[0].high, todayHighIdx = 0;
   let todayLow = filteredCandles[0].low, todayLowIdx = 0;
   for (let i = 1; i < filteredCandles.length; i++) {
@@ -94,6 +101,7 @@ export function computeIndexGeometry(input: IndexChartInput): IndexGeometry {
   return {
     yMin, yMax, scaleX, scaleY, padL, padR, padT, padB, fontScale: scale,
     polyClose, minutesByIdx, filteredCandles, todayHigh, todayHighIdx, todayLow, todayLowIdx,
+    maxVolume, scaleVolY, volBarW,
   };
 }
 
