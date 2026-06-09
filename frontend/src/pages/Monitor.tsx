@@ -5,7 +5,7 @@ import { IntradayChart } from "../components/IntradayChart";
 import { QuoteBook } from "../components/QuoteBook";
 import { SignalRulesDialog } from "../components/SignalRulesDialog";
 import { TopToolbar } from "../components/TopToolbar";
-import { TradeTape } from "../components/TradeTape";
+import { TradingPanel } from "../components/TradingPanel";
 import { TriggerList } from "../components/TriggerList";
 import { useActiveSignals } from "../hooks/useActiveSignals";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
@@ -176,7 +176,7 @@ function MonitorInner() {
         <div className="mx-auto w-full max-w-[1960px] px-9 pt-3 pb-6 max-md:px-6 flex-1 min-h-0">
           <div
             className="grid items-stretch gap-6 max-[1200px]:grid-cols-1 h-full"
-            style={{ gridTemplateColumns: "300px 460px 1fr 300px" }}
+            style={{ gridTemplateColumns: "300px 460px 1fr 380px" }}
           >
 
             {/* COL 1: 觸發歷史 */}
@@ -246,17 +246,8 @@ function MonitorInner() {
               <QuoteBook symbol={selected} />
             </section>
 
-            {/* COL 4: 明細 */}
-            <section className="flex flex-col min-w-0 min-h-0">
-              <div className="flex items-baseline gap-2.5 mb-4 flex-shrink-0">
-                <h2 className="font-serif font-bold text-2xl tracking-[-0.5px] leading-[1.05]">
-                  明細
-                </h2>
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 scroll-editorial">
-                <TradeTape symbol={selected} />
-              </div>
-            </section>
+            {/* COL 4: 下單面板(群益) */}
+            <TradingPanel selected={selected} />
 
           </div>
         </div>
