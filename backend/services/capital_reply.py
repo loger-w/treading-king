@@ -7,6 +7,7 @@ docs/superpowers/specs/2026-06-10-capital-orders-reply-display-design.md),
 """
 from __future__ import annotations
 from pydantic import BaseModel
+from services.capital_models import SEC_MARKETS
 
 # idx2 Type:回報事件種類
 _TYPE = {
@@ -27,8 +28,6 @@ _SEC_FLAG = {
 # idx6 期權 [1]:倉別
 _FUT_FLAG = {"Y": "當沖", "N": "新倉", "O": "平倉", "7": "代沖銷"}
 
-_SEC_MARKETS = {"TS", "TA", "TL", "TP", "TC"}
-
 
 class ReplyRecord(BaseModel):
     seq_no: str | None = None
@@ -46,6 +45,7 @@ class ReplyRecord(BaseModel):
     time: str | None = None          # idx24 HH:MM:SS
     pre_order: bool = False          # idx31 == "B"(預約單)
     error_msg: str | None = None     # idx44(OrderErr=Y 時)
+    alt_seq_no: str | None = None    # idx47 尾欄 13 碼(官方欄名待對 docx;預約單與 KeyNo 不同)
     raw: str = ""
 
 
@@ -73,7 +73,7 @@ def _parse_buysell(market: str | None, bs: str | None) -> tuple[str | None, str 
     if side is None:
         return None, None
     flag = None
-    if market in _SEC_MARKETS and len(bs) >= 3:
+    if market in SEC_MARKETS and len(bs) >= 3:
         flag = _SEC_FLAG.get(bs[1:3])
     elif market and len(bs) >= 2:
         flag = _FUT_FLAG.get(bs[1])
@@ -106,5 +106,6 @@ def parse_onnewdata(bstr_data: str) -> ReplyRecord:
         time=_at(arr, 24),
         pre_order=_at(arr, 31) == "B",
         error_msg=_at(arr, 44),
+        alt_seq_no=_at(arr, 47),
         raw=bstr_data,
     )

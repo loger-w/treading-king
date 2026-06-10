@@ -8,13 +8,11 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from services import capital_factory
 from services.capital_models import (
-    StockOrderRequest, CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
+    SEC_MARKETS, StockOrderRequest, CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
 )
 from services.local_store import get_local_store
 
 router = APIRouter()
-
-_SEC_MARKETS = {"TS", "TA", "TL", "TP", "TC"}
 
 
 def _symbol_name(stock_no: str | None) -> str:
@@ -41,7 +39,7 @@ async def capital_orders() -> dict:
     out = []
     for o in c.store.orders():
         # v1 委託清單只顯證券;期貨/期權回報照存不顯(未來期貨面板用)。market 缺值寬鬆放行。
-        if o.market is not None and o.market not in _SEC_MARKETS:
+        if o.market is not None and o.market not in SEC_MARKETS:
             continue
         o.name = _symbol_name(o.stock_no)
         out.append(o.model_dump(mode="json"))

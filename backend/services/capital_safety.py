@@ -1,5 +1,6 @@
 """下單安全閘 —— 純函式,所有寫入(下單/改/刪/平倉)送群益前必過。"""
 from __future__ import annotations
+import math
 from dataclasses import dataclass
 from services.capital_models import StockOrderRequest
 
@@ -23,8 +24,20 @@ def _master(cfg: SafetyConfig) -> GateResult | None:
     return None
 
 
+def check_master(cfg: SafetyConfig) -> GateResult:
+    """只驗下單總開關 — 任何寫入的第一道閘,要先於其他查找/檢查,稽核 blocked 才反映真正原因。"""
+    return _master(cfg) or GateResult(True)
+
+
+def _bad_price(price: float) -> GateResult | None:
+    # NaN 對任何比較都是 False,會無聲穿過 <=0 與金額上限兩道閘,必須明確擋
+    if not math.isfinite(price) or price <= 0:
+        return GateResult(False, "價格必須大於 0")
+    return None
+
+
 def check_stock_order(req: StockOrderRequest, cfg: SafetyConfig) -> GateResult:
-    blocked = _master(cfg)
+    blocked = _master(cfg) or _bad_price(req.price)
     if blocked:
         return blocked
     if req.qty <= 0:
@@ -39,16 +52,14 @@ def check_stock_order(req: StockOrderRequest, cfg: SafetyConfig) -> GateResult:
 
 def check_cancel(cfg: SafetyConfig) -> GateResult:
     """刪單只降風險:僅過總開關。"""
-    return _master(cfg) or GateResult(True)
+    return check_master(cfg)
 
 
 def check_correct_price(new_price: float, remaining_shares: int, cfg: SafetyConfig) -> GateResult:
     """改價改變曝險:總開關 + 新價×未成交股數過金額閘。"""
-    blocked = _master(cfg)
+    blocked = _master(cfg) or _bad_price(new_price)
     if blocked:
         return blocked
-    if new_price <= 0:
-        return GateResult(False, "價格必須大於 0")
     if remaining_shares <= 0:
         return GateResult(False, "無未成交數量可改價")
     est = new_price * remaining_shares

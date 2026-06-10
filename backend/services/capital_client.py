@@ -13,11 +13,12 @@ from pathlib import Path
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
 from services.capital_models import (
-    StockOrderRequest, OrderResult,
+    StockOrderRequest, OrderResult, SEC_MARKETS,
     CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
 )
 from services.capital_safety import (
-    SafetyConfig, check_stock_order, check_cancel, check_correct_price, check_decrease,
+    SafetyConfig, GateResult,
+    check_stock_order, check_master, check_cancel, check_correct_price, check_decrease,
 )
 from services.capital_store import CapitalStore
 from services import capital_audit
@@ -69,6 +70,10 @@ class CapitalClient:
         from services.capital_reply import parse_onnewdata
         rec = parse_onnewdata(bstr_data)
         logger.info("Capital reply: seq=%s stock=%s status=%s qty=%s", rec.seq_no, rec.stock_no, rec.status_label, rec.qty)
+        if rec.alt_seq_no and rec.seq_no and rec.alt_seq_no != rec.seq_no:
+            # 真實樣本:預約單 KeyNo(idx0)≠ 尾欄序號(idx47),盤中單兩者相同。
+            # 刪/改/減目前傳 KeyNo;首測預約單若回「查無委託」,改試這個尾欄值。
+            logger.warning("Capital reply: KeyNo=%s 尾欄序號=%s 不同(預約單?)", rec.seq_no, rec.alt_seq_no)
         self.store.apply_reply(rec)
         if self._broadcast and rec.seq_no:
             self._broadcast({"event": "capital_order", "data": {
@@ -129,9 +134,29 @@ class CapitalClient:
             except Exception as e:  # noqa: BLE001
                 self._loop.call_soon_threadsafe(fut.set_exception, e)
 
+    def _write_gate(self, seq_no: str, base: GateResult) -> GateResult:
+        """基本閘(總開關等)先過,再擋已知非證券市場的單。v1 寫入鏈只支援證券:
+        期貨口數會讓改價金額閘(價×量)低估數十倍名目曝險,證券帳號打期貨序號行為也未定。
+        查無此單/缺市場別寬鬆放行 — 刪單/減量是降風險操作,store 漏接時保留逃生口。"""
+        if not base.allowed:
+            return base
+        m = self.store.market_of(seq_no)
+        if m is not None and m not in SEC_MARKETS:
+            return GateResult(False, f"非證券委託({m}),此端點僅支援證券")
+        return base
+
+    def _audit_after_send(self, req, result: OrderResult, action: str) -> None:
+        """命令已出手後的稽核:寫檔失敗只能記 log,不可把已送進群益的單回報成失敗(誘發重送)。"""
+        try:
+            capital_audit.write(self._audit_path, env=self._env, req=req,
+                                result=result, action=action)
+        except Exception:  # noqa: BLE001
+            logger.exception("稽核寫入失敗(action=%s)— 委託已送出,結果未入帳: %s", action, result)
+
     async def _execute_write(self, *, action: str, req, gate, com_call) -> OrderResult:
         """寫入操作共用骨架:閘 → ready 檢查 → COM 佇列 → 稽核。
-        所有「拒絕/失敗」路徑都留稽核 —— 真錢寫入,事後要能查帳。"""
+        所有「拒絕/失敗」路徑都留稽核 —— 真錢寫入,事後要能查帳。
+        送 COM 前稽核寫不進去就讓請求炸掉(錢還沒動,寧可不送);送出後相反,見 _audit_after_send。"""
         if not gate.allowed:
             capital_audit.write(self._audit_path, env=self._env, req=req,
                                 blocked=gate.reason, action=action)
@@ -148,16 +173,14 @@ class CapitalClient:
             message, code = await fut
         except Exception as e:  # noqa: BLE001 — COM 例外轉 result,稽核不可斷
             result = OrderResult(ok=False, code=-1, message=f"COM 例外: {type(e).__name__}: {e}")
-            capital_audit.write(self._audit_path, env=self._env, req=req,
-                                result=result, action=action)
+            self._audit_after_send(req, result, action)
             return result
         result = OrderResult(
             ok=(code == 0),
             code=code,
             message=f"{self._com.return_code_message(code)} {message}".strip(),
         )
-        capital_audit.write(self._audit_path, env=self._env, req=req,
-                            result=result, action=action)
+        self._audit_after_send(req, result, action)
         return result
 
     async def submit_stock_order(self, req: StockOrderRequest) -> OrderResult:
@@ -175,18 +198,23 @@ class CapitalClient:
 
         return await self._execute_write(
             action="cancel", req=req,
-            gate=check_cancel(self._safety), com_call=_do)
+            gate=self._write_gate(req.seq_no, check_cancel(self._safety)), com_call=_do)
 
     async def correct_stock_price(self, req: CorrectPriceRequest) -> OrderResult:
+        def _do() -> tuple[str, int]:
+            return self._com.correct_price(self._user_id, self._full_account, req.seq_no, req.price)
+
+        # 總開關/市場閘先於 store 查找:稽核 blocked 要記真正的擋單原因,
+        # 總開關關閉時不可被「找不到委託」遮蔽(其餘寫入也都是總開關最先)。
+        pre = self._write_gate(req.seq_no, check_master(self._safety))
+        if not pre.allowed:
+            return await self._execute_write(action="correct_price", req=req, gate=pre, com_call=_do)
         remaining = self.store.remaining_shares(req.seq_no)
         if remaining is None:
             reason = f"找不到委託 {req.seq_no}"
             capital_audit.write(self._audit_path, env=self._env, req=req,
                                 blocked=reason, action="correct_price")
             return OrderResult(ok=False, code=-1, message=reason)
-
-        def _do() -> tuple[str, int]:
-            return self._com.correct_price(self._user_id, self._full_account, req.seq_no, req.price)
 
         return await self._execute_write(
             action="correct_price", req=req,
@@ -198,4 +226,4 @@ class CapitalClient:
 
         return await self._execute_write(
             action="decrease", req=req,
-            gate=check_decrease(req.qty, self._safety), com_call=_do)
+            gate=self._write_gate(req.seq_no, check_decrease(req.qty, self._safety)), com_call=_do)

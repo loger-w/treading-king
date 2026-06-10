@@ -109,14 +109,18 @@ def _ready_client(com, audit_path, max_amount=2_000_000.0):
 
 def _run_write(client, make_coro):
     """測試替代 COM 執行緒:綁 running loop、投遞後同步 drain 佇列。
-    make_coro = lambda: client.cancel_stock_order(...)(lambda 延遲建立,避免 loop 未綁)。"""
+    make_coro = lambda: client.cancel_stock_order(...)(lambda 延遲建立,避免 loop 未綁)。
+    drain 的 try/except 與 production _run 同構:fn() 例外 → set_exception。"""
     async def _go():
         client._loop = asyncio.get_running_loop()
         task = asyncio.ensure_future(make_coro())
         await asyncio.sleep(0)      # 讓 coro 先把命令投進佇列
         while not client._cmd_q.empty():
             fn, fut = client._cmd_q.get_nowait()
-            fut.set_result(fn())
+            try:
+                fut.set_result(fn())
+            except Exception as e:
+                fut.set_exception(e)
         return await task
     return asyncio.run(_go())
 
@@ -215,21 +219,75 @@ def test_com_exception_returns_result_and_audited(tmp_path):
 
     audit = tmp_path / "a.jsonl"
     client = _ready_client(BoomCom(), audit)
-
-    # _run_write 的 drain 改不了例外路徑:直接模擬 COM 執行緒 set_exception
-    async def _go():
-        client._loop = asyncio.get_running_loop()
-        task = asyncio.ensure_future(client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
-        await asyncio.sleep(0)
-        fn, fut = client._cmd_q.get_nowait()
-        try:
-            fut.set_result(fn())
-        except Exception as e:
-            fut.set_exception(e)
-        return await task
-
-    res = asyncio.run(_go())
+    res = _run_write(client, lambda: client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
     assert res.ok is False and "COM 例外" in res.message
     entry = _last_audit(audit)
     assert entry["action"] == "cancel"
     assert entry["result"]["ok"] is False and "COM 例外" in entry["result"]["message"]
+
+
+def test_correct_price_switch_off_reports_master_reason(tmp_path):
+    # 總開關要先於 store 查找:關閉時拒絕理由/稽核 blocked 必須是「總開關」,
+    # 不可被「找不到委託」遮蔽(事後查帳要看得出當時開關已關)
+    com = FakeCom()
+    audit = tmp_path / "a.jsonl"
+    client = _client(com, enabled=False, audit_path=audit)
+    res = asyncio.run(client.correct_stock_price(CorrectPriceRequest(seq_no="nope", price=10.0)))
+    assert res.ok is False and "總開關" in res.message
+    entry = _last_audit(audit)
+    assert entry["action"] == "correct_price" and "總開關" in entry["blocked"]
+    assert com.sent == []
+
+
+def _tf_evt(seq="2315596711743"):
+    arr = [""] * 47
+    arr[0], arr[1], arr[2], arr[3] = seq, "TF", "N", "N"
+    arr[6], arr[8], arr[11], arr[20] = "BNR20", "QEF06", "873.0000", "1"
+    return parse_onnewdata(",".join(arr))
+
+
+def test_writes_reject_known_futures_seq(tmp_path):
+    # v1 寫入鏈只支援證券:期貨口數會讓改價金額閘(價×量)低估數十倍名目曝險,
+    # 證券帳號打期貨序號行為也未定 — 已知非證券的單三支寫入都要擋下並留稽核
+    com = FakeCom()
+    audit = tmp_path / "a.jsonl"
+    client = _ready_client(com, audit)
+    client.store.apply_reply(_tf_evt("F1"))
+    for call in (
+        lambda: client.cancel_stock_order(CancelOrderRequest(seq_no="F1")),
+        lambda: client.correct_stock_price(CorrectPriceRequest(seq_no="F1", price=900.0)),
+        lambda: client.decrease_stock_qty(DecreaseQtyRequest(seq_no="F1", qty=1)),
+    ):
+        res = asyncio.run(call())
+        assert res.ok is False and "非證券" in res.message
+        assert "非證券" in _last_audit(audit)["blocked"]
+    assert com.sent == []
+
+
+def test_correct_price_rejected_for_cancelled_order(tmp_path):
+    # 已刪單的 order-filled 差額不是未成交量:改價要被「無未成交」擋下,不留給券商兜底
+    com = FakeCom()
+    client = _ready_client(com, tmp_path / "a.jsonl")
+    client.store.apply_reply(_stock_evt("S9"))
+    cancel_evt = _stock_evt("S9").model_copy(update={"status_raw": "C"})
+    client.store.apply_reply(cancel_evt)
+    res = asyncio.run(client.correct_stock_price(CorrectPriceRequest(seq_no="S9", price=95.0)))
+    assert res.ok is False and "無未成交" in res.message
+    assert com.sent == []
+
+
+def test_audit_failure_after_send_does_not_fail_order(tmp_path, monkeypatch):
+    # 命令已出手後稽核寫不進去(磁碟滿等)只能記 log:
+    # 把已送進群益的單回 500 會誘發 user 重送 → 真錢重複下單
+    from services import capital_audit
+
+    com = FakeCom()
+    client = _ready_client(com, tmp_path / "a.jsonl")
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(capital_audit, "write", boom)
+    res = _run_write(client, lambda: client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
+    assert res.ok is True                      # 單已送出,結果照實回報
+    assert ("cancel", "S1") in com.sent

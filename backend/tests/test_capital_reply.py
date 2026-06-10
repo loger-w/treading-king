@@ -27,6 +27,9 @@ def test_parse_preorder_new():
     assert r.time == "14:59:48"
     assert r.pre_order is True          # idx31 = B
     assert r.error_msg is None
+    # 真實樣本:預約單 KeyNo(idx0)≠ 尾欄序號(idx47)— 刪改 API 吃哪個待首測,先解出來供 log 比對
+    assert r.alt_seq_no == "2313092917892"
+    assert r.alt_seq_no != r.seq_no
 
 
 def test_parse_cancel():
@@ -46,6 +49,7 @@ def test_parse_fill_margin_sell():
     assert r.qty == 1000
     assert r.pre_order is False         # idx31 = A
     assert r.book_no == "S01Q7"
+    assert r.alt_seq_no == r.seq_no     # 盤中單 KeyNo 與尾欄序號相同
 
 
 def test_parse_futures_flag():
@@ -80,7 +84,7 @@ def test_parse_after_qty():
 def test_parse_garbage_does_not_crash():
     r = parse_onnewdata("xxx")
     assert r.seq_no == "xxx"
-    assert r.market is None or isinstance(r.market, str)
+    assert r.market is None      # 只有一欄,idx1 起全部缺
     assert r.qty == 0
 
 
