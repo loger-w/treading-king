@@ -79,7 +79,7 @@
 
 - `capital_com.py`:`cancel_order(user_id, full_account, seq_no)`、`correct_price(user_id, full_account, seq_no, price)`、`decrease_qty(user_id, full_account, seq_no, qty)`
 - `capital_client.py`:`cancel_stock_order` / `correct_stock_price` / `decrease_stock_qty` — 進同一條 COM 命令佇列;**安全閘**:三者都過 `order_enabled` 總開關;改價另過金額閘(新價 × 未成交量 ≤ max_amount);刪單/減量只降風險、不過金額閘。**稽核**:`capital_audit` entry 加 `action` 欄(`order`/`cancel`/`correct_price`/`decrease`),被擋與結果照記
-- `routes/capital.py`:`POST /api/capital/order/cancel`(body `{seq_no}`)、`POST /api/capital/order/correct-price`(`{seq_no, price}`)、`POST /api/capital/order/decrease`(`{seq_no, qty}`,qty=要減的張數、route 轉股數)
+- `routes/capital.py`:`POST /api/capital/order/cancel`(body `{seq_no}`)、`POST /api/capital/order/correct-price`(`{seq_no, price}`)、`POST /api/capital/order/decrease`(`{seq_no, qty}`,qty=要減的張數,**直傳**——與 `SendStockOrder.nQty` 同慣例(實證=張),首次實測對 App 驗)
 - 結果不直接改 store —— 等 OnNewData 的 C/U/P 回報自然驅動狀態演進(單一資料流)
 
 ### 5. 前端 `OrdersList`(`TradingPanel.tsx`)
