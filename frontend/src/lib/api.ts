@@ -532,19 +532,16 @@ export const api = {
   capitalCancelOrder: (req: { seq_no: string }) =>
     fetchJSON<CapitalOrderResult>("/api/capital/order/cancel", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     }),
   capitalCorrectPrice: (req: { seq_no: string; price: number }) =>
     fetchJSON<CapitalOrderResult>("/api/capital/order/correct-price", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     }),
   capitalDecreaseQty: (req: { seq_no: string; qty: number }) =>
     fetchJSON<CapitalOrderResult>("/api/capital/order/decrease", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     }),
 };
