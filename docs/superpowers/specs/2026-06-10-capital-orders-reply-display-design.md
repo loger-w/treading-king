@@ -11,7 +11,7 @@
 
 ## 目標(v1)
 
-委託分頁 = **每張單一列、聚合狀態**,顯示:名稱+代號、買賣(紅綠)、現股/融資/融券、`成交/委託` 張數、價格、時間、`[預約]` 標記、失敗原因。**只顯示證券市場**;期貨/選擇權回報照存但不顯示(未來期貨下單面板重用)。
+委託分頁 = **每張單一列、聚合狀態**(聚合 key = 13 碼委託序號;同標的不同單絕不合併,合併的只有同一張單自己的委託/成交/刪單事件),顯示:名稱+代號、買賣(紅綠)、現股/融資/融券、`成交/委託` 張數、**成交均價**、價格、時間、`[預約]` 標記、失敗原因。未終結的單可從面板**刪單 / 改價 / 減量**。**只顯示證券市場**;期貨/選擇權回報照存但不顯示(未來期貨下單面板重用)。
 
 ## OnNewData 欄位對照(官方 12.回報.docx + 2026-06-10 12 筆真實回報驗證)
 
@@ -48,7 +48,7 @@
 `_orders` 改存聚合紀錄 `OrderAgg`(per seq_no):
 
 - `N 委託`:`order_qty=qty`、`price=委託價`、`status=預約中(pre_order)|委託成功`
-- `D 成交`:`filled_qty += qty`;`status = 部分成交`(filled<order)/`全部成交`(filled≥order);order_qty==0(異常無 N)時以 filled 顯示
+- `D 成交`:`filled_qty += qty`、`fill_value += price×qty`(`avg_fill_price = fill_value/filled_qty`,量加權);`status = 部分成交`(filled<order)/`全部成交`(filled≥order);order_qty==0(異常無 N)時以 filled 顯示
 - `C 刪單`:`status=已刪單`(order_qty/filled_qty 不動;C 的 qty 是剩量,不用)
 - `U 改量`:`order_qty = after_qty`(無 after_qty 則 `order_qty - qty`)
 - `P/B 改價(量)`:更新 price(B 連動 after_qty)
@@ -65,36 +65,56 @@
 - **只回證券市場**(TS/TA/TL/TP/TC);期權(TF/TO/OF/OO)存而不回(未來 `?market=futures` 或獨立面板再開)
 - 每列補 `name`:查 `local_store.market`(精確 symbol 比對;查無→空字串,前端只顯代號)
 
-### 4. 前端 `OrdersList`(`TradingPanel.tsx`)
+### 4. 刪單 / 改價 / 減量(寫入操作)
 
-照定案 preview 渲染:
+官方範例 `StockOrder.py` 證券三支(全用同步 `bAsync=0`,回 `(message, nCode)`,與 `SendStockOrder` 同 envelope):
+
+| 動作 | COM 呼叫 | 備註 |
+|---|---|---|
+| 刪單 | `CancelOrderBySeqNo(ID, 0, fullAccount, seqNo)` | 預約單同樣可刪(App 已實證) |
+| 改價 | `CorrectPriceBySeqNo(ID, 0, fullAccount, seqNo, newPrice, 0)` | 末參數 nTradeType=0(ROD) |
+| 減量 | `DecreaseOrderBySeqNo(ID, 0, fullAccount, seqNo, decreaseQty)` | 台股只能減量;加量=掛新單 |
+
+分層(沿用送單模式):
+
+- `capital_com.py`:`cancel_order(user_id, full_account, seq_no)`、`correct_price(user_id, full_account, seq_no, price)`、`decrease_qty(user_id, full_account, seq_no, qty)`
+- `capital_client.py`:`cancel_stock_order` / `correct_stock_price` / `decrease_stock_qty` — 進同一條 COM 命令佇列;**安全閘**:三者都過 `order_enabled` 總開關;改價另過金額閘(新價 × 未成交量 ≤ max_amount);刪單/減量只降風險、不過金額閘。**稽核**:`capital_audit` entry 加 `action` 欄(`order`/`cancel`/`correct_price`/`decrease`),被擋與結果照記
+- `routes/capital.py`:`POST /api/capital/order/cancel`(body `{seq_no}`)、`POST /api/capital/order/correct-price`(`{seq_no, price}`)、`POST /api/capital/order/decrease`(`{seq_no, qty}`,qty=要減的張數、route 轉股數)
+- 結果不直接改 store —— 等 OnNewData 的 C/U/P 回報自然驅動狀態演進(單一資料流)
+
+### 5. 前端 `OrdersList`(`TradingPanel.tsx`)
+
+照定案 preview 渲染,成交均價在有成交時顯示:
 
 ```
-3357 臺慶科   買·融資         全部成交
-317.50 · 1/1 張 · 12:09:48
+3357 臺慶科   買·融資          全部成交
+317.50 · 1/1 張 · 均 317.50 · 12:09:48
 
-3357 臺慶科   買·現股 [預約]   已刪單
+4989 環宇-KY  賣·融資          部分成交    [刪單][改]
+83.70 · 3/4 張 · 均 83.70 · 12:46:31
+
+3357 臺慶科   買·現股 [預約]    已刪單
 293.00 · 0/1 張 · 14:59:48
 ```
 
 - 買=紅(`text-bull`)、賣=綠(`text-bear`),沿用站內紅漲綠跌
 - 失敗/退單:狀態紅字 + 下行小字 error_msg
 - `成交/委託` 張數一律顯示(0/1 張);單位用後端給的 `unit`
-- WS `capital_order` 事件僅作 reload 觸發(現行為不變)
+- **活單**(預約中/委託成功/部分成交)才出現 `[刪單]` `[改]`:刪單 → 確認彈窗(prod 紅底,顯示該單摘要)→ POST cancel;`[改]` → 列內展開小表單(價格、減量張數,預填現值)→ 確認彈窗 → POST。終結態(全部成交/已刪單/失敗/退單)無按鈕
+- WS `capital_order` 事件僅作 reload 觸發(現行為不變;刪改結果靠回報刷新)
 
-### 5. 測試
+### 6. 測試
 
 - fixture 用 2026-06-10 真實 raw(去個資可保留):現股預約買+刪單、融資買全部成交、融資賣部分成交(1+2+1/4)、期貨 BNR20、TM2606 無 seq_no 丟棄
 - `capital_reply`:逐欄解碼斷言(B00R2/S03R2/BNR20 拆解、pre_order、time)
-- `capital_store`:聚合演進(委託→部分→全部成交;委託→刪單;OrderErr=Y→失敗;U 改量;replay 亂序不倒退)、張/股/口換算
-- `routes`:期貨被過濾、name enrich(monkeypatch market store)
-- 前端 vitest:OrdersList 渲染(名稱、紅綠、預約標記、失敗紅字)
+- `capital_store`:聚合演進(委託→部分→全部成交;委託→刪單;OrderErr=Y→失敗;U 改量;replay 亂序不倒退)、成交均價量加權、張/股/口換算、**同標的不同序號不合併**
+- `capital_client`:刪/改/減過總開關(off→擋+稽核)、改價過金額閘、稽核 action 欄
+- `routes`:期貨被過濾、name enrich(monkeypatch market store)、cancel/correct-price/decrease 三端點
+- 前端 vitest:OrdersList 渲染(名稱、紅綠、預約標記、失敗紅字、活單才有刪改鈕)
 
-## 不做(v1 範圍外)
+## 不做(v1 範圍外 — 僅期貨相關)
 
-- 期貨/選擇權清單與期貨帳號下單(未來另開;資料已存)
-- 成交均價計算(限價單成交價≈委託價,先顯示委託價)
-- 面板刪單/改單功能
+- 期貨/選擇權清單顯示與期貨帳號下單/刪改(未來另開;回報資料已存)
 - 期貨代號→名稱對照(顯示代號)
 - 歷史日委託(ConnectByID 只重播當日;清單=今日)
 
@@ -102,3 +122,4 @@
 
 - 官方文件說 KeyNo「國內期選成交單無此欄」— 已被過濾,不影響證券清單;期貨聚合留待期貨面板設計
 - U/P/B/S、OrderErr=Y 無真實樣本(今日 12 筆沒有),依文件實作 + 單元測試覆蓋,首次遇到時看 log 驗證
+- **刪/改/減從沒對真實群益跑過**(送單鏈路已實證、這三支還沒)— 上線後首次操作比照安全首單:挑不會成交的活單(如遠價預約單)先刪一筆、改一筆,對群益 App 核對
