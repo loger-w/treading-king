@@ -31,3 +31,25 @@ def test_appends_not_overwrites(tmp_path):
     capital_audit.write(path, env="test", req=_req(), blocked="a")
     capital_audit.write(path, env="test", req=_req(), blocked="b")
     assert len(path.read_text(encoding="utf-8").strip().splitlines()) == 2
+
+
+def test_audit_writes_action_field(tmp_path):
+    import json
+    from services.capital_models import CancelOrderRequest
+    p = tmp_path / "a.jsonl"
+    capital_audit.write(p, env="prod", req=CancelOrderRequest(seq_no="S1"),
+                        blocked="下單總開關關閉(CAPITAL_ORDER_ENABLED=false)", action="cancel")
+    entry = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["action"] == "cancel"
+    assert entry["req"]["seq_no"] == "S1"
+
+
+def test_audit_default_action_is_order(tmp_path):
+    import json
+    from services.capital_models import StockOrderRequest, BuySell
+    p = tmp_path / "a.jsonl"
+    capital_audit.write(p, env="prod",
+                        req=StockOrderRequest(stock_no="2330", buy_sell=BuySell.BUY, price=500.0, qty=1),
+                        blocked="x")
+    entry = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["action"] == "order"

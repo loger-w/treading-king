@@ -1,4 +1,5 @@
 // 一律用 relative path（vite.config.ts proxy 會接到 :8000）
+import type { CapitalOrder } from "./capital-orders";
 
 const BFF_API_KEY = import.meta.env.VITE_BFF_API_KEY ?? "";
 
@@ -341,11 +342,7 @@ export interface SignalEvent {
 // Capital 下單面板
 // ---------------------------------------------------------------------------
 
-export interface CapitalOrder {
-  seq_no: string; stock_no: string | null; book_no: string | null;
-  status_raw: string | null; status_label: string | null;
-  price: number | null; qty: number;
-}
+export type { CapitalOrder } from "./capital-orders";
 export interface CapitalPosition {
   stock_no: string; name: string; qty: number; avg_price: number;
 }
@@ -529,6 +526,21 @@ export const api = {
     fetchJSON<{ positions: CapitalPosition[] }>("/api/capital/positions"),
   capitalSubmitStock: (req: CapitalStockOrderReq) =>
     fetchJSON<CapitalOrderResult>("/api/capital/order/stock", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  capitalCancelOrder: (req: { seq_no: string }) =>
+    fetchJSON<CapitalOrderResult>("/api/capital/order/cancel", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  capitalCorrectPrice: (req: { seq_no: string; price: number }) =>
+    fetchJSON<CapitalOrderResult>("/api/capital/order/correct-price", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  capitalDecreaseQty: (req: { seq_no: string; qty: number }) =>
+    fetchJSON<CapitalOrderResult>("/api/capital/order/decrease", {
       method: "POST",
       body: JSON.stringify(req),
     }),

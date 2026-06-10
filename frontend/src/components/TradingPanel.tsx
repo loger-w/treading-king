@@ -4,13 +4,14 @@ import { useCapitalStatus, useCapitalOrders, useCapitalPositions } from "../hook
 import { subscribeOrderTicket, subscribeTicks } from "../hooks/useSignalsStream";
 import { grossPnl, netPnl } from "../lib/capital-pnl";
 import { OrderConfirmDialog } from "./OrderConfirmDialog";
+import { OrdersList } from "./OrdersList";
 
 const ENV = (import.meta.env.VITE_CAPITAL_ENV ?? "test") as string;
 const FEE = Number(import.meta.env.VITE_CAPITAL_FEE_RATE ?? "0.001425");
 const TAX = Number(import.meta.env.VITE_CAPITAL_TAX_RATE ?? "0.003");
 
 export function TradingPanel({ selected }: { selected: string | null }) {
-  const { status } = useCapitalStatus();
+  const { status, lastError } = useCapitalStatus();
   const orders = useCapitalOrders();
   const positions = useCapitalPositions();
   const [tab, setTab] = useState<"order" | "list">("order");
@@ -20,6 +21,7 @@ export function TradingPanel({ selected }: { selected: string | null }) {
   const [qty, setQty] = useState("1");
   const [confirm, setConfirm] = useState<CapitalStockOrderReq | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   // 五檔點價 → 帶入委託價
   useEffect(() => subscribeOrderTicket((h) => {
@@ -29,6 +31,11 @@ export function TradingPanel({ selected }: { selected: string | null }) {
   const ready = status === "ok";
   const pos = positions.find((p) => p.stock_no === selected) ?? null;
 
+  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入,送出值≠確認值);張數限正整數
+  // (小數張會被 pydantic 422 短路,進不了安全閘=不留稽核)
+  const inputOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0
+    && /^\d+$/.test(qty.trim()) && Number(qty) > 0;
+
   const submit = () => {
     if (!selected) return;
     setConfirm({
@@ -37,12 +44,15 @@ export function TradingPanel({ selected }: { selected: string | null }) {
     });
   };
   const doSend = async () => {
-    if (!confirm) return;
+    if (!confirm || sending) return;
+    setSending(true);
     try {
       const r = await api.capitalSubmitStock(confirm);
       setMsg(`${r.ok ? "✓" : "✗"} ${r.message}`);
     } catch {
       setMsg("✗ 送單失敗");
+    } finally {
+      setSending(false);
     }
     setConfirm(null);
   };
@@ -60,6 +70,8 @@ export function TradingPanel({ selected }: { selected: string | null }) {
           {ENV === "prod" ? "正式" : "測試環境"}
         </span>
       </div>
+      {/* 回報通道掛了(connect_reply 失敗)時 status 仍 ok、可送單但收不到回報 — 必須讓人看見 */}
+      {lastError && <div className="text-2xs text-bear mb-2 flex-shrink-0">⚠ {lastError}</div>}
 
       {/* tabs */}
       <div className="flex border-b border-line-strong mb-3 flex-shrink-0 text-sm">
@@ -87,7 +99,7 @@ export function TradingPanel({ selected }: { selected: string | null }) {
                   className="w-full bg-bg-deep border border-line px-3 py-2 text-sm tabular-nums outline-none focus:border-accent" /></div>
             </div>
 
-            <button onClick={submit} disabled={!ready || !selected}
+            <button onClick={submit} disabled={!ready || !selected || !inputOk}
               className={`w-full py-2.5 font-bold rounded text-bg disabled:opacity-40 ${isBuy ? "bg-bull" : "bg-bear"}`}>
               {isBuy ? "買進" : "賣出"} 送出
             </button>
@@ -98,7 +110,7 @@ export function TradingPanel({ selected }: { selected: string | null }) {
             <PositionCard symbol={selected} pos={pos} />
           </>
         ) : (
-          <OrdersList orders={orders} />
+          <OrdersList orders={orders} env={ENV} />
         )}
       </div>
 
@@ -132,25 +144,6 @@ function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: numb
         <span>現價 {live != null ? live.toFixed(2) : "—"}</span>
         <span>淨 {up ? "+" : ""}{net.toLocaleString()}</span>
       </div>
-    </div>
-  );
-}
-
-function OrdersList({ orders }: { orders: { seq_no: string; stock_no: string | null; status_label: string | null; price: number | null; qty: number }[] }) {
-  if (orders.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">今日尚無委託</div>;
-  return (
-    <div className="space-y-0">
-      {orders.map((o) => (
-        <div key={o.seq_no} className="border-b border-line py-2.5 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-serif font-medium">{o.stock_no ?? "—"}</span>
-            <span className="ml-auto text-xs px-2 py-0.5 rounded bg-bg-deep text-ink-muted">{o.status_label ?? "—"}</span>
-          </div>
-          <div className="text-xs text-ink-dim tabular-nums mt-1">
-            {o.price != null ? o.price.toFixed(2) : "—"} · {o.qty} 張 · #{o.seq_no}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

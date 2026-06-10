@@ -21,6 +21,15 @@ class FakeClient:
     async def submit_stock_order(self, req):
         return OrderResult(ok=True, code=0, message="委託成功", seq_no="A1")
 
+    async def cancel_stock_order(self, req):
+        return OrderResult(ok=True, code=0, message="刪單成功", seq_no=req.seq_no)
+
+    async def correct_stock_price(self, req):
+        return OrderResult(ok=True, code=0, message="改價成功", seq_no=req.seq_no)
+
+    async def decrease_stock_qty(self, req):
+        return OrderResult(ok=True, code=0, message="減量成功", seq_no=req.seq_no)
+
 
 def _client(monkeypatch, fake):
     monkeypatch.setattr(factory, "get_capital", lambda: fake)
@@ -47,3 +56,46 @@ def test_submit_order_ok(monkeypatch):
     })
     assert r.status_code == 200
     assert r.json()["ok"] is True and r.json()["seq_no"] == "A1"
+
+
+def test_orders_filters_futures_and_enriches_name(monkeypatch):
+    from services.capital_models import OrderRecord
+
+    class _Store:
+        def orders(self):
+            return [
+                OrderRecord(seq_no="S1", stock_no="3357", market="TS", status_label="已刪單"),
+                OrderRecord(seq_no="F1", stock_no="QEF06", market="TF", status_label="委託成功"),
+            ]
+        def positions(self):
+            return []
+
+    fake = FakeClient()
+    fake.store = _Store()
+    c = _client(monkeypatch, fake)
+
+    import routes.capital as capital_route
+    monkeypatch.setattr(capital_route, "_symbol_name", lambda code: "臺慶科" if code == "3357" else "")
+
+    orders = c.get("/api/capital/orders").json()["orders"]
+    assert len(orders) == 1                      # TF 被過濾
+    assert orders[0]["seq_no"] == "S1"
+    assert orders[0]["name"] == "臺慶科"
+
+
+def test_cancel_correct_decrease_endpoints(monkeypatch):
+    c = _client(monkeypatch, FakeClient())
+    r = c.post("/api/capital/order/cancel", json={"seq_no": "S1"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["seq_no"] == "S1"      # 證明 req 真的轉發到對的 client method
+    r = c.post("/api/capital/order/correct-price", json={"seq_no": "S2", "price": 100.0})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["seq_no"] == "S2"
+    r = c.post("/api/capital/order/decrease", json={"seq_no": "S3", "qty": 1})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["seq_no"] == "S3"
+
+
+def test_write_endpoints_503_when_disabled(monkeypatch):
+    c = _client(monkeypatch, None)
+    assert c.post("/api/capital/order/cancel", json={"seq_no": "S1"}).status_code == 503
