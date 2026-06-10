@@ -48,14 +48,25 @@ class OrderResult(BaseModel):
 
 
 class OrderRecord(BaseModel):
+    """委託清單一列 = 一張單的聚合狀態(key=13碼委託序號)。qty 已換算顯示單位。"""
     seq_no: str
     stock_no: str | None = None
+    name: str = ""                    # route enrich 填,store 不管
+    market: str | None = None
+    buy_sell: str | None = None       # "B"/"S"
+    flag_label: str | None = None     # 現股/融資/融券…
     book_no: str | None = None
-    status_raw: str | None = None
-    status_label: str | None = None
-    price: float | None = None
-    qty: int = 0
-    raw: str = ""
+    status_raw: str | None = None     # 最新事件 Type
+    status_label: str | None = None   # 預約中/委託成功/部分成交/全部成交/已刪單/失敗/逾時/退單
+    price: float | None = None        # 委託價(P/B 更新)
+    avg_fill_price: float | None = None
+    order_qty: int = 0                # 顯示單位(張/股/口)
+    filled_qty: int = 0
+    unit: str = "張"
+    time: str | None = None           # 最新事件 HH:MM:SS
+    pre_order: bool = False
+    error_msg: str | None = None
+    raw: str = ""                     # 最新事件原始字串(debug)
 
 
 class Position(BaseModel):
