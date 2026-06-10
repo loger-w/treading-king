@@ -67,3 +67,9 @@ def test_decrease_needs_positive_qty():
     assert check_decrease(1, _gate_cfg()).allowed is True
     assert check_decrease(0, _gate_cfg()).allowed is False
     assert check_decrease(1, _gate_cfg(False)).allowed is False
+
+
+def test_correct_price_rejects_no_remaining():
+    # 已全成交/已刪單 remaining=0:est=0 恆過金額閘,安全層須自己擋,不留給券商兜底
+    g = check_correct_price(100.0, 0, _gate_cfg())
+    assert g.allowed is False and "無未成交" in g.reason

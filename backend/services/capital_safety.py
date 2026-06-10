@@ -49,6 +49,8 @@ def check_correct_price(new_price: float, remaining_shares: int, cfg: SafetyConf
         return blocked
     if new_price <= 0:
         return GateResult(False, "價格必須大於 0")
+    if remaining_shares <= 0:
+        return GateResult(False, "無未成交數量可改價")
     est = new_price * remaining_shares
     if cfg.max_amount and est > cfg.max_amount:
         return GateResult(False, f"預估金額 {est:.0f} 超過上限 {cfg.max_amount:.0f}")
