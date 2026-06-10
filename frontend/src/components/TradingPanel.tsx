@@ -136,7 +136,7 @@ function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: numb
   );
 }
 
-function OrdersList({ orders }: { orders: { seq_no: string; stock_no: string | null; status_label: string | null; price: number | null; qty: number }[] }) {
+function OrdersList({ orders }: { orders: { seq_no: string; stock_no: string | null; status_label: string | null; price: number | null; order_qty: number; filled_qty: number; unit: string }[] }) {
   if (orders.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">今日尚無委託</div>;
   return (
     <div className="space-y-0">
@@ -147,7 +147,7 @@ function OrdersList({ orders }: { orders: { seq_no: string; stock_no: string | n
             <span className="ml-auto text-xs px-2 py-0.5 rounded bg-bg-deep text-ink-muted">{o.status_label ?? "—"}</span>
           </div>
           <div className="text-xs text-ink-dim tabular-nums mt-1">
-            {o.price != null ? o.price.toFixed(2) : "—"} · {o.qty} 張 · #{o.seq_no}
+            {o.price != null ? o.price.toFixed(2) : "—"} · {o.filled_qty}/{o.order_qty} {o.unit} · #{o.seq_no}
           </div>
         </div>
       ))}
