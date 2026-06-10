@@ -2,6 +2,10 @@ from __future__ import annotations
 from enum import Enum
 from pydantic import BaseModel
 
+# 群益市場別:證券類(整股 TS/TA/TP、零股 TL/TC)。期貨/期權 TF/TO/OF/OO/OS 不在此集。
+# route 顯示過濾、capital_reply idx6 解碼、capital_client 寫入市場閘共用這一份。
+SEC_MARKETS = frozenset({"TS", "TA", "TL", "TP", "TC"})
+
 
 class CapitalEnv(str, Enum):
     TEST = "test"
@@ -66,6 +70,7 @@ class OrderRecord(BaseModel):
     time: str | None = None           # 最新事件 HH:MM:SS
     pre_order: bool = False
     error_msg: str | None = None
+    actionable: bool = False          # 活單可刪/改。store 由 _RANK 算,前端不要自己抄狀態表
     raw: str = ""                     # 最新事件原始字串(debug)
 
 
