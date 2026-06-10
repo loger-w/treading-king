@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type CapitalOrderResult } from "../lib/api";
 import { buildOrderRow, type CapitalOrder, type OrderRowVM } from "../lib/capital-orders";
 
@@ -26,9 +26,11 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
   const [price, setPrice] = useState("");
   const [decQty, setDecQty] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const doSend = async () => {
-    if (!pending) return;
+    if (!pending || busy) return;
+    setBusy(true);
     try {
       let r: CapitalOrderResult;
       if (pending.kind === "cancel") r = await api.capitalCancelOrder({ seq_no: row.seqNo });
@@ -37,6 +39,8 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
       onResult(`${r.ok ? "✓" : "✗"} ${r.message}`);
     } catch {
       onResult("✗ 送出失敗");
+    } finally {
+      setBusy(false);
     }
     setPending(null);
     setEditing(false);
@@ -70,30 +74,36 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
             <span className="text-ink-dim w-12">改價</span>
             <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder={row.priceText}
               className="flex-1 bg-bg-deep border border-line px-2 py-1 tabular-nums outline-none focus:border-accent" />
-            <button disabled={!Number(price)} onClick={() => setPending({ kind: "correct_price", price: Number(price) })}
+            <button disabled={!(Number(price) > 0)} onClick={() => setPending({ kind: "correct_price", price: Number(price) })}
               className="px-2 py-1 border border-line-strong disabled:opacity-40 rounded">送出</button>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-ink-dim w-12">減量</span>
             <input value={decQty} onChange={(e) => setDecQty(e.target.value)} inputMode="numeric" placeholder="張"
               className="flex-1 bg-bg-deep border border-line px-2 py-1 tabular-nums outline-none focus:border-accent" />
-            <button disabled={!Number(decQty)} onClick={() => setPending({ kind: "decrease", qty: Number(decQty) })}
+            <button disabled={!(Number(decQty) > 0)} onClick={() => setPending({ kind: "decrease", qty: Number(decQty) })}
               className="px-2 py-1 border border-line-strong disabled:opacity-40 rounded">送出</button>
           </div>
         </div>
       )}
 
-      {pending && (
-        <ActionConfirm row={row} action={pending} env={env}
+      {pending && row.actionable && (
+        <ActionConfirm row={row} action={pending} env={env} busy={busy}
           onConfirm={doSend} onClose={() => setPending(null)} />
       )}
     </div>
   );
 }
 
-function ActionConfirm({ row, action, env, onConfirm, onClose }: {
-  row: OrderRowVM; action: PendingAction; env: string; onConfirm: () => void; onClose: () => void;
+function ActionConfirm({ row, action, env, busy, onConfirm, onClose }: {
+  row: OrderRowVM; action: PendingAction; env: string; busy: boolean; onConfirm: () => void; onClose: () => void;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const prod = env === "prod";
   const desc = action.kind === "cancel" ? "刪單"
     : action.kind === "correct_price" ? `改價 → ${action.price.toFixed(2)}`
@@ -115,7 +125,7 @@ function ActionConfirm({ row, action, env, onConfirm, onClose }: {
         </div>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="px-3 py-1.5 text-sm border border-line-strong text-ink-muted hover:text-ink">取消</button>
-          <button onClick={onConfirm} className="px-3 py-1.5 text-sm text-bg font-medium bg-bear">確認</button>
+          <button onClick={onConfirm} disabled={busy} className="px-3 py-1.5 text-sm text-bg font-medium bg-bull disabled:opacity-40">確認</button>
         </div>
       </div>
     </>

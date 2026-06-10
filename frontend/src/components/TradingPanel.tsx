@@ -21,6 +21,7 @@ export function TradingPanel({ selected }: { selected: string | null }) {
   const [qty, setQty] = useState("1");
   const [confirm, setConfirm] = useState<CapitalStockOrderReq | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   // 五檔點價 → 帶入委託價
   useEffect(() => subscribeOrderTicket((h) => {
@@ -38,12 +39,15 @@ export function TradingPanel({ selected }: { selected: string | null }) {
     });
   };
   const doSend = async () => {
-    if (!confirm) return;
+    if (!confirm || sending) return;
+    setSending(true);
     try {
       const r = await api.capitalSubmitStock(confirm);
       setMsg(`${r.ok ? "✓" : "✗"} ${r.message}`);
     } catch {
       setMsg("✗ 送單失敗");
+    } finally {
+      setSending(false);
     }
     setConfirm(null);
   };
