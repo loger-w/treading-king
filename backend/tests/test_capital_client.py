@@ -22,6 +22,21 @@ class FakeCom:
     def pump(self): ...
 
 
+class RecordingCom(FakeCom):
+    """記錄啟動時呼叫到的 COM 方法順序,驗證啟動序列。"""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def setup(self, on_reply=None): self.calls.append("setup")
+    def set_authority(self, flag): self.calls.append("set_authority"); return 0
+    def login(self, u, p): self.calls.append("login"); return 0
+    def init_order(self): self.calls.append("init_order"); return 0
+    def read_cert(self, u): self.calls.append("read_cert"); return 0
+    def connect_reply(self, user_id): self.calls.append("connect_reply"); return 0
+
+
 def _client(com, enabled, audit_path):
     return CapitalClient(
         com, user_id="u", password="p", full_account="1234567890A",
@@ -50,3 +65,16 @@ def test_blocked_when_not_ready(tmp_path):
     assert res.ok is False
     assert "未就緒" in res.message
     assert com.sent == []
+
+
+def test_startup_connects_reply_channel(tmp_path):
+    # 沒呼叫 SKReplyLib_ConnectByID(connect_reply)就連不上回報主機,
+    # OnNewData 永遠不會推 → 委託/成交/刪單回報全收不到、面板「委託」永遠空。
+    com = RecordingCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "audit.jsonl")
+    ok = client._init_com()
+    assert ok is True
+    assert client.status == "ok"
+    assert "connect_reply" in com.calls
+    # 必須在登入+憑證之後才連回報(需要有效 session)
+    assert com.calls.index("connect_reply") > com.calls.index("read_cert")

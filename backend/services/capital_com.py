@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Callable, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class CapitalCom(Protocol):
@@ -15,6 +18,7 @@ class CapitalCom(Protocol):
     def login(self, user_id: str, password: str) -> int: ...
     def init_order(self) -> int: ...
     def read_cert(self, user_id: str) -> int: ...
+    def connect_reply(self, user_id: str) -> int: ...   # 連回報主機,OnNewData 才會推
     def send_stock_order(self, user_id: str, fields: dict) -> tuple[str, int]: ...
     def return_code_message(self, code: int) -> str: ...
     def pump(self) -> None: ...
@@ -77,6 +81,10 @@ class SkcomCapitalCom:
     def read_cert(self, user_id: str) -> int:
         return self._order.ReadCertByID(user_id)
 
+    def connect_reply(self, user_id: str) -> int:
+        # 連上回報主機後,OnNewData 才會推委託/成交/刪單回報(並重播當日 backlog)。
+        return self._reply.SKReplyLib_ConnectByID(user_id)
+
     def send_stock_order(self, user_id: str, fields: dict) -> tuple[str, int]:
         order = self._sk.STOCKORDER()
         for k, v in fields.items():
@@ -99,6 +107,13 @@ class _ReplyEvents:
 
     def OnReplyMessage(self, bstrUserID, bstrMessage):
         return -1  # 群益慣例:回 -1 抑制彈窗
+
+    def OnConnect(self, bstrUserID, nErrorCode):
+        # 回報主機連線結果;0=成功,之後 OnNewData 才會推(含當日 backlog)。
+        if nErrorCode == 0:
+            logger.info("Capital reply connected (user=%s)", bstrUserID)
+        else:
+            logger.warning("Capital reply connect error (user=%s, code=%s)", bstrUserID, nErrorCode)
 
     def OnNewData(self, bstrUserID, bstrData):
         # 主動回報(委託/成交)轉給 client;回呼自身的例外不可炸掉 COM 事件迴圈

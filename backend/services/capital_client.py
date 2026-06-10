@@ -63,6 +63,7 @@ class CapitalClient:
         """收到 OnNewData 主動回報 → 更新 store + 推 WS。在 COM 執行緒上被呼叫。"""
         from services.capital_reply import parse_onnewdata
         rec = parse_onnewdata(bstr_data)
+        logger.info("Capital reply: seq=%s stock=%s status=%s qty=%s", rec.seq_no, rec.stock_no, rec.status_label, rec.qty)
         self.store.apply_reply(rec)
         if self._broadcast and rec.seq_no:
             self._broadcast({"event": "capital_order", "data": {
@@ -75,9 +76,8 @@ class CapitalClient:
         self._thread = threading.Thread(target=self._run, daemon=True, name="capital-com")
         self._thread.start()
 
-    def _run(self) -> None:
-        import pythoncom
-        pythoncom.CoInitialize()
+    def _init_com(self) -> bool:
+        """登入 + 憑證 + 連回報主機。成功回 True、status=ok;失敗回 False、status=error。"""
         try:
             self._com.setup(self._handle_reply)
             self._com.set_authority(2 if self._env == "test" else 0)
@@ -88,12 +88,25 @@ class CapitalClient:
             code = self._com.read_cert(self._user_id)
             if code != 0:
                 raise RuntimeError("ReadCertByID: " + self._com.return_code_message(code))
+            # 連回報主機:漏這步 OnNewData 永遠不推,委託/成交/刪單回報全收不到。
+            # 失敗不擋送單(送單獨立可用),只記警告。
+            rc = self._com.connect_reply(self._user_id)
+            if rc != 0:
+                self._last_error = "回報連線失敗: " + self._com.return_code_message(rc)
+                logger.warning("Capital reply connect failed (rc=%s); 送單可用但收不到回報", rc)
             self._status = "ok"
             logger.info("Capital login + cert OK (env=%s)", self._env)
+            return True
         except Exception as e:  # noqa: BLE001
             self._status = "error"
             self._last_error = f"{type(e).__name__}: {e}"
             logger.error("Capital init failed: %s", self._last_error)
+            return False
+
+    def _run(self) -> None:
+        import pythoncom
+        pythoncom.CoInitialize()
+        if not self._init_com():
             return
 
         while True:
