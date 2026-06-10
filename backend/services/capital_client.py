@@ -12,8 +12,13 @@ from pathlib import Path
 
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
-from services.capital_models import StockOrderRequest, OrderResult
-from services.capital_safety import SafetyConfig, check_stock_order
+from services.capital_models import (
+    StockOrderRequest, OrderResult,
+    CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
+)
+from services.capital_safety import (
+    SafetyConfig, check_stock_order, check_cancel, check_correct_price, check_decrease,
+)
 from services.capital_store import CapitalStore
 from services import capital_audit
 
@@ -124,26 +129,60 @@ class CapitalClient:
             except Exception as e:  # noqa: BLE001
                 self._loop.call_soon_threadsafe(fut.set_exception, e)
 
-    async def submit_stock_order(self, req: StockOrderRequest) -> OrderResult:
-        gate = check_stock_order(req, self._safety)
+    async def _execute_write(self, *, action: str, req, gate, com_call) -> OrderResult:
+        """寫入操作共用骨架:閘 → ready 檢查 → COM 佇列 → 稽核。"""
         if not gate.allowed:
-            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=gate.reason)
+            capital_audit.write(self._audit_path, env=self._env, req=req,
+                                blocked=gate.reason, action=action)
             return OrderResult(ok=False, code=-1, message=gate.reason)
         if self._status != "ok" or self._loop is None:
             return OrderResult(ok=False, code=-1, message="群益未就緒(尚未登入或憑證失敗)")
 
         fut: asyncio.Future = self._loop.create_future()
-
-        def _do() -> tuple[str, int]:
-            fields = to_stockorder_fields(req, self._full_account)
-            return self._com.send_stock_order(self._user_id, fields)
-
-        self._cmd_q.put((_do, fut))
+        self._cmd_q.put((com_call, fut))
         message, code = await fut
         result = OrderResult(
             ok=(code == 0),
             code=code,
             message=f"{self._com.return_code_message(code)} {message}".strip(),
         )
-        capital_audit.write(self._audit_path, env=self._env, req=req, result=result)
+        capital_audit.write(self._audit_path, env=self._env, req=req,
+                            result=result, action=action)
         return result
+
+    async def submit_stock_order(self, req: StockOrderRequest) -> OrderResult:
+        def _do() -> tuple[str, int]:
+            fields = to_stockorder_fields(req, self._full_account)
+            return self._com.send_stock_order(self._user_id, fields)
+
+        return await self._execute_write(
+            action="order", req=req,
+            gate=check_stock_order(req, self._safety), com_call=_do)
+
+    async def cancel_stock_order(self, req: CancelOrderRequest) -> OrderResult:
+        def _do() -> tuple[str, int]:
+            return self._com.cancel_order(self._user_id, self._full_account, req.seq_no)
+
+        return await self._execute_write(
+            action="cancel", req=req,
+            gate=check_cancel(self._safety), com_call=_do)
+
+    async def correct_stock_price(self, req: CorrectPriceRequest) -> OrderResult:
+        remaining = self.store.remaining_shares(req.seq_no)
+        if remaining is None:
+            return OrderResult(ok=False, code=-1, message=f"找不到委託 {req.seq_no}")
+
+        def _do() -> tuple[str, int]:
+            return self._com.correct_price(self._user_id, self._full_account, req.seq_no, req.price)
+
+        return await self._execute_write(
+            action="correct_price", req=req,
+            gate=check_correct_price(req.price, remaining, self._safety), com_call=_do)
+
+    async def decrease_stock_qty(self, req: DecreaseQtyRequest) -> OrderResult:
+        def _do() -> tuple[str, int]:
+            return self._com.decrease_qty(self._user_id, self._full_account, req.seq_no, req.qty)
+
+        return await self._execute_write(
+            action="decrease", req=req,
+            gate=check_decrease(req.qty, self._safety), com_call=_do)
