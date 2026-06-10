@@ -1,5 +1,6 @@
 from services.capital_models import StockOrderRequest, BuySell
 from services.capital_safety import SafetyConfig, check_stock_order
+from services.capital_safety import check_cancel, check_correct_price, check_decrease
 
 
 def _req(qty=1, price=590.0):
@@ -37,3 +38,32 @@ def test_valid_order_allowed():
     r = check_stock_order(_req(qty=1), _cfg())
     assert r.allowed is True
     assert r.reason is None
+
+
+def _gate_cfg(enabled=True, max_amount=100000.0):
+    return SafetyConfig(order_enabled=enabled, max_qty=1, max_amount=max_amount)
+
+
+def test_cancel_only_needs_master_switch():
+    assert check_cancel(_gate_cfg(True)).allowed is True
+    g = check_cancel(_gate_cfg(False))
+    assert g.allowed is False and "總開關" in g.reason
+
+
+def test_correct_price_checks_amount_with_remaining():
+    # 新價 × 未成交股數 超過上限要擋
+    g = check_correct_price(200.0, 1000, _gate_cfg(max_amount=100000))
+    assert g.allowed is False and "超過上限" in g.reason
+    assert check_correct_price(90.0, 1000, _gate_cfg(max_amount=100000)).allowed is True
+    assert check_correct_price(90.0, 1000, _gate_cfg(False)).allowed is False
+
+
+def test_correct_price_rejects_nonpositive():
+    assert check_correct_price(0, 1000, _gate_cfg()).allowed is False
+    assert check_correct_price(-1, 1000, _gate_cfg()).allowed is False
+
+
+def test_decrease_needs_positive_qty():
+    assert check_decrease(1, _gate_cfg()).allowed is True
+    assert check_decrease(0, _gate_cfg()).allowed is False
+    assert check_decrease(1, _gate_cfg(False)).allowed is False

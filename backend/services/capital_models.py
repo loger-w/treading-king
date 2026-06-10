@@ -79,3 +79,17 @@ class Position(BaseModel):
         if current_price is None:
             return 0.0
         return self.qty * 1000 * (current_price - self.avg_price)
+
+
+class CancelOrderRequest(BaseModel):
+    seq_no: str
+
+
+class CorrectPriceRequest(BaseModel):
+    seq_no: str
+    price: float
+
+
+class DecreaseQtyRequest(BaseModel):
+    seq_no: str
+    qty: int  # 張(與 SendStockOrder.nQty 同慣例;首次實測對群益 App 驗)
