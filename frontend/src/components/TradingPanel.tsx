@@ -4,6 +4,7 @@ import { useCapitalStatus, useCapitalOrders, useCapitalPositions } from "../hook
 import { subscribeOrderTicket, subscribeTicks } from "../hooks/useSignalsStream";
 import { grossPnl, netPnl } from "../lib/capital-pnl";
 import { OrderConfirmDialog } from "./OrderConfirmDialog";
+import { OrdersList } from "./OrdersList";
 
 const ENV = (import.meta.env.VITE_CAPITAL_ENV ?? "test") as string;
 const FEE = Number(import.meta.env.VITE_CAPITAL_FEE_RATE ?? "0.001425");
@@ -98,7 +99,7 @@ export function TradingPanel({ selected }: { selected: string | null }) {
             <PositionCard symbol={selected} pos={pos} />
           </>
         ) : (
-          <OrdersList orders={orders} />
+          <OrdersList orders={orders} env={ENV} />
         )}
       </div>
 
@@ -132,25 +133,6 @@ function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: numb
         <span>現價 {live != null ? live.toFixed(2) : "—"}</span>
         <span>淨 {up ? "+" : ""}{net.toLocaleString()}</span>
       </div>
-    </div>
-  );
-}
-
-function OrdersList({ orders }: { orders: { seq_no: string; stock_no: string | null; status_label: string | null; price: number | null; order_qty: number; filled_qty: number; unit: string }[] }) {
-  if (orders.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">今日尚無委託</div>;
-  return (
-    <div className="space-y-0">
-      {orders.map((o) => (
-        <div key={o.seq_no} className="border-b border-line py-2.5 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-serif font-medium">{o.stock_no ?? "—"}</span>
-            <span className="ml-auto text-xs px-2 py-0.5 rounded bg-bg-deep text-ink-muted">{o.status_label ?? "—"}</span>
-          </div>
-          <div className="text-xs text-ink-dim tabular-nums mt-1">
-            {o.price != null ? o.price.toFixed(2) : "—"} · {o.filled_qty}/{o.order_qty} {o.unit} · #{o.seq_no}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
