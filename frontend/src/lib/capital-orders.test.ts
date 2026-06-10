@@ -6,7 +6,7 @@ const base: CapitalOrder = {
   buy_sell: "B", flag_label: "現股", book_no: null,
   status_raw: "C", status_label: "已刪單",
   price: 293, avg_fill_price: null, order_qty: 1, filled_qty: 0, unit: "張",
-  time: "14:59:48", pre_order: true, error_msg: null, raw: "",
+  time: "14:59:48", pre_order: true, error_msg: null, actionable: false, raw: "",
 };
 
 describe("buildOrderRow", () => {
@@ -37,17 +37,17 @@ describe("buildOrderRow", () => {
     expect(buildOrderRow(base).avgText).toBeNull();
   });
 
-  it("活單才可刪改", () => {
-    expect(buildOrderRow({ ...base, status_label: "委託成功" }).actionable).toBe(true);
-    expect(buildOrderRow({ ...base, status_label: "部分成交" }).actionable).toBe(true);
-    expect(buildOrderRow({ ...base, status_label: "預約中" }).actionable).toBe(true);
-    // 改價/改量後的單仍是活單(後端 _RANK tier 1),刪/改鈕不可消失
-    expect(buildOrderRow({ ...base, status_label: "改價" }).actionable).toBe(true);
-    expect(buildOrderRow({ ...base, status_label: "改量" }).actionable).toBe(true);
-    expect(buildOrderRow({ ...base, status_label: "改價改量" }).actionable).toBe(true);
-    expect(buildOrderRow({ ...base, status_label: "全部成交" }).actionable).toBe(false);
-    expect(buildOrderRow({ ...base, status_label: "已刪單" }).actionable).toBe(false);
-    expect(buildOrderRow({ ...base, status_label: "退單" }).actionable).toBe(false);
+  it("活單可刪改由後端決定,前端只透傳", () => {
+    // 哪些狀態算活單歸後端 _RANK 單一擁有(test_capital_store 蓋);前端抄一份狀態表
+    // 的話,後端改 label 字樣會讓刪/改鈕無聲消失
+    expect(buildOrderRow({ ...base, actionable: true }).actionable).toBe(true);
+    expect(buildOrderRow({ ...base, actionable: false }).actionable).toBe(false);
+  });
+
+  it("單位透傳(零股是股,不可寫死張)", () => {
+    const r = buildOrderRow({ ...base, market: "TC", unit: "股", order_qty: 500, filled_qty: 0 });
+    expect(r.unit).toBe("股");
+    expect(r.qtyText).toBe("0/500 股");
   });
 
   it("失敗紅字+錯誤訊息", () => {

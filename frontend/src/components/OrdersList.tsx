@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api, type CapitalOrderResult } from "../lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError, type CapitalOrderResult } from "../lib/api";
 import { buildOrderRow, type CapitalOrder, type OrderRowVM } from "../lib/capital-orders";
 
 /** 委託清單(聚合列)+ 活單刪/改。結果靠 OnNewData 回報刷新,不樂觀更新。 */
@@ -27,23 +27,34 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
   const [decQty, setDecQty] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [busy, setBusy] = useState(false);
+  const latestPending = useRef(pending);   // doSend 完成時比對歸屬:Esc 後重開的新動作不可被舊回應關掉
+  latestPending.current = pending;
+
+  // 台股 tick 最小 0.01:>2 位小數會被後端 %.2f 無聲四捨五入,送出值≠確認框顯示值,前端先擋
+  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0;
+  // 減量是整數;小數會被 pydantic 422 短路(進不了安全閘=不留稽核),前端就要擋
+  const decOk = /^\d+$/.test(decQty.trim()) && Number(decQty) > 0;
 
   const doSend = async () => {
     if (!pending || busy) return;
+    const myAction = pending;
+    const what = myAction.kind === "cancel" ? "刪單" : myAction.kind === "correct_price" ? "改價" : "減量";
     setBusy(true);
     try {
       let r: CapitalOrderResult;
-      if (pending.kind === "cancel") r = await api.capitalCancelOrder({ seq_no: row.seqNo });
-      else if (pending.kind === "correct_price") r = await api.capitalCorrectPrice({ seq_no: row.seqNo, price: pending.price });
-      else r = await api.capitalDecreaseQty({ seq_no: row.seqNo, qty: pending.qty });
-      onResult(`${r.ok ? "✓" : "✗"} ${r.message}`);
-    } catch {
-      onResult("✗ 送出失敗");
+      if (myAction.kind === "cancel") r = await api.capitalCancelOrder({ seq_no: row.seqNo });
+      else if (myAction.kind === "correct_price") r = await api.capitalCorrectPrice({ seq_no: row.seqNo, price: myAction.price });
+      else r = await api.capitalDecreaseQty({ seq_no: row.seqNo, qty: myAction.qty });
+      onResult(`${r.ok ? "✓" : "✗"} ${what}:${r.message}`);
+    } catch (e) {
+      onResult(e instanceof ApiError ? `✗ ${what} 送出失敗(HTTP ${e.status})` : `✗ ${what} 送出失敗`);
     } finally {
       setBusy(false);
     }
-    setPending(null);
-    setEditing(false);
+    if (latestPending.current === myAction) {
+      setPending(null);
+      setEditing(false);
+    }
   };
 
   return (
@@ -74,14 +85,14 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
             <span className="text-ink-dim w-12">改價</span>
             <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder={row.priceText}
               className="flex-1 bg-bg-deep border border-line px-2 py-1 tabular-nums outline-none focus:border-accent" />
-            <button disabled={!(Number(price) > 0)} onClick={() => setPending({ kind: "correct_price", price: Number(price) })}
+            <button disabled={!priceOk} onClick={() => setPending({ kind: "correct_price", price: Number(price) })}
               className="px-2 py-1 border border-line-strong disabled:opacity-40 rounded">送出</button>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-ink-dim w-12">減量</span>
-            <input value={decQty} onChange={(e) => setDecQty(e.target.value)} inputMode="numeric" placeholder="張"
+            <input value={decQty} onChange={(e) => setDecQty(e.target.value)} inputMode="numeric" placeholder={row.unit}
               className="flex-1 bg-bg-deep border border-line px-2 py-1 tabular-nums outline-none focus:border-accent" />
-            <button disabled={!(Number(decQty) > 0)} onClick={() => setPending({ kind: "decrease", qty: Number(decQty) })}
+            <button disabled={!decOk} onClick={() => setPending({ kind: "decrease", qty: Number(decQty) })}
               className="px-2 py-1 border border-line-strong disabled:opacity-40 rounded">送出</button>
           </div>
         </div>
@@ -107,7 +118,7 @@ function ActionConfirm({ row, action, env, busy, onConfirm, onClose }: {
   const prod = env === "prod";
   const desc = action.kind === "cancel" ? "刪單"
     : action.kind === "correct_price" ? `改價 → ${action.price.toFixed(2)}`
-    : `減量 ${action.qty} 張`;
+    : `減量 ${action.qty} ${row.unit}`;
   return (
     <>
       <div onClick={onClose} className="fixed inset-0 z-20 bg-bg-deep/85" style={{ backdropFilter: "blur(2px)" }} />

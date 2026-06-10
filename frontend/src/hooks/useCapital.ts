@@ -22,6 +22,14 @@ export function useCapitalStatus(pollMs = 10000) {
   return { status, lastError };
 }
 
+// 成交突發/啟動 backlog 重播時,每筆回報各推一次 capital_order:
+// trailing debounce 把連發收斂成尾端一次 refetch,也消除並發 GET 舊回應蓋掉新快照的窗口
+function debounced(fn: () => void, ms = 200) {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const run = () => { clearTimeout(t); t = setTimeout(fn, ms); };
+  return Object.assign(run, { cancel: () => clearTimeout(t) });
+}
+
 export function useCapitalOrders() {
   const [orders, setOrders] = useState<CapitalOrder[]>([]);
   useEffect(() => {
@@ -31,8 +39,9 @@ export function useCapitalOrders() {
       catch { /* keep */ }
     };
     load();
-    const unsub = subscribeCapitalOrders(load);   // 回報一來就刷新
-    return () => { alive = false; unsub(); };
+    const onReply = debounced(load);
+    const unsub = subscribeCapitalOrders(onReply);   // 回報一來就刷新(去抖)
+    return () => { alive = false; onReply.cancel(); unsub(); };
   }, []);
   return orders;
 }
@@ -47,8 +56,9 @@ export function useCapitalPositions(pollMs = 15000) {
     };
     load();
     const id = setInterval(load, pollMs);
-    const unsub = subscribeCapitalOrders(load);
-    return () => { alive = false; clearInterval(id); unsub(); };
+    const onReply = debounced(load);
+    const unsub = subscribeCapitalOrders(onReply);
+    return () => { alive = false; clearInterval(id); onReply.cancel(); unsub(); };
   }, [pollMs]);
   return positions;
 }

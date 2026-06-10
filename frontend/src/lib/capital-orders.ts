@@ -5,7 +5,9 @@ export interface CapitalOrder {
   status_raw: string | null; status_label: string | null;
   price: number | null; avg_fill_price: number | null;
   order_qty: number; filled_qty: number; unit: string;
-  time: string | null; pre_order: boolean; error_msg: string | null; raw: string;
+  time: string | null; pre_order: boolean; error_msg: string | null;
+  actionable: boolean;   // 後端 _RANK 算好下發;前端不自己抄狀態表(label 改字不會讓鈕無聲消失)
+  raw: string;
 }
 
 export interface OrderRowVM {
@@ -22,11 +24,11 @@ export interface OrderRowVM {
   timeText: string | null;
   preOrder: boolean;
   errorMsg: string | null;
-  actionable: boolean;      // 活單(預約中/委託成功/部分成交/改價量)→ 可刪/改
+  unit: string;             // 張/股/口 — 減量輸入與確認文案用,不可寫死「張」(零股單位是股)
+  actionable: boolean;      // 活單可刪/改(後端決定)
 }
 
-const ACTIVE = new Set(["預約中", "委託成功", "部分成交", "改價", "改量", "改價改量"]);
-const FAILED = new Set(["失敗", "逾時", "退單"]);
+const FAILED = new Set(["失敗", "逾時", "退單"]);   // 純顯示:紅字樣式
 
 export function buildOrderRow(o: CapitalOrder): OrderRowVM {
   const title = o.name ? `${o.stock_no ?? ""} ${o.name}`.trim() : (o.stock_no ?? "—");
@@ -47,6 +49,7 @@ export function buildOrderRow(o: CapitalOrder): OrderRowVM {
     timeText: o.time,
     preOrder: o.pre_order,
     errorMsg: o.error_msg,
-    actionable: ACTIVE.has(status),
+    unit: o.unit,
+    actionable: o.actionable,
   };
 }
