@@ -181,3 +181,55 @@ def test_decrease_goes_through_com_and_audits_action(tmp_path):
     assert ("decrease", "S1", 1) in com.sent
     entry = json.loads(audit.read_text(encoding="utf-8").splitlines()[-1])
     assert entry["action"] == "decrease"
+
+
+def _last_audit(path):
+    import json
+    return json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+
+
+def test_not_ready_write_is_audited(tmp_path):
+    com = FakeCom()
+    audit = tmp_path / "a.jsonl"
+    client = _client(com, enabled=True, audit_path=audit)   # 未 start,status != ok
+    res = asyncio.run(client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
+    assert res.ok is False and "未就緒" in res.message
+    entry = _last_audit(audit)
+    assert entry["action"] == "cancel" and "未就緒" in entry["blocked"]
+
+
+def test_correct_price_unknown_seq_is_audited(tmp_path):
+    com = FakeCom()
+    audit = tmp_path / "a.jsonl"
+    client = _ready_client(com, audit)
+    res = asyncio.run(client.correct_stock_price(CorrectPriceRequest(seq_no="nope", price=10.0)))
+    assert res.ok is False
+    entry = _last_audit(audit)
+    assert entry["action"] == "correct_price" and "找不到委託" in entry["blocked"]
+
+
+def test_com_exception_returns_result_and_audited(tmp_path):
+    class BoomCom(FakeCom):
+        def cancel_order(self, user_id, full_account, seq_no):
+            raise RuntimeError("COM died")
+
+    audit = tmp_path / "a.jsonl"
+    client = _ready_client(BoomCom(), audit)
+
+    # _run_write 的 drain 改不了例外路徑:直接模擬 COM 執行緒 set_exception
+    async def _go():
+        client._loop = asyncio.get_running_loop()
+        task = asyncio.ensure_future(client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
+        await asyncio.sleep(0)
+        fn, fut = client._cmd_q.get_nowait()
+        try:
+            fut.set_result(fn())
+        except Exception as e:
+            fut.set_exception(e)
+        return await task
+
+    res = asyncio.run(_go())
+    assert res.ok is False and "COM 例外" in res.message
+    entry = _last_audit(audit)
+    assert entry["action"] == "cancel"
+    assert entry["result"]["ok"] is False and "COM 例外" in entry["result"]["message"]

@@ -130,17 +130,27 @@ class CapitalClient:
                 self._loop.call_soon_threadsafe(fut.set_exception, e)
 
     async def _execute_write(self, *, action: str, req, gate, com_call) -> OrderResult:
-        """寫入操作共用骨架:閘 → ready 檢查 → COM 佇列 → 稽核。"""
+        """寫入操作共用骨架:閘 → ready 檢查 → COM 佇列 → 稽核。
+        所有「拒絕/失敗」路徑都留稽核 —— 真錢寫入,事後要能查帳。"""
         if not gate.allowed:
             capital_audit.write(self._audit_path, env=self._env, req=req,
                                 blocked=gate.reason, action=action)
             return OrderResult(ok=False, code=-1, message=gate.reason)
         if self._status != "ok" or self._loop is None:
-            return OrderResult(ok=False, code=-1, message="群益未就緒(尚未登入或憑證失敗)")
+            reason = "群益未就緒(尚未登入或憑證失敗)"
+            capital_audit.write(self._audit_path, env=self._env, req=req,
+                                blocked=reason, action=action)
+            return OrderResult(ok=False, code=-1, message=reason)
 
         fut: asyncio.Future = self._loop.create_future()
         self._cmd_q.put((com_call, fut))
-        message, code = await fut
+        try:
+            message, code = await fut
+        except Exception as e:  # noqa: BLE001 — COM 例外轉 result,稽核不可斷
+            result = OrderResult(ok=False, code=-1, message=f"COM 例外: {type(e).__name__}: {e}")
+            capital_audit.write(self._audit_path, env=self._env, req=req,
+                                result=result, action=action)
+            return result
         result = OrderResult(
             ok=(code == 0),
             code=code,
@@ -170,7 +180,10 @@ class CapitalClient:
     async def correct_stock_price(self, req: CorrectPriceRequest) -> OrderResult:
         remaining = self.store.remaining_shares(req.seq_no)
         if remaining is None:
-            return OrderResult(ok=False, code=-1, message=f"找不到委託 {req.seq_no}")
+            reason = f"找不到委託 {req.seq_no}"
+            capital_audit.write(self._audit_path, env=self._env, req=req,
+                                blocked=reason, action="correct_price")
+            return OrderResult(ok=False, code=-1, message=reason)
 
         def _do() -> tuple[str, int]:
             return self._com.correct_price(self._user_id, self._full_account, req.seq_no, req.price)
