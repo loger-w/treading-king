@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from services import capital_factory
 from services.capital_models import StockOrderRequest
+from services.local_store import get_local_store
 
 router = APIRouter()
 
@@ -15,10 +16,9 @@ _SEC_MARKETS = {"TS", "TA", "TL", "TP", "TC"}
 
 
 def _symbol_name(stock_no: str | None) -> str:
-    """代號→名稱;查無(期貨代號/未爬)回空字串。獨立函式方便測試 monkeypatch。"""
+    """代號→名稱;查無(期貨代號/未爬)回空字串。"""
     if not stock_no:
         return ""
-    from services.local_store import get_local_store
     row = get_local_store().market.get_symbol(stock_no)
     return row["name"] if row else ""
 
@@ -38,7 +38,7 @@ async def capital_orders() -> dict:
         return {"orders": []}
     out = []
     for o in c.store.orders():
-        # v1 委託清單只顯證券;期權回報照存不顯(未來期貨面板用)。market 缺值寬鬆放行。
+        # v1 委託清單只顯證券;期貨/期權回報照存不顯(未來期貨面板用)。market 缺值寬鬆放行。
         if o.market is not None and o.market not in _SEC_MARKETS:
             continue
         o.name = _symbol_name(o.stock_no)
