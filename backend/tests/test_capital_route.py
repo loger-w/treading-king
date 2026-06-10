@@ -87,10 +87,13 @@ def test_cancel_correct_decrease_endpoints(monkeypatch):
     c = _client(monkeypatch, FakeClient())
     r = c.post("/api/capital/order/cancel", json={"seq_no": "S1"})
     assert r.status_code == 200 and r.json()["ok"] is True
-    r = c.post("/api/capital/order/correct-price", json={"seq_no": "S1", "price": 100.0})
+    assert r.json()["seq_no"] == "S1"      # 證明 req 真的轉發到對的 client method
+    r = c.post("/api/capital/order/correct-price", json={"seq_no": "S2", "price": 100.0})
     assert r.status_code == 200 and r.json()["ok"] is True
-    r = c.post("/api/capital/order/decrease", json={"seq_no": "S1", "qty": 1})
+    assert r.json()["seq_no"] == "S2"
+    r = c.post("/api/capital/order/decrease", json={"seq_no": "S3", "qty": 1})
     assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["seq_no"] == "S3"
 
 
 def test_write_endpoints_503_when_disabled(monkeypatch):

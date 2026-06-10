@@ -81,6 +81,8 @@ class Position(BaseModel):
         return self.qty * 1000 * (current_price - self.avg_price)
 
 
+# 負價/0量不在 pydantic 設 gt=0:刻意下放到 client 安全閘擋,
+# 422 會在進 client 前短路、不留稽核;真錢寫入連「被拒」都要留帳。
 class CancelOrderRequest(BaseModel):
     seq_no: str
 
