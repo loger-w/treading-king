@@ -4,6 +4,10 @@
 委託聚合:key = 13 碼委託序號(KeyNo)。同標的不同單絕不合併;
 合併的只有同一張單自己的 委託/成交/刪改 事件。
 重啟後靠 SKReplyLib_ConnectByID 的當日 backlog 重播重建,無需持久化。
+
+注意:聚合**非冪等** — 同一筆回報事件只能 apply 一次(目前唯一來源
+ConnectByID 啟動重播 + 即時推送,天然唯一)。未來若加回報斷線重連,
+重播前必須先 clear(),否則成交量會重複累計。
 """
 from __future__ import annotations
 import threading
@@ -85,8 +89,10 @@ class CapitalStore:
                     a.price = rec.price
                 self._set_status(a, "預約中" if rec.pre_order else "委託成功")
             elif t == "D":
-                a.filled_qty += rec.qty
+                # 成交無價(解析失敗)整筆不採計:量與均價分子綁定,
+                # 少算成交 → remaining_shares 高估 → 改價金額閘更嚴,是安全方向。
                 if rec.price is not None:
+                    a.filled_qty += rec.qty
                     a.fill_value += rec.price * rec.qty
                 full = a.order_qty > 0 and a.filled_qty >= a.order_qty
                 self._set_status(a, "全部成交" if (full or a.order_qty == 0) else "部分成交")
@@ -137,6 +143,12 @@ class CapitalStore:
             if a is None:
                 return None
             return max(a.order_qty - a.filled_qty, 0)
+
+    def clear(self) -> None:
+        """清空委託聚合(部位不動)。回報重連重播前必須呼叫,否則成交量重複累計。"""
+        with self._lock:
+            self._orders.clear()
+            self._order_seq.clear()
 
     def set_positions(self, positions: list[Position]) -> None:
         with self._lock:

@@ -108,3 +108,36 @@ def test_remaining_shares():
     s.apply_reply(_evt(typ="D", qty="1000"))
     assert s.remaining_shares(SEQ_A) == 3000
     assert s.remaining_shares("nope") is None
+
+
+def test_d_without_price_not_counted():
+    # 成交無價整筆不採計(量與均價分子綁定)→ 均價不被稀釋、remaining 高估=金額閘更嚴(安全方向)
+    s = CapitalStore()
+    s.apply_reply(_evt(typ="N", qty="4000"))
+    s.apply_reply(_evt(typ="D", qty="1000", price="100.0000"))
+    s.apply_reply(_evt(typ="D", qty="1000", price=""))   # 無價
+    o = s.orders()[0]
+    assert o.filled_qty == 1
+    assert abs(o.avg_fill_price - 100.0) < 1e-9
+    assert s.remaining_shares(SEQ_A) == 3000
+
+
+def test_d_with_order_err_not_counted():
+    # D 帶 err 不採計量、標失敗:少算成交=閘更嚴,維持保守方向
+    s = CapitalStore()
+    s.apply_reply(_evt(typ="N", qty="4000"))
+    e = _evt(typ="D", qty="1000").model_copy(update={"order_err": "Y", "error_msg": "異常"})
+    s.apply_reply(e)
+    o = s.orders()[0]
+    assert o.filled_qty == 0
+    assert o.status_label == "失敗"
+
+
+def test_clear_resets_orders_keeps_positions():
+    from services.capital_models import Position
+    s = CapitalStore()
+    s.apply_reply(_evt(typ="N"))
+    s.set_positions([Position(stock_no="2330", qty=1, avg_price=500.0)])
+    s.clear()
+    assert s.orders() == []
+    assert len(s.positions()) == 1
