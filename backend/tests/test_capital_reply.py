@@ -82,3 +82,13 @@ def test_parse_garbage_does_not_crash():
     assert r.seq_no == "xxx"
     assert r.market is None or isinstance(r.market, str)
     assert r.qty == 0
+
+
+def test_parse_invalid_side_yields_no_flag():
+    # 官方 spec:刪單失敗等情況 idx6[0] 可能是 0(非 B/S)→ 不得解出半截 flag
+    # 用期貨 fixture:_FUT_FLAG.get("N")="新倉" 才能暴露 side=None 但 flag 非 None 的語意矛盾
+    arr = RAW_TF_NEW.split(",")
+    arr[6] = "0NR20"
+    r = parse_onnewdata(",".join(arr))
+    assert r.buy_sell is None
+    assert r.flag_label is None

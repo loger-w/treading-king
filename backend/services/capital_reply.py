@@ -64,10 +64,14 @@ def _to_int(s: str | None) -> int | None:
 
 
 def _parse_buysell(market: str | None, bs: str | None) -> tuple[str | None, str | None]:
-    """idx6 複合欄:[0]=B/S;證券 [1:3]=資券別、期權 [1]=倉別。"""
+    """idx6 複合欄:[0]=B/S;證券 [1:3]=資券別、期權 [1]=倉別。
+    側別非 B/S 時(如刪單失敗回 "0...")不解 flag,避免回傳語意矛盾的半截資料。
+    """
     if not bs:
         return None, None
     side = bs[0] if bs[0] in ("B", "S") else None
+    if side is None:
+        return None, None
     flag = None
     if market in _SEC_MARKETS and len(bs) >= 3:
         flag = _SEC_FLAG.get(bs[1:3])
