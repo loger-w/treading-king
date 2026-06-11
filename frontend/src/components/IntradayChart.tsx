@@ -34,32 +34,40 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
   const [ma, setMa] = useState<MaLevels | null>(null);
 
   useEffect(() => {
-    // 切 symbol 時先清舊 CDP — 避免新圖上殘留舊 CDP 線
+    // 切 symbol 時先清舊 CDP — 避免新圖上殘留舊 CDP 線。
+    // A→B 快速切換時 A 的回應可能比 B 慢到達,stale 旗標擋下飛行中的舊回應,
+    // 否則別檔的價位線會畫在當前圖上(同 candles 路徑的 resolveCandleUpdate)
     setCdp(null);
     setCdpError(null);
     if (!showCdp) return;
-    api.cdp(symbol).then(setCdp).catch((e) =>
-      setCdpError(e instanceof Error ? e.message : String(e))
-    );
+    let stale = false;
+    api.cdp(symbol).then((r) => { if (!stale) setCdp(r); }).catch((e) => {
+      if (!stale) setCdpError(e instanceof Error ? e.message : String(e));
+    });
+    return () => { stale = true; };
   }, [symbol, showCdp]);
 
   useEffect(() => {
-    // 切 symbol 時先清舊 Camarilla — 避免新圖上殘留舊線
+    // 切 symbol 時先清舊 Camarilla — 避免新圖上殘留舊線(stale 旗標同 CDP)
     setCamarilla(null);
     setCamarillaError(null);
     if (!showCamarilla) return;
-    api.camarilla(symbol).then(setCamarilla).catch((e) =>
-      setCamarillaError(e instanceof Error ? e.message : String(e))
-    );
+    let stale = false;
+    api.camarilla(symbol).then((r) => { if (!stale) setCamarilla(r); }).catch((e) => {
+      if (!stale) setCamarillaError(e instanceof Error ? e.message : String(e));
+    });
+    return () => { stale = true; };
   }, [symbol, showCamarilla]);
 
   useEffect(() => {
-    // 切 symbol 時先清舊 MA — 避免新圖上殘留舊值
+    // 切 symbol 時先清舊 MA — 避免新圖上殘留舊值(stale 旗標同 CDP)
     setMa(null);
     if (!showMa) return;
-    api.ma(symbol).then(setMa).catch((e) => {
+    let stale = false;
+    api.ma(symbol).then((r) => { if (!stale) setMa(r); }).catch((e) => {
       console.warn("MA fetch failed:", e);
     });
+    return () => { stale = true; };
   }, [symbol, showMa]);
 
   const geometry = useMemo(
@@ -190,8 +198,10 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
             geometry={geometry}
           />
 
-          {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）*/}
-          {hover && (() => {
+          {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）。
+              切股後 candles 變短時殘留的 hover.idx 會越界(svg 卸載不觸發 mouseleave),
+              必須守門否則 render throw 整頁白屏 — 同 MXFIntradayChart 的防護 */}
+          {hover && filteredCandles[hover.idx] && (() => {
             const candle = filteredCandles[hover.idx];
             const m = minutesByIdx[hover.idx];
             const lineX = scaleX(m);

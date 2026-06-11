@@ -62,6 +62,14 @@ export function MXFIntradayChart() {
       const maxVisible = Math.floor(innerW / MIN_CANDLE_PX);
       const startIdx = Math.max(0, candles.length - maxVisible);
       setViewRange({ startIdx, endIdx: candles.length - 1 });
+      return;
+    }
+    // candles 縮水時(每天 15:00 REST 的 afterhours 換成剛開始的新夜盤)殘留的
+    // viewRange 越界 → slice 空陣列 → y 軸 ±Infinity 整片空白且不自癒,重新右錨夾回
+    if (viewRange.endIdx > candles.length - 1) {
+      const span = viewRange.endIdx - viewRange.startIdx;
+      const endIdx = candles.length - 1;
+      setViewRange({ startIdx: Math.max(0, endIdx - span), endIdx });
     }
     // viewRange not in deps to avoid re-run when zoom/pan updates it
     // eslint-disable-next-line react-hooks/exhaustive-deps
