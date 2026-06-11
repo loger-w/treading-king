@@ -5,7 +5,31 @@ import { limitDown, limitUp, roundToTick, tickSize } from "./tick";
 export interface MyOrderLot {
   price: number;
   buySell: "B" | "S";
-  lots: number; // 未成交張數(order_qty - filled_qty)
+  lots: number; // active=未成交張數、fills=成交張數(看用在哪個輸入)
+}
+
+// CapitalOrder 的結構子集 — lib 不 import api 型別,保持零依賴可測
+export interface MyOrderSource {
+  price: number | null;
+  buy_sell: string | null;
+  order_qty: number;   // 顯示單位(張)
+  filled_qty: number;
+  actionable: boolean;
+}
+
+/** 該檔今日全部委託 → 方格(active=活單未成交)與黃括號(fills=成交紀錄,含已完成單)。
+ *  成交歸屬委託價(券商慣例);市價單無價不上階梯。 */
+export function splitMyLots(orders: MyOrderSource[]): { active: MyOrderLot[]; fills: MyOrderLot[] } {
+  const active: MyOrderLot[] = [];
+  const fills: MyOrderLot[] = [];
+  for (const o of orders) {
+    if (o.price == null || (o.buy_sell !== "B" && o.buy_sell !== "S")) continue;
+    const side = o.buy_sell;
+    const remaining = o.order_qty - o.filled_qty;
+    if (o.actionable && remaining > 0) active.push({ price: o.price, buySell: side, lots: remaining });
+    if (o.filled_qty > 0) fills.push({ price: o.price, buySell: side, lots: o.filled_qty });
+  }
+  return { active, fills };
 }
 
 export interface LadderRow {
@@ -14,6 +38,8 @@ export interface LadderRow {
   sellVol: number | null;
   myBuyLots: number;       // 我在該價位的活單張數
   mySellLots: number;
+  myBuyFills: number;      // 我今日在該價位的成交張數(黃括號;含已完成單)
+  mySellFills: number;
   isCenter: boolean;
   clickable: boolean;      // 離現價 ±5% 內才可點(fat-finger 灰區)
 }
@@ -37,6 +63,7 @@ export function buildLadder(opts: {
   bids: Array<{ price: number; size: number }>;
   asks: Array<{ price: number; size: number }>;
   myOrders: MyOrderLot[];
+  myFills?: MyOrderLot[];
   rows?: number;
 }): LadderRow[] {
   const { center, reference, bids, asks, myOrders } = opts;
@@ -68,6 +95,12 @@ export function buildLadder(opts: {
     const m = o.buySell === "B" ? myBuy : mySell;
     m.set(o.price, (m.get(o.price) ?? 0) + o.lots);
   }
+  const fillBuy = new Map<number, number>();
+  const fillSell = new Map<number, number>();
+  for (const o of opts.myFills ?? []) {
+    const m = o.buySell === "B" ? fillBuy : fillSell;
+    m.set(o.price, (m.get(o.price) ?? 0) + o.lots);
+  }
 
   return prices.map((price) => ({
     price,
@@ -75,6 +108,8 @@ export function buildLadder(opts: {
     sellVol: askMap.get(price) ?? null,
     myBuyLots: myBuy.get(price) ?? 0,
     mySellLots: mySell.get(price) ?? 0,
+    myBuyFills: fillBuy.get(price) ?? 0,
+    mySellFills: fillSell.get(price) ?? 0,
     isCenter: price === c,
     clickable: Math.abs(price - center) / center <= CLICK_BAND + 1e-9,
   }));
