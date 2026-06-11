@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from services.capital_balance import BalanceCollector
+from services.capital_balance import BalanceCollector, dedupe_positions, parse_profit_line
 from services.capital_close import build_close_order
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
@@ -56,6 +56,7 @@ class CapitalClient:
         self.store = CapitalStore()      # 委託/部位快取:回報事件寫入、REST 讀
         self._broadcast = None           # Callable[[dict], None] | None;由 app 注入推 WS
         self._balance = BalanceCollector(on_complete=self._on_balance_complete)
+        self._profit = BalanceCollector(on_complete=self._on_profit_complete, parse=parse_profit_line)
         self._balance_due: float | None = None   # monotonic;成交後 debounce 重查
         self._balance_last_ts: float = 0.0        # 定時重查用(0=啟動後第一圈就查)
 
@@ -98,11 +99,27 @@ class CapitalClient:
         """OnRealBalanceReport 事件(COM 執行緒)。"""
         self._balance.feed(raw)
 
+    def _handle_profit(self, raw: str) -> None:
+        """OnProfitLossGWReport 事件(COM 執行緒)。"""
+        self._profit.feed(raw)
+
+    def _on_profit_complete(self, rows) -> None:
+        """rows = [ProfitRow] — 回填均價+損益基底後再推部位事件讓前端 refetch。"""
+        self.store.apply_profit_rows(rows)
+        if self._broadcast:
+            self._broadcast({"event": "capital_position", "data": {"avg_count": len(rows)}})
+
     def _on_balance_complete(self, positions) -> None:
-        self.store.set_positions(positions)
+        deduped = dedupe_positions(positions)
+        self.store.set_positions(deduped)
         self._balance_last_ts = time.monotonic()
         if self._broadcast:
-            self._broadcast({"event": "capital_position", "data": {"count": len(positions)}})
+            self._broadcast({"event": "capital_position", "data": {"count": len(deduped)}})
+        # 庫存查詢剛完結(同 COM 執行緒)→ 串行接著查均價,避開 1019 查詢處理中
+        self._profit.reset()
+        rc = self._com.get_profit_loss_gw(self._user_id, self._full_account)
+        if rc != 0:
+            logger.warning("GetProfitLossGWReport rc=%s: %s", rc, self._com.return_code_message(rc))
 
     def _mark_balance_dirty(self, delay_s: float = 2.0) -> None:
         """成交回報後排程重查(debounce:連續成交只查尾端一次)。"""
@@ -127,7 +144,7 @@ class CapitalClient:
     def _init_com(self) -> bool:
         """登入 + 憑證 + 連回報主機。成功回 True、status=ok;失敗回 False、status=error。"""
         try:
-            self._com.setup(self._handle_reply, self._handle_balance)
+            self._com.setup(self._handle_reply, self._handle_balance, self._handle_profit)
             self._com.set_authority(2 if self._env == "test" else 0)
             code = self._com.login(self._user_id, self._password)
             if code != 0:
@@ -151,28 +168,46 @@ class CapitalClient:
             logger.error("Capital init failed: %s", self._last_error)
             return False
 
+    def _pump_once(self) -> None:
+        """幫浦圈一輪(COM 執行緒)。例外吞掉+log:poll 的 flush 鏈會打 COM 查詢
+        (斷線丟 COMError),單輪失敗不可殺執行緒 —— 執行緒死=寫入 future 永不
+        resolve、status 卻還是 ok 的靜默失敗,真錢面板不可接受。"""
+        try:
+            self._com.pump()
+            self._balance.poll()           # 沒等到結束標記的 flush 保險
+            self._profit.poll()            # 損益沒等到 ## 的 flush 保險
+            self._maybe_query_balance()    # 成交後 debounce / 60s 定時重查
+        except Exception:  # noqa: BLE001
+            logger.exception("COM 幫浦圈例外(本輪略過)")
+            time.sleep(1.0)                # 持續性故障時防 log 洪水
+
     def _run(self) -> None:
         import pythoncom
         pythoncom.CoInitialize()
         if not self._init_com():
             return
 
-        while True:
-            self._com.pump()
-            self._balance.poll()           # 沒等到結束標記的 flush 保險
-            self._maybe_query_balance()    # 成交後 debounce / 60s 定時重查
-            try:
-                cmd = self._cmd_q.get(timeout=0.05)
-            except queue.Empty:
-                continue
-            if cmd is None:
-                break
-            fn, fut = cmd
-            try:
-                result = fn()
-                self._loop.call_soon_threadsafe(fut.set_result, result)
-            except Exception as e:  # noqa: BLE001
-                self._loop.call_soon_threadsafe(fut.set_exception, e)
+        try:
+            while True:
+                self._pump_once()
+                try:
+                    cmd = self._cmd_q.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if cmd is None:
+                    break
+                fn, fut = cmd
+                try:
+                    result = fn()
+                    self._loop.call_soon_threadsafe(fut.set_result, result)
+                except Exception as e:  # noqa: BLE001
+                    self._loop.call_soon_threadsafe(fut.set_exception, e)
+        finally:
+            # 執行緒亡故必須降 status:否則寫入請求進佇列後 future 永不 resolve,UI 還顯示健康
+            self._status = "error"
+            if not self._last_error:
+                self._last_error = "COM 執行緒已終止"
+            logger.error("capital-com 執行緒結束(status→error)")
 
     def _write_gate(self, seq_no: str, base: GateResult) -> GateResult:
         """基本閘(總開關等)先過,再擋已知非證券市場的單。v1 寫入鏈只支援證券:
@@ -239,8 +274,8 @@ class CapitalClient:
             capital_audit.write(self._audit_path, env=self._env, req=req, blocked=reason, action="close")
             return OrderResult(ok=False, code=-1, message=reason)
         try:
-            # v1 部位來源=現股報表 → pos_kind 恆 "cash"。信用部位資料接上後,改從部位資料帶種類。
-            order = build_close_order(pos, req, pos_kind="cash")
+            # kind 來自即時庫存 [1] 欄(T集保/C融資/L融券)— 融資部位平倉送融資賣,不可送現股賣
+            order = build_close_order(pos, req, pos_kind=pos.kind)
         except ValueError as e:
             capital_audit.write(self._audit_path, env=self._env, req=req, blocked=str(e), action="close")
             return OrderResult(ok=False, code=-1, message=str(e))

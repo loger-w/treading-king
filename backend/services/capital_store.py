@@ -187,7 +187,30 @@ class CapitalStore:
 
     def set_positions(self, positions: list[Position]) -> None:
         with self._lock:
+            old = self._positions
+            for p in positions:
+                prev = old.get(p.stock_no)
+                # 損益查詢回來前沿用既有均價/損益基底(同種類才沿用 — 資/券成本基礎不同)
+                if p.avg_price is None and prev is not None and prev.kind == p.kind:
+                    p.avg_price = prev.avg_price
+                    p.pnl_base = prev.pnl_base
+                    p.pnl_base_price = prev.pnl_base_price
+                    p.pnl_cost = prev.pnl_cost
             self._positions = {p.stock_no: p for p in positions}
+
+    def apply_profit_rows(self, rows) -> None:
+        """損益試算回填(均價+含費稅息損益基底);查無股號忽略(部位清單以即時庫存為權威)。
+        rows: list[capital_balance.ProfitRow]。
+        用 model_copy 發布新物件而非就地變更:positions() 回傳的是物件參考,
+        route 在鎖外 model_dump,就地改會撕裂讀(新 pnl 配舊基準價)。"""
+        with self._lock:
+            for r in rows:
+                p = self._positions.get(r.stock_no)
+                if p is not None:
+                    self._positions[r.stock_no] = p.model_copy(update={
+                        "avg_price": r.avg_price, "pnl_base": r.pnl,
+                        "pnl_base_price": r.price, "pnl_cost": r.cost,
+                    })
 
     def positions(self) -> list[Position]:
         with self._lock:

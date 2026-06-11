@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 class CapitalCom(Protocol):
     def setup(self, on_reply: "Callable[[str], None] | None" = None,
-              on_balance: "Callable[[str], None] | None" = None) -> None: ...
+              on_balance: "Callable[[str], None] | None" = None,
+              on_profit: "Callable[[str], None] | None" = None) -> None: ...
     def set_authority(self, flag: int) -> int: ...        # 0=正式 2=測試
     def login(self, user_id: str, password: str) -> int: ...
     def init_order(self) -> int: ...
@@ -25,6 +26,7 @@ class CapitalCom(Protocol):
     def correct_price(self, user_id: str, full_account: str, seq_no: str, price: float) -> tuple[str, int]: ...
     def decrease_qty(self, user_id: str, full_account: str, seq_no: str, qty: int) -> tuple[str, int]: ...
     def get_real_balance(self, user_id: str, full_account: str) -> int: ...  # 結果走 OnRealBalanceReport 事件
+    def get_profit_loss_gw(self, user_id: str, full_account: str) -> int: ...  # 結果走 OnProfitLossGWReport
     def return_code_message(self, code: int) -> str: ...
     def pump(self) -> None: ...
 
@@ -57,7 +59,8 @@ class SkcomCapitalCom:
         self._reply = None
 
     def setup(self, on_reply: "Callable[[str], None] | None" = None,
-              on_balance: "Callable[[str], None] | None" = None) -> None:
+              on_balance: "Callable[[str], None] | None" = None,
+              on_profit: "Callable[[str], None] | None" = None) -> None:
         import comtypes.client
         add_dir, module_arg = _resolve_skcom_load(self._dll_dir)
         if add_dir:
@@ -76,7 +79,7 @@ class SkcomCapitalCom:
         # SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。
         self._reply_sink = _ReplyEvents(on_reply)
         self._reply_conn = comtypes.client.GetEvents(self._reply, self._reply_sink)
-        self._order_sink = _OrderEvents(on_balance)
+        self._order_sink = _OrderEvents(on_balance, on_profit)
         self._order_conn = comtypes.client.GetEvents(self._order, self._order_sink)
 
     def set_authority(self, flag: int) -> int:
@@ -121,6 +124,21 @@ class SkcomCapitalCom:
         # 非同步查詢:nCode 同步回,結果走 OnRealBalanceReport 事件
         return self._order.GetRealBalanceReport(user_id, full_account)
 
+    def get_profit_loss_gw(self, user_id: str, full_account: str) -> int:
+        # 未實現損益試算(彙總、全部商品);結果走 OnProfitLossGWReport 事件。
+        # 字串欄一律帶空字串 — comtypes 未設的 BSTR 是 None,群益端行為未定義
+        q = self._sk.TSPROFITLOSSGWQUERY()
+        q.bstrFullAccount = full_account
+        q.nTPQueryType = 0     # 0=未實現
+        q.nFunc = 0            # 0=彙總
+        q.bstrStockNo = ""
+        q.bstrTradeType = ""
+        q.bstrStartDate = ""
+        q.bstrEndDate = ""
+        q.bstrBookNo = ""
+        q.bstrSeqNo = ""
+        return self._order.GetProfitLossGWReport(user_id, q)
+
     def return_code_message(self, code: int) -> str:
         return self._center.SKCenterLib_GetReturnCodeMessage(code)
 
@@ -153,14 +171,23 @@ class _ReplyEvents:
 
 
 class _OrderEvents:
-    """SKOrderLib 事件 sink。目前只接即時庫存;回呼例外不可炸掉 COM 事件迴圈。"""
+    """SKOrderLib 事件 sink(即時庫存+損益試算);回呼例外不可炸掉 COM 事件迴圈。"""
 
-    def __init__(self, on_balance: "Callable[[str], None] | None" = None) -> None:
+    def __init__(self, on_balance: "Callable[[str], None] | None" = None,
+                 on_profit: "Callable[[str], None] | None" = None) -> None:
         self._on_balance = on_balance
+        self._on_profit = on_profit
 
     def OnRealBalanceReport(self, bstrData):
         if self._on_balance:
             try:
                 self._on_balance(bstrData)
+            except Exception:
+                pass
+
+    def OnProfitLossGWReport(self, bstrData):
+        if self._on_profit:
+            try:
+                self._on_profit(bstrData)
             except Exception:
                 pass

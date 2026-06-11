@@ -345,7 +345,11 @@ export interface SignalEvent {
 
 export type { CapitalOrder } from "./capital-orders";
 export interface CapitalPosition {
-  stock_no: string; name: string; qty: number; avg_price: number;
+  stock_no: string; name: string; qty: number;
+  avg_price: number | null;       // 損益試算[10]平均買進成本(查詢回來前 null)
+  pnl_base: number | null;        // 損益試算[9]含費稅息淨損益(報告市價時點)
+  pnl_base_price: number | null;  // 報告市價(brokerPnl 平移基準)
+  pnl_cost: number | null;        // 成交價金(% 分母,同報告報酬率口徑)
 }
 export interface CapitalStockOrderReq {
   stock_no: string; buy_sell: "buy" | "sell"; price: number; qty: number;

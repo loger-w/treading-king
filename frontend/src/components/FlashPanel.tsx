@@ -134,7 +134,7 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
       {/* 標的 + 現價 */}
       <div className="flex justify-between items-baseline mb-2 flex-shrink-0">
         <span className="text-sm font-bold">{selected}
-          {pos && <span className="text-2xs text-ink-dim font-normal ml-2">庫存 {pos.qty} 張 · 均 {pos.avg_price.toFixed(2)}</span>}
+          {pos && <span className="text-2xs text-ink-dim font-normal ml-2">庫存 {pos.qty} 張{pos.avg_price != null ? ` · 均 ${pos.avg_price.toFixed(2)}` : ""}</span>}
         </span>
         <span className="text-sm tabular-nums">{last != null ? last.toFixed(2) : "—"}{estimated && <span className="text-2xs text-ink-dim ml-1">估</span>}</span>
       </div>

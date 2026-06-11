@@ -117,3 +117,17 @@ def test_order_events_sink_forwards_balance_and_swallows_exception():
 def test_order_events_sink_none_handler_is_noop():
     from services.capital_com import _OrderEvents
     _OrderEvents(on_balance=None).OnRealBalanceReport("x")
+
+
+def test_order_events_sink_forwards_profit_and_swallows_exception():
+    from services.capital_com import _OrderEvents
+
+    got = []
+    sink = _OrderEvents(on_profit=got.append)
+    sink.OnProfitLossGWReport("000,查詢成功")
+    assert got == ["000,查詢成功"]
+
+    def boom(_):
+        raise RuntimeError("boom")
+    _OrderEvents(on_profit=boom).OnProfitLossGWReport("x")   # 例外不可炸 COM 事件迴圈
+    _OrderEvents().OnProfitLossGWReport("x")                  # 無回呼 noop

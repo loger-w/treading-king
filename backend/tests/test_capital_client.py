@@ -8,7 +8,7 @@ class FakeCom:
     def __init__(self):
         self.sent = []
 
-    def setup(self, on_reply=None, on_balance=None): ...
+    def setup(self, on_reply=None, on_balance=None, on_profit=None): ...
     def set_authority(self, flag): return 0
     def login(self, u, p): return 0
     def init_order(self): return 0
@@ -16,6 +16,10 @@ class FakeCom:
 
     def get_real_balance(self, user_id, full_account):
         self.sent.append(("get_real_balance", full_account))
+        return 0
+
+    def get_profit_loss_gw(self, user_id, full_account):
+        self.sent.append(("get_profit_loss_gw", full_account))
         return 0
 
     def send_stock_order(self, user_id, fields):
@@ -45,7 +49,7 @@ class RecordingCom(FakeCom):
         super().__init__()
         self.calls = []
 
-    def setup(self, on_reply=None, on_balance=None): self.calls.append("setup")
+    def setup(self, on_reply=None, on_balance=None, on_profit=None): self.calls.append("setup")
     def set_authority(self, flag): self.calls.append("set_authority"); return 0
     def login(self, u, p): self.calls.append("login"); return 0
     def init_order(self): self.calls.append("init_order"); return 0
@@ -68,12 +72,53 @@ def _req(qty=1):
 def test_handle_balance_lines_then_end_marker_updates_store(tmp_path):
     com = FakeCom()
     client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
-    client._handle_balance("TS,1234567,2330,0,3000,0,3000,985.5")
+    # 真實格式(去敏):[0]股號 [1]種類 [14]即時庫存(股)
+    client._handle_balance("3357,C,2000,1944,0,0,3000,0,0,0,0,3000,0,0,3000,0,155.63,A123456789,1234567890")
     client._handle_balance("##")
     pos = client.store.positions()
     assert len(pos) == 1
-    assert pos[0].stock_no == "2330"
+    assert pos[0].stock_no == "3357"
     assert pos[0].qty == 3
+    assert pos[0].kind == "margin"
+
+
+def test_balance_flush_chains_profit_query_then_avg_applied(tmp_path):
+    """庫存 flush → 串行發損益查詢(避開 1019);損益 flush → 均價回填部位。"""
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._handle_balance("3357,C,2000,1944,0,0,3000,0,0,0,0,3000,0,0,3000,0,155.63,A123456789,1234567890")
+    client._handle_balance("##")
+    assert ("get_profit_loss_gw", "1234567890A") in com.sent
+    client._handle_profit("000,查詢成功")
+    client._handle_profit("臺慶科,3357,新台幣,融資,3000,156.00,0.27,468000,464000,12345,150.55,451650,0,0,665,0,1404,135495,316155,89,,2.73,0,,Y")
+    client._handle_profit("##,,,,")
+    assert client.store.position_for("3357").avg_price == 150.55
+
+
+def test_pump_once_swallows_exceptions(tmp_path, monkeypatch):
+    """幫浦圈單輪例外(COM 斷線等)不可外洩 — 執行緒死=寫入 future 永不 resolve
+    而 status 還是 ok 的靜默失敗。"""
+    import services.capital_client as mod
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)   # 防 log 洪水的節流不拖慢測試
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+
+    def boom():
+        raise RuntimeError("COM 斷線")
+    com.pump = boom
+    client._pump_once()   # 不得 raise
+
+
+def test_run_thread_exit_drops_status(tmp_path):
+    """_run 結束(任何原因)必須把 status 降為 error:
+    否則之後的寫入請求進佇列後永遠沒人消化,UI 卻顯示健康。"""
+    com = RecordingCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._loop = asyncio.new_event_loop()
+    client._cmd_q.put(None)    # 模擬終止訊號:init 成功後第一輪就 break
+    client._run()
+    assert client.status == "error"
+    assert client.last_error
 
 
 def test_fill_reply_marks_balance_dirty(tmp_path):
