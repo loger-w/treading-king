@@ -23,7 +23,7 @@ from services.capital_factory import get_capital  # noqa: E402
 from services.capital_models import StockOrderRequest, BuySell, PriceType  # noqa: E402
 
 
-async def main(send_test: bool) -> int:
+async def main(send_test: bool, balance: bool) -> int:
     if os.getenv("CAPITAL_ENV", "test").strip() != "test":
         print("CAPITAL_ENV 不是 test,為安全中止。")
         return 2
@@ -49,10 +49,22 @@ async def main(send_test: bool) -> int:
         )
         res = await client.submit_stock_order(req)
         print(f"送單結果: ok={res.ok} code={res.code} msg={res.message}")
+
+    if balance:
+        # 戳查詢排程,等 OnRealBalanceReport 事件;原始字串看 log(capital_balance 解析警告)
+        client._mark_balance_dirty(delay_s=0.0)
+        await asyncio.sleep(5)
+        positions = client.store.positions()
+        for p in positions:
+            print(f"持倉: {p.stock_no} {p.qty} 張 均 {p.avg_price}")
+        if not positions:
+            print("(清單空 — 若群益 App 有持倉,看 log 的 balance line 警告,校準 capital_balance.py 假設表)")
     return 0
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--send-test", action="store_true")
-    raise SystemExit(asyncio.run(main(ap.parse_args().send_test)))
+    ap.add_argument("--balance", action="store_true", help="查即時庫存並印解析結果(首測校準欄位用)")
+    args = ap.parse_args()
+    raise SystemExit(asyncio.run(main(args.send_test, args.balance)))

@@ -65,6 +65,25 @@ def _req(qty=1):
     return StockOrderRequest(stock_no="2330", buy_sell=BuySell.BUY, price=590.0, qty=qty)
 
 
+def test_handle_balance_lines_then_end_marker_updates_store(tmp_path):
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._handle_balance("TS,1234567,2330,0,3000,0,3000,985.5")
+    client._handle_balance("##")
+    pos = client.store.positions()
+    assert len(pos) == 1
+    assert pos[0].stock_no == "2330"
+    assert pos[0].qty == 3
+
+
+def test_fill_reply_marks_balance_dirty(tmp_path):
+    """成交回報(D)後要排程一次庫存重查(debounce 由 _run 圈消化)。"""
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._mark_balance_dirty()
+    assert client._balance_due is not None
+
+
 def test_blocked_when_switch_off_does_not_touch_com(tmp_path):
     com = FakeCom()
     client = _client(com, enabled=False, audit_path=tmp_path / "audit.jsonl")
