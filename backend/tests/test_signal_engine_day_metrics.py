@@ -1,6 +1,6 @@
 """驗 day_change_pct / day_volume 兩個動態 field 行為。"""
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -86,6 +86,37 @@ async def test_evaluate_accumulates_day_volume_after_open():
         await engine._evaluate("2330", Tick(price=101.0, size=7, time=POST_OPEN))
 
     assert engine._day_volume["2330"] == 11
+
+
+@pytest.mark.asyncio
+async def test_evaluate_same_tick_object_accumulates_volume_once():
+    """heartbeat 每秒重餵 ring_buffer.latest 的同一個 Tick 物件 — 量只能加一次,
+    否則成交稀疏的股票 day_volume 會膨脹數倍,量基條件提早觸發。"""
+    engine = SignalEngine()
+    tick = Tick(price=100.0, size=5, time=POST_OPEN)
+    with patch("services.signal_engine.time.time", return_value=POST_OPEN):
+        await engine._evaluate("2330", tick)   # tick-driven
+        await engine._evaluate("2330", tick)   # heartbeat 重餵同一物件
+        await engine._evaluate("2330", tick)   # 再重餵
+    assert engine._day_volume["2330"] == 5
+
+
+@pytest.mark.asyncio
+async def test_refill_field_cache_preserves_day_volume():
+    """盤中編輯規則 / 監聽會觸發 refill — 不可清掉今日累積量(跨午夜 daily reset 才清)。"""
+    engine = SignalEngine()
+    engine._day_volume["2330"] = 999
+    engine._load_monitor_symbols = AsyncMock(return_value=set())
+    await engine._refill_field_cache()
+    assert engine._day_volume["2330"] == 999
+
+
+def test_daily_reset_clears_day_volume():
+    """day_volume 的歸零走跨午夜 daily reset 路徑,跟漲停 latch / arming 同處。"""
+    engine = SignalEngine()
+    engine._day_volume["2330"] = 999
+    engine._reset_daily_strategy_state()
+    assert engine._day_volume == {}
 
 
 @pytest.mark.asyncio

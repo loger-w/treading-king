@@ -47,3 +47,57 @@ async def test_refill_skips_ma_when_both_none():
     assert "sma_20" not in engine._field_cache.get("2330", {})
     # 確認 MA 路徑確實執行過,排除空跑
     mock_ma.fetch_sma_5_20.assert_called_once_with("2330")
+
+
+@pytest.mark.asyncio
+async def test_refill_builds_empty_entry_when_cdp_and_sma_all_fail():
+    """cdp+sma 全失敗也要建空 entry — field_cache 是 scope 唯一閘門,沒 entry
+    會把 monitor symbol 整個踢出評估,連 close / day_volume 類條件都連坐。"""
+    engine = SignalEngine()
+    engine._load_monitor_symbols = AsyncMock(return_value={"2330"})
+
+    with patch("services.signal_engine.get_cdp_service") as mock_cdp, \
+         patch("services.signal_engine.ma_service") as mock_ma:
+        mock_cdp.return_value.get = AsyncMock(return_value=None)
+        mock_ma.fetch_sma_5_20 = AsyncMock(return_value=(None, None))
+        await engine._refill_field_cache()
+
+    assert engine._field_cache["2330"] == {}
+
+
+@pytest.mark.asyncio
+async def test_refill_same_day_skips_sma_refetch():
+    """當日 daily SMA 不變 — 同日第二次 refill(規則 CRUD 觸發)不重打 REST,
+    避免每存一次規則就重燒整輪 rate-limited 配額。"""
+    engine = SignalEngine()
+    engine._load_monitor_symbols = AsyncMock(return_value={"2330"})
+
+    with patch("services.signal_engine.get_cdp_service") as mock_cdp, \
+         patch("services.signal_engine.ma_service") as mock_ma:
+        mock_cdp.return_value.get = AsyncMock(return_value=None)
+        mock_ma.fetch_sma_5_20 = AsyncMock(return_value=(100.5, 105.2))
+        await engine._refill_field_cache()
+        await engine._refill_field_cache()
+
+    mock_ma.fetch_sma_5_20.assert_called_once_with("2330")
+    assert engine._field_cache["2330"]["sma_5"] == 100.5
+
+
+@pytest.mark.asyncio
+async def test_refill_cross_midnight_refetches_sma():
+    """跨日後 SMA 會變 — 即使 cache 已有兩條也要重抓。"""
+    from datetime import date, timedelta
+
+    engine = SignalEngine()
+    engine._load_monitor_symbols = AsyncMock(return_value={"2330"})
+
+    with patch("services.signal_engine.get_cdp_service") as mock_cdp, \
+         patch("services.signal_engine.ma_service") as mock_ma:
+        mock_cdp.return_value.get = AsyncMock(return_value=None)
+        mock_ma.fetch_sma_5_20 = AsyncMock(return_value=(100.5, 105.2))
+        await engine._refill_field_cache()
+        # 模擬上次 refill 是昨天(heartbeat 跨午夜分支的情境)
+        engine._last_field_refill_date = date.today() - timedelta(days=1)
+        await engine._refill_field_cache()
+
+    assert mock_ma.fetch_sma_5_20.call_count == 2

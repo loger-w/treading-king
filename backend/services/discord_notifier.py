@@ -49,6 +49,13 @@ async def send_signal(
     try:
         # 3s timeout:bot 立刻回 202,渲圖走 bot 背景;localhost 連不上(bot 沒開)會很快失敗
         async with httpx.AsyncClient(timeout=3.0) as client:
-            await client.post(url, json=payload)
+            resp = await client.post(url, json=payload)
+        if resp.status_code >= 300:
+            # httpx 不對 4xx/5xx 拋例外 — bot 回非 2xx(schema 漂移 / URL 路徑錯)
+            # 不留痕的話圖卡無聲丟失,只能事後對 signals_log 才發現
+            logger.warning(
+                "Discord signal push rejected: %s %s",
+                resp.status_code, resp.text[:200],
+            )
     except Exception as e:
         logger.warning("Discord signal push failed: %s", e)

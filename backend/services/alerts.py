@@ -7,6 +7,7 @@ Use for critical conditions only:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -46,6 +47,21 @@ async def notify_critical(message: str, **fields: Any) -> None:
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(webhook_url, json=payload)
+            resp = await client.post(webhook_url, json=payload)
+            if resp.status_code == 429:
+                # 最後一道告警通道撞 rate limit — 照 Retry-After 重試一次再放棄
+                try:
+                    delay = float(resp.headers.get("Retry-After", "1"))
+                except ValueError:
+                    delay = 1.0
+                await asyncio.sleep(min(delay, 5.0))
+                resp = await client.post(webhook_url, json=payload)
+            if resp.status_code >= 400:
+                # httpx 不對 4xx/5xx 拋例外 — 不檢查的話 webhook 失效(401/404)
+                # 或 embed 格式錯(400)完全無感
+                logger.error(
+                    "Discord alert webhook returned %s: %s",
+                    resp.status_code, resp.text[:200],
+                )
     except Exception as e:
         logger.warning("Failed to send Discord alert: %s", e)

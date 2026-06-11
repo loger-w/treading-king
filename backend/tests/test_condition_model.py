@@ -94,3 +94,28 @@ def test_active_signal_create_notify_discord_can_be_false():
         notify_discord=False,
     )
     assert payload.notify_discord is False
+
+
+def test_active_signal_create_rejects_symbols_scope():
+    """引擎一律以 monitor_list 為評估範圍 — create/update 收 symbols scope
+    會讓直接打 API 的 client 以為訊號被限縮在指定清單,必須在驗證層擋掉。"""
+    from models.condition import ActiveSignalCreate
+    with pytest.raises(ValidationError):
+        ActiveSignalCreate(
+            name="t",
+            filter_json={"conditions": [{"field": "close", "operator": "gt", "value": 0}]},
+            scope={"type": "symbols", "symbols": ["2330"]},
+        )
+
+
+def test_active_signal_out_tolerates_legacy_symbols_scope():
+    """磁碟 / 匯入檔可能還有舊版 symbols scope 的 row — 載入不可炸,
+    否則一筆舊規則就讓整批載入失敗。"""
+    from models.condition import ActiveSignalOut
+    out = ActiveSignalOut(
+        id="x", created_at="2026-01-01T00:00:00Z",
+        name="legacy",
+        filter_json={"conditions": [{"field": "close", "operator": "gt", "value": 0}]},
+        scope={"type": "symbols", "symbols": ["2330"]},
+    )
+    assert out.scope.type == "symbols"
