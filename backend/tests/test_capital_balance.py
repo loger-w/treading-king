@@ -97,23 +97,28 @@ def test_collector_new_query_resets_staging():
     assert got == [[]]                     # staging 已清,flush 空集合(全部出清的合法狀態)
 
 
-# 未實現-彙總(4-2-p,25 欄)依官方欄位表構造;首跑後換真實去敏樣本。
-# [1]=股票代號、[10]=平均買進(券賣)成本;第一筆=查詢結果(000,訊息)
-RAW_PNL_ROW = "臺慶科,3357,新台幣,融資,3000,156.00,0.27,468000,464000,12345,150.55,451650,0,0,665,0,1404,135495,316155,89,,2.73,0,,Y"
-RAW_PNL_STATUS = "000,查詢成功"
+# 未實現-彙總(4-2-p)= 2026-06-11 正式環境真實回報(ID/帳號去敏)。
+# 實際 30 欄(比文件 25 欄多尾端含費均價等);[1]=股票代號、[10]=平均買進(券賣)成本。
+# 第一筆=查詢結果(000,訊息可空);總計列股號為空。
+RAW_PNL_ROW = "揚博,2493,新台幣,現股,1000,180.00,-0.50,180000.00,179414.00,1368.00,178.05,178046.00,178000.00,46.00,46.00,0.00,540.00,0,0,0,0.00,0.77,0,,Y,1,0,178.628000,A123456789,1234567890"
+RAW_PNL_MARGIN = "臺慶科,3357,新台幣,融資,3000,288.00,-7.50,864000.00,301364.00,-74636.00,311.75,376240.00,935000.00,240.00,221.00,0.00,2592.00,376000,559000,583,0.00,-7.98,0,,Y,2,3,312.950000,A123456789,1234567890"
+RAW_PNL_TOTAL = ",,新台幣,9999,0,0.00,0.00,1599000.00,940891.00,-91721.00,0.00,1032932.00,1684500.00,432.00,409.00,0.00,4797.00,595000,652000,583,0.00,0.00,0,,N,3,0,0.000000,A123456789,1234567890"
+RAW_PNL_STATUS = "000,"
 
 
 def test_parse_profit_line():
-    assert parse_profit_line(RAW_PNL_ROW) == ("3357", 150.55)
+    assert parse_profit_line(RAW_PNL_ROW) == ("2493", 178.05)
+    assert parse_profit_line(RAW_PNL_MARGIN) == ("3357", 311.75)
 
 
-def test_parse_profit_skips_status_end_and_junk():
-    assert parse_profit_line(RAW_PNL_STATUS) is None                     # 查詢結果列
+def test_parse_profit_skips_status_total_end_and_junk():
+    assert parse_profit_line(RAW_PNL_STATUS) is None                     # 查詢結果列(訊息可空)
+    assert parse_profit_line(RAW_PNL_TOTAL) is None                      # 總計列(股號空)不出垃圾
     assert parse_profit_line("##,,,,") is None                           # 結束標記
     assert parse_profit_line("") is None
     assert parse_profit_line("名,3357,新台幣,現股,1000") is None          # 欄位不足
-    assert parse_profit_line(RAW_PNL_ROW.replace("150.55", "x")) is None  # 均價壞
-    assert parse_profit_line(RAW_PNL_ROW.replace("150.55", "0")) is None  # 均價 0 不出垃圾
+    assert parse_profit_line(RAW_PNL_ROW.replace("178.05", "x")) is None  # 均價壞
+    assert parse_profit_line(RAW_PNL_ROW.replace("178.05", "0")) is None  # 均價 0 不出垃圾
 
 
 def test_collector_with_profit_parser():
@@ -121,5 +126,6 @@ def test_collector_with_profit_parser():
     c = BalanceCollector(on_complete=got.append, parse=parse_profit_line)
     c.feed(RAW_PNL_STATUS)
     c.feed(RAW_PNL_ROW)
+    c.feed(RAW_PNL_TOTAL)
     c.feed("##")
-    assert got == [[("3357", 150.55)]]
+    assert got == [[("2493", 178.05)]]
