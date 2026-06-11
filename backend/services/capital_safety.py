@@ -36,8 +36,16 @@ def _bad_price(price: float) -> GateResult | None:
     return None
 
 
+def _limits_unset(cfg: SafetyConfig) -> GateResult | None:
+    # 上限未設(≤0)必須 fail-closed:.env.example 承諾「0=擋」,
+    # 漏設/打錯變數名不可變成「無上限放行」
+    if cfg.max_qty <= 0 or cfg.max_amount <= 0:
+        return GateResult(False, "未設定單筆上限(CAPITAL_MAX_QTY/CAPITAL_MAX_AMOUNT 須 > 0),拒單")
+    return None
+
+
 def check_stock_order(req: StockOrderRequest, cfg: SafetyConfig) -> GateResult:
-    blocked = _master(cfg) or _bad_price(req.price)
+    blocked = _master(cfg) or _limits_unset(cfg) or _bad_price(req.price)
     if blocked:
         return blocked
     # 無券=現股當沖先賣;「無券+買進」不是合法組合(回補=現股買進,交易所自動沖銷)
@@ -45,10 +53,10 @@ def check_stock_order(req: StockOrderRequest, cfg: SafetyConfig) -> GateResult:
         return GateResult(False, "無券賣出僅能賣出;回補請用現股買進")
     if req.qty <= 0:
         return GateResult(False, "數量必須大於 0")
-    if cfg.max_qty and req.qty > cfg.max_qty:
+    if req.qty > cfg.max_qty:
         return GateResult(False, f"數量 {req.qty} 張超過上限 {cfg.max_qty} 張")
     est = req.price * req.qty * 1000
-    if cfg.max_amount and est > cfg.max_amount:
+    if est > cfg.max_amount:
         return GateResult(False, f"預估金額 {est:.0f} 超過上限 {cfg.max_amount:.0f}")
     return GateResult(True)
 
@@ -60,13 +68,13 @@ def check_cancel(cfg: SafetyConfig) -> GateResult:
 
 def check_correct_price(new_price: float, remaining_shares: int, cfg: SafetyConfig) -> GateResult:
     """改價改變曝險:總開關 + 新價×未成交股數過金額閘。"""
-    blocked = _master(cfg) or _bad_price(new_price)
+    blocked = _master(cfg) or _limits_unset(cfg) or _bad_price(new_price)
     if blocked:
         return blocked
     if remaining_shares <= 0:
         return GateResult(False, "無未成交數量可改價")
     est = new_price * remaining_shares
-    if cfg.max_amount and est > cfg.max_amount:
+    if est > cfg.max_amount:
         return GateResult(False, f"預估金額 {est:.0f} 超過上限 {cfg.max_amount:.0f}")
     return GateResult(True)
 

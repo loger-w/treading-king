@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 class CapitalCom(Protocol):
     def setup(self, on_reply: "Callable[[str], None] | None" = None,
               on_balance: "Callable[[str], None] | None" = None,
-              on_profit: "Callable[[str], None] | None" = None) -> None: ...
+              on_profit: "Callable[[str], None] | None" = None,
+              on_reply_disconnect: "Callable[[int], None] | None" = None) -> None: ...
     def set_authority(self, flag: int) -> int: ...        # 0=正式 2=測試
     def login(self, user_id: str, password: str) -> int: ...
     def init_order(self) -> int: ...
@@ -60,7 +61,8 @@ class SkcomCapitalCom:
 
     def setup(self, on_reply: "Callable[[str], None] | None" = None,
               on_balance: "Callable[[str], None] | None" = None,
-              on_profit: "Callable[[str], None] | None" = None) -> None:
+              on_profit: "Callable[[str], None] | None" = None,
+              on_reply_disconnect: "Callable[[int], None] | None" = None) -> None:
         import comtypes.client
         add_dir, module_arg = _resolve_skcom_load(self._dll_dir)
         if add_dir:
@@ -77,7 +79,7 @@ class SkcomCapitalCom:
         # OnReplyMessage 回 -1 抑制群益彈窗(spec §4.6);OnNewData 主動回報轉給 on_reply。
         # sink 與 advise 連線都存住:丟掉會被 GC → Unadvise,登入即報
         # SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。
-        self._reply_sink = _ReplyEvents(on_reply)
+        self._reply_sink = _ReplyEvents(on_reply, on_disconnect=on_reply_disconnect)
         self._reply_conn = comtypes.client.GetEvents(self._reply, self._reply_sink)
         self._order_sink = _OrderEvents(on_balance, on_profit)
         self._order_conn = comtypes.client.GetEvents(self._order, self._order_sink)
@@ -148,8 +150,10 @@ class SkcomCapitalCom:
 
 
 class _ReplyEvents:
-    def __init__(self, on_reply: "Callable[[str], None] | None" = None) -> None:
+    def __init__(self, on_reply: "Callable[[str], None] | None" = None,
+                 on_disconnect: "Callable[[int], None] | None" = None) -> None:
         self._on_reply = on_reply
+        self._on_disconnect = on_disconnect
 
     def OnReplyMessage(self, bstrUserID, bstrMessage):
         return -1  # 群益慣例:回 -1 抑制彈窗
@@ -161,13 +165,25 @@ class _ReplyEvents:
         else:
             logger.warning("Capital reply connect error (user=%s, code=%s)", bstrUserID, nErrorCode)
 
+    def OnDisconnect(self, bstrUserID, nErrorCode):
+        # 回報主機斷線(事件簽名出自 comtypes gen 的 _ISKReplyLibEvents;
+        # comtypes 對 sink 未實作的事件靜默忽略 → 不掛這個 handler 就完全偵測不到)。
+        # 只做偵測+通知降級;自動重連需先 store.clear() 防成交重複累計,另案處理。
+        logger.error("Capital reply disconnected (user=%s, code=%s)", bstrUserID, nErrorCode)
+        if self._on_disconnect:
+            try:
+                self._on_disconnect(nErrorCode)
+            except Exception:
+                logger.exception("reply 斷線回呼例外(已忽略,COM 事件迴圈不可炸)")
+
     def OnNewData(self, bstrUserID, bstrData):
-        # 主動回報(委託/成交)轉給 client;回呼自身的例外不可炸掉 COM 事件迴圈
+        # 主動回報(委託/成交)轉給 client;回呼自身的例外不可炸掉 COM 事件迴圈,
+        # 但必須留痕 — 這代表一筆委託/成交回報被丟棄,委託面板會跟市場脫節
         if self._on_reply:
             try:
                 self._on_reply(bstrData)
             except Exception:
-                pass
+                logger.exception("reply 回呼例外,該筆回報丟棄: %r", bstrData)
 
 
 class _OrderEvents:
@@ -183,11 +199,11 @@ class _OrderEvents:
             try:
                 self._on_balance(bstrData)
             except Exception:
-                pass
+                logger.exception("balance 回呼例外,該筆庫存事件丟棄: %r", bstrData)
 
     def OnProfitLossGWReport(self, bstrData):
         if self._on_profit:
             try:
                 self._on_profit(bstrData)
             except Exception:
-                pass
+                logger.exception("profit 回呼例外,該筆損益事件丟棄: %r", bstrData)

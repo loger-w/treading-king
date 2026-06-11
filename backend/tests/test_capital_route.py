@@ -83,6 +83,29 @@ def test_orders_filters_futures_and_enriches_name(monkeypatch):
     assert orders[0]["name"] == "臺慶科"
 
 
+def test_positions_enriches_name_without_mutating_store(monkeypatch):
+    # parse_balance_line 不填 name(store 不管),route 要補名稱 — 平倉確認框
+    # 只剩代號會少一道人為核對;store 發布的是共享物件,enrich 不可就地改寫快取
+    pos = Position(stock_no="3357", qty=3, kind="margin")
+
+    class _Store:
+        def orders(self):
+            return []
+        def positions(self):
+            return [pos]
+
+    fake = FakeClient()
+    fake.store = _Store()
+    c = _client(monkeypatch, fake)
+
+    import routes.capital as capital_route
+    monkeypatch.setattr(capital_route, "_symbol_name", lambda code: "臺慶科" if code == "3357" else "")
+
+    got = c.get("/api/capital/positions").json()["positions"]
+    assert got[0]["name"] == "臺慶科"
+    assert pos.name == ""          # 共享快取物件不可被汙染
+
+
 def test_cancel_correct_decrease_endpoints(monkeypatch):
     c = _client(monkeypatch, FakeClient())
     r = c.post("/api/capital/order/cancel", json={"seq_no": "S1"})

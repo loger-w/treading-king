@@ -47,6 +47,37 @@ def test_factory_no_dll_dir_is_none(monkeypatch):
     assert client._com._dll_dir is None
 
 
+def test_factory_unknown_env_disables(monkeypatch):
+    """CAPITAL_ENV 拼錯不可默認正式(SetAuthority 不呼叫/失敗的預設就是正式環境):
+    未知值寧可整個功能不啟用,也不可疑似落在真錢環境。"""
+    monkeypatch.setattr(capital_factory, "_client", None)
+    monkeypatch.setenv("CAPITAL_USER_ID", "u")
+    monkeypatch.setenv("CAPITAL_ENV", "testing")
+    assert capital_factory.get_capital() is None
+
+
+def test_factory_env_case_and_space_normalized(monkeypatch):
+    """'Test'/' test ' 等寫法要正規化成 test,不可因大小寫靜默拿到正式環境權限。"""
+    monkeypatch.setattr(capital_factory, "_client", None)
+    monkeypatch.setenv("CAPITAL_USER_ID", "u")
+    monkeypatch.setenv("CAPITAL_ENV", " Test ")
+    client = capital_factory.get_capital()
+    assert client is not None
+    assert client._env == "test"
+
+
+def test_factory_bad_limit_value_falls_to_zero(monkeypatch):
+    """上限解析失敗不可拋例外(get_capital 在每個 route 被呼叫,拋=難診斷的 500);
+    落 0 → 安全閘 fail-closed 拒單,而非無上限放行。"""
+    monkeypatch.setattr(capital_factory, "_client", None)
+    monkeypatch.setenv("CAPITAL_USER_ID", "u")
+    monkeypatch.setenv("CAPITAL_ENV", "test")
+    monkeypatch.setenv("CAPITAL_MAX_QTY", "abc")
+    client = capital_factory.get_capital()
+    assert client is not None
+    assert client._safety.max_qty == 0
+
+
 def test_setup_retains_reply_event_refs(monkeypatch):
     """根因防呆:setup() 必須存住 reply 事件 sink + GetEvents 連線。
 
@@ -131,3 +162,37 @@ def test_order_events_sink_forwards_profit_and_swallows_exception():
         raise RuntimeError("boom")
     _OrderEvents(on_profit=boom).OnProfitLossGWReport("x")   # 例外不可炸 COM 事件迴圈
     _OrderEvents().OnProfitLossGWReport("x")                  # 無回呼 noop
+
+
+def test_event_sink_exceptions_leave_log_trail(caplog):
+    """回呼例外=一筆委託/成交/庫存/損益回報被丟棄:不炸 COM 迴圈是對的,
+    但必須留痕(含原始字串),否則委託面板跟市場脫節後完全無法追查為什麼漏。"""
+    import logging
+    from services.capital_com import _OrderEvents, _ReplyEvents
+
+    def boom(_):
+        raise RuntimeError("handler boom")
+
+    with caplog.at_level(logging.ERROR, logger="services.capital_com"):
+        _ReplyEvents(on_reply=boom).OnNewData("u", "data-x")
+        _OrderEvents(on_balance=boom).OnRealBalanceReport("bal-x")
+        _OrderEvents(on_profit=boom).OnProfitLossGWReport("pnl-x")
+    errs = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errs) == 3
+    assert any("data-x" in r.getMessage() for r in errs)
+
+
+def test_reply_events_disconnect_notifies_and_swallows():
+    """OnDisconnect 要轉給 client 降級(comtypes 對未實作事件靜默忽略,
+    不掛 handler 就完全偵測不到斷線);回呼例外不可炸 COM 事件迴圈。"""
+    from services.capital_com import _ReplyEvents
+
+    got = []
+    sink = _ReplyEvents(on_disconnect=got.append)
+    sink.OnDisconnect("u", 3002)
+    assert got == [3002]
+
+    def boom(_):
+        raise RuntimeError("boom")
+    _ReplyEvents(on_disconnect=boom).OnDisconnect("u", 1)   # 例外不可外洩
+    _ReplyEvents().OnDisconnect("u", 1)                      # 無回呼 noop

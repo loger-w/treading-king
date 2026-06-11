@@ -88,11 +88,6 @@ class Position(BaseModel):
     pnl_base_price: float | None = None  # 損益試算[5]報告市價(平移基準)
     pnl_cost: float | None = None        # 損益試算[12]成交價金(% 分母,同報告[21]口徑)
 
-    def unrealized_gross(self, current_price: float | None) -> float:
-        if current_price is None or self.avg_price is None:
-            return 0.0
-        return self.qty * 1000 * (current_price - self.avg_price)
-
 
 # 負價/0量不在 pydantic 設 gt=0:刻意下放到 client 安全閘擋,
 # 422 會在進 client 前短路、不留稽核;真錢寫入連「被拒」都要留帳。

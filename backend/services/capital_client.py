@@ -16,7 +16,7 @@ from services.capital_close import build_close_order
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
 from services.capital_models import (
-    StockOrderRequest, OrderResult, SEC_MARKETS,
+    BuySell, StockOrderRequest, OrderResult, SEC_MARKETS,
     CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest, PositionCloseRequest,
 )
 from services.capital_safety import (
@@ -27,6 +27,24 @@ from services.capital_store import CapitalStore
 from services import capital_audit
 
 logger = logging.getLogger(__name__)
+
+# 寫入命令等 COM 結果的上限:SendStockOrder 是同步呼叫,群益端掛起時 future 永不
+# resolve → HTTP 請求永久懸掛,使用者不知道單送出沒、最容易誘發重送
+_WRITE_TIMEOUT_S = 10.0
+
+# 平倉 in-flight 窗口:送出後到回報進 store(或部位重查完成)前,擋同股號再平倉
+_CLOSE_INFLIGHT_S = 10.0
+
+
+def _settle(fut: asyncio.Future, result=None, exc: BaseException | None = None) -> None:
+    """在 event loop 上 resolve 寫入 future。逾時側(wait_for)可能已 cancel,
+    done 的 future 再 set 會炸 InvalidStateError 進 loop exception handler。"""
+    if fut.done():
+        return
+    if exc is not None:
+        fut.set_exception(exc)
+    else:
+        fut.set_result(result)
 
 
 class CapitalClient:
@@ -59,6 +77,7 @@ class CapitalClient:
         self._profit = BalanceCollector(on_complete=self._on_profit_complete, parse=parse_profit_line)
         self._balance_due: float | None = None   # monotonic;成交後 debounce 重查
         self._balance_last_ts: float = 0.0        # 定時重查用(0=啟動後第一圈就查)
+        self._close_inflight: dict[str, float] = {}   # stock_no → monotonic 解鎖時刻(只在 event loop 上碰)
 
     @property
     def status(self) -> str:
@@ -95,6 +114,15 @@ class CapitalClient:
         self._thread = threading.Thread(target=self._run, daemon=True, name="capital-com")
         self._thread.start()
 
+    def _handle_reply_disconnect(self, error_code: int) -> None:
+        """OnDisconnect 事件(COM 執行緒):回報主機斷線。
+        降 degraded 而非 error:送單通道獨立可用(與 init 時回報連線失敗的取捨一致),
+        但委託/成交回報已停更 — status 端點要反映,前端才不會把過期委託當健康資料。
+        不自動重連:重播 backlog 前必須先 store.clear(),重連另案處理。"""
+        self._last_error = f"回報連線中斷 (code={error_code}),委託/成交回報停更"
+        if self._status == "ok":
+            self._status = "degraded"
+
     def _handle_balance(self, raw: str) -> None:
         """OnRealBalanceReport 事件(COM 執行緒)。"""
         self._balance.feed(raw)
@@ -104,10 +132,23 @@ class CapitalClient:
         self._profit.feed(raw)
 
     def _on_profit_complete(self, rows) -> None:
-        """rows = [ProfitRow] — 回填均價+損益基底後再推部位事件讓前端 refetch。"""
-        self.store.apply_profit_rows(rows)
+        """rows = [ProfitRow] — 回填均價+損益基底後再推部位事件讓前端 refetch。
+        同檔現股+融資並存時報告每種類一列、store 以 stock_no 為鍵 last-wins,
+        只放行與快取部位同種類的列 — 資/券成本基礎不可混用,
+        套錯均價/損益會誤導平倉判斷(set_positions 沿用舊均價時同樣只認同種類)。"""
+        matched = []
+        for r in rows:
+            p = self.store.position_for(r.stock_no)
+            if p is None:
+                continue   # 部位清單以即時庫存為權威,store 端本來就忽略查無股號
+            if r.kind != p.kind:
+                # kind=None(未知交易種類標籤)也略過:寧缺均價,不可套錯成本基礎
+                logger.warning("profit row 種類不符略過: %s 報告=%s 部位=%s", r.stock_no, r.kind, p.kind)
+                continue
+            matched.append(r)
+        self.store.apply_profit_rows(matched)
         if self._broadcast:
-            self._broadcast({"event": "capital_position", "data": {"avg_count": len(rows)}})
+            self._broadcast({"event": "capital_position", "data": {"avg_count": len(matched)}})
 
     def _on_balance_complete(self, positions) -> None:
         deduped = dedupe_positions(positions)
@@ -126,8 +167,9 @@ class CapitalClient:
         self._balance_due = time.monotonic() + delay_s
 
     def _maybe_query_balance(self) -> None:
-        """_run 幫浦圈呼叫(COM 執行緒):due 到了或距上次查詢逾 60s → 發查詢。"""
-        if self._status != "ok":
+        """_run 幫浦圈呼叫(COM 執行緒):due 到了或距上次查詢逾 60s → 發查詢。
+        degraded(回報斷線)也要查 — 此時 60s 輪詢是部位唯一的更新來源。"""
+        if self._status not in ("ok", "degraded"):
             return
         now = time.monotonic()
         due = self._balance_due is not None and now >= self._balance_due
@@ -144,12 +186,23 @@ class CapitalClient:
     def _init_com(self) -> bool:
         """登入 + 憑證 + 連回報主機。成功回 True、status=ok;失敗回 False、status=error。"""
         try:
-            self._com.setup(self._handle_reply, self._handle_balance, self._handle_profit)
-            self._com.set_authority(2 if self._env == "test" else 0)
+            self._com.setup(self._handle_reply, self._handle_balance, self._handle_profit,
+                            on_reply_disconnect=self._handle_reply_disconnect)
+            rc = self._com.set_authority(2 if self._env == "test" else 0)
+            if rc != 0:
+                # 不呼叫/失敗的預設就是正式環境:test 模式失敗被吞 = 「測試單」
+                # 可能落進真實市場,寧可不啟動;prod 失敗則預設即所求,記警告續行
+                if self._env == "test":
+                    raise RuntimeError("SetAuthority(test): " + self._com.return_code_message(rc))
+                logger.warning("SetAuthority rc=%s: %s(預設即正式環境,續行)",
+                               rc, self._com.return_code_message(rc))
             code = self._com.login(self._user_id, self._password)
             if code != 0:
                 raise RuntimeError("Login: " + self._com.return_code_message(code))
-            self._com.init_order()
+            rc = self._com.init_order()
+            if rc != 0:
+                # 吞掉會變成 status=ok 但每筆下單必敗的延遲爆炸,錯誤訊息也更難懂
+                raise RuntimeError("SKOrderLib_Initialize: " + self._com.return_code_message(rc))
             code = self._com.read_cert(self._user_id)
             if code != 0:
                 raise RuntimeError("ReadCertByID: " + self._com.return_code_message(code))
@@ -199,15 +252,34 @@ class CapitalClient:
                 fn, fut = cmd
                 try:
                     result = fn()
-                    self._loop.call_soon_threadsafe(fut.set_result, result)
+                    self._loop.call_soon_threadsafe(_settle, fut, result)
                 except Exception as e:  # noqa: BLE001
-                    self._loop.call_soon_threadsafe(fut.set_exception, e)
+                    self._loop.call_soon_threadsafe(_settle, fut, None, e)
         finally:
             # 執行緒亡故必須降 status:否則寫入請求進佇列後 future 永不 resolve,UI 還顯示健康
             self._status = "error"
             if not self._last_error:
                 self._last_error = "COM 執行緒已終止"
+            self._drain_pending()
             logger.error("capital-com 執行緒結束(status→error)")
+
+    def _drain_pending(self) -> None:
+        """執行緒結束時佇列殘留的命令沒人消化:future 必須 fail,
+        否則 status 檢查通過後才入佇列的寫入請求會永久懸掛。"""
+        while True:
+            try:
+                cmd = self._cmd_q.get_nowait()
+            except queue.Empty:
+                return
+            if cmd is None:
+                continue
+            _fn, fut = cmd
+            try:
+                self._loop.call_soon_threadsafe(
+                    _settle, fut, None, RuntimeError("COM 執行緒已終止,命令未執行"))
+            except RuntimeError:
+                # loop 已關閉(行程收尾):future 無從 resolve,只能留 log
+                logger.error("寫入命令丟棄(event loop 已關閉)")
 
     def _write_gate(self, seq_no: str, base: GateResult) -> GateResult:
         """基本閘(總開關等)先過,再擋已知非證券市場的單。v1 寫入鏈只支援證券:
@@ -236,7 +308,8 @@ class CapitalClient:
             capital_audit.write(self._audit_path, env=self._env, req=req,
                                 blocked=gate.reason, action=action)
             return OrderResult(ok=False, code=-1, message=gate.reason)
-        if self._status != "ok" or self._loop is None:
+        # degraded(回報斷線)放行:送單通道獨立可用,且刪單/平倉是降風險操作
+        if self._status == "error" or self._loop is None:
             reason = "群益未就緒(尚未登入或憑證失敗)"
             capital_audit.write(self._audit_path, env=self._env, req=req,
                                 blocked=reason, action=action)
@@ -245,7 +318,14 @@ class CapitalClient:
         fut: asyncio.Future = self._loop.create_future()
         self._cmd_q.put((com_call, fut))
         try:
-            message, code = await fut
+            message, code = await asyncio.wait_for(fut, timeout=_WRITE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            # 命令可能已送進群益(SendStockOrder 同步呼叫卡在群益端)→ 結果未知,
+            # 不可回「失敗」誘發重送;照樣稽核留帳
+            result = OrderResult(ok=False, code=-1,
+                                 message="COM 逾時,結果未知 — 請先核對委託回報,勿直接重送")
+            self._audit_after_send(req, result, action)
+            return result
         except Exception as e:  # noqa: BLE001 — COM 例外轉 result,稽核不可斷
             result = OrderResult(ok=False, code=-1, message=f"COM 例外: {type(e).__name__}: {e}")
             self._audit_after_send(req, result, action)
@@ -267,6 +347,23 @@ class CapitalClient:
             action=action, req=req,
             gate=check_stock_order(req, self._safety), com_call=_do)
 
+    def _close_dup_reason(self, stock_no: str, side: BuySell) -> str | None:
+        """平倉重複送單防護。部位快取要等成交回報→debounce→重查回來才更新,
+        窗口內(數秒)第二次平倉仍看得到原始全量持倉、照樣過量閘 → 兩張全量反向單
+        (融券回補是 BUY,券商不會以庫存擋,直接變新部位)。兩層擋:
+        1. in-flight 窗口 — 送出後 ~10s 內擋同股號(回報還沒進 store 的空窗);
+        2. store 已有同檔同向活躍委託 — 回報到了之後由這層接手。"""
+        deadline = self._close_inflight.get(stock_no)
+        if deadline is not None:
+            if time.monotonic() < deadline:
+                return f"{stock_no} 平倉單剛送出(在途),請先核對委託回報"
+            del self._close_inflight[stock_no]
+        want = "B" if side == BuySell.BUY else "S"
+        for o in self.store.orders():
+            if o.actionable and o.stock_no == stock_no and o.buy_sell == want:
+                return f"{stock_no} 已有同向活躍委託(seq={o.seq_no}),請先刪單或等其成交"
+        return None
+
     async def close_position(self, req: PositionCloseRequest) -> OrderResult:
         pos = self.store.position_for(req.stock_no)
         if pos is None or pos.qty == 0:
@@ -279,6 +376,13 @@ class CapitalClient:
         except ValueError as e:
             capital_audit.write(self._audit_path, env=self._env, req=req, blocked=str(e), action="close")
             return OrderResult(ok=False, code=-1, message=str(e))
+        reason = self._close_dup_reason(req.stock_no, order.buy_sell)
+        if reason:
+            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=reason, action="close")
+            return OrderResult(ok=False, code=-1, message=reason)
+        # await 前就標記:同 loop 上的併發請求才擋得住。失敗也不提前解鎖 —
+        # 逾時/COM 例外的結果未知,寧可鎖滿窗口(閘拒/未就緒多鎖 10s 是可接受代價)
+        self._close_inflight[req.stock_no] = time.monotonic() + _CLOSE_INFLIGHT_S
         return await self.submit_stock_order(order, action="close")
 
     async def cancel_stock_order(self, req: CancelOrderRequest) -> OrderResult:

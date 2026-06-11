@@ -78,11 +78,13 @@ def dedupe_positions(positions: list[Position]) -> list[Position]:
 
 
 _PNL_IDX_STOCK_NO = 1
+_PNL_IDX_KIND = 3        # 交易種類(現股/融資/融券)— 同檔多種庫存並存時每種類一列
 _PNL_IDX_PRICE = 5       # 報告市價(前端「券商基底+即時平移」的平移基準)
 _PNL_IDX_PNL = 9         # 損益(含費稅息,與群益 App 同源)
 _PNL_IDX_AVG = 10        # 平均買進(券賣)成本(4-2-p 未實現-彙總)
 _PNL_IDX_COST = 12       # 成交價金(報酬率分母 — 實測同報告[21]口徑)
 _PNL_MIN_FIELDS = 11
+_PNL_KIND = {"現股": "cash", "融資": "margin", "融券": "short"}
 
 
 class ProfitRow(NamedTuple):
@@ -91,6 +93,7 @@ class ProfitRow(NamedTuple):
     pnl: float | None        # 含費稅息淨損益(報告市價時點)
     price: float | None      # 報告市價
     cost: float | None       # 成交價金(% 分母)
+    kind: str | None = None  # cash/margin/short;None=未知標籤(回填端視為不符、略過)
 
 
 def _opt_float(parts: list[str], i: int) -> float | None:
@@ -122,6 +125,7 @@ def parse_profit_line(raw: str) -> ProfitRow | None:
         pnl=_opt_float(parts, _PNL_IDX_PNL),
         price=_opt_float(parts, _PNL_IDX_PRICE),
         cost=_opt_float(parts, _PNL_IDX_COST),
+        kind=_PNL_KIND.get(parts[_PNL_IDX_KIND].strip()),
     )
 
 
@@ -137,12 +141,19 @@ class BalanceCollector:
         self._parse = parse
         self._staging: list = []
         self._last_feed: float | None = None
+        self._closed = False     # 本輪已 flush;reset(發新查詢)前的事件一律丟棄
 
     def reset(self) -> None:
         self._staging = []
         self._last_feed = None
+        self._closed = False
 
     def feed(self, raw: str) -> None:
+        # flush 後本輪即關閉:timeout 保險先 flush 的話,殘餘事件+遲到的 ## 不可
+        # 再 flush 一次 — on_complete 是全量取代語意,尾段幾檔或空集合會整批蓋掉部位
+        if self._closed:
+            logger.debug("collector 本輪已 flush,事件丟棄: %r", raw)
+            return
         if raw and raw.startswith("#"):     # 結束標記
             self._flush()
             return
@@ -161,4 +172,5 @@ class BalanceCollector:
 
     def _flush(self) -> None:
         out, self._staging, self._last_feed = self._staging, [], None
+        self._closed = True
         self._on_complete(out)
