@@ -15,6 +15,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from services.fubon_client import FubonStatus, get_fubon
+from services.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,6 +28,10 @@ async def intraday_candles(symbol: str) -> dict:
         raise HTTPException(503, detail={"error": "fubon_unavailable", "last_error": fubon.last_error})
 
     async def fetch_candles() -> dict:
+        # candles 與 quote 同屬富邦日內行情配額(300/min)— 先過共用 limiter
+        # 記帳,否則輪詢流量繞道、尖峰時會害守規矩的 quote/sma 吃 429。
+        # 用 async 版等 token — 排隊時不占 thread pool worker
+        await get_rate_limiter().acquire_async()
         return await asyncio.to_thread(
             fubon.sdk.marketdata.rest_client.stock.intraday.candles,
             symbol=symbol,

@@ -51,6 +51,10 @@ async def set_preview(payload: PreviewPayload) -> dict:
                 await pool.unsubscribe(_current_preview, owner_id="preview")
             except Exception as e:
                 logger.warning("preview unsubscribe %s failed: %s", _current_preview, e)
+            # 舊 owner 已退訂 — 立刻清空,讓下面 subscribe 失敗 raise 時狀態
+            # = 「目前無 preview」與真實訂閱一致;否則殘留舊 symbol,之後重
+            # POST 舊 symbol 會命中 noop 分支、實際已退訂卻收不到 tick
+            _current_preview = None
 
         # 再 subscribe 新的（若非 null）
         if new_sym is not None:

@@ -114,7 +114,7 @@ def test_list_returns_newest_first(local_store_tmp, monkeypatch):
     fake_pool = AsyncMock()
     monkeypatch.setattr("routes.monitor_list.get_ws_pool", lambda: fake_pool)
     # CDP/signal_engine 靜音,不影響斷言
-    monkeypatch.setattr("routes.monitor_list.get_cdp_service", lambda: AsyncMock())
+    monkeypatch.setattr("routes.monitor_list._enqueue_backfill", lambda _s: None)
     with patch("services.signal_engine.get_signal_engine") as mock_engine_getter:
         mock_engine_getter.return_value = AsyncMock()
         client.post("/api/monitor_list", json={"symbol": "2330"})
@@ -126,20 +126,19 @@ def test_list_returns_newest_first(local_store_tmp, monkeypatch):
 
 
 def test_add_triggers_cdp_backfill(local_store_tmp, monkeypatch):
-    """POST 時應呼叫 get_cdp_service().backfill_from_fubon(symbol)。"""
+    """POST 時應把 symbol 丟進 CDP backfill 佇列(背景補當日 OHLC)。"""
     store = get_local_store()
     monkeypatch.setattr(store.market, "symbols_loaded", lambda: False)
 
     fake_pool = AsyncMock()
     monkeypatch.setattr("routes.monitor_list.get_ws_pool", lambda: fake_pool)
 
-    fake_cdp = AsyncMock()
-    monkeypatch.setattr("routes.monitor_list.get_cdp_service", lambda: fake_cdp)
+    enqueued: list[str] = []
+    monkeypatch.setattr("routes.monitor_list._enqueue_backfill", enqueued.append)
 
     with patch("services.signal_engine.get_signal_engine") as mock_engine_getter:
         mock_engine_getter.return_value = AsyncMock()
         r = client.post("/api/monitor_list", json={"symbol": "2330"})
 
     assert r.status_code == 201
-    # backfill_from_fubon 已被呼叫(透過 create_task,coroutine 物件已建立)
-    fake_cdp.backfill_from_fubon.assert_called_once_with("2330")
+    assert enqueued == ["2330"]

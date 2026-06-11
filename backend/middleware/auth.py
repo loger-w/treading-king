@@ -5,11 +5,15 @@
 最簡單的 basic auth password gate。
 
 Dev 環境用 X-API-Key 擋零成本掃描者就好。
+
+WS 認證不在這裡:BaseHTTPMiddleware 只處理 scope type "http",websocket
+handshake 直接 pass-through 不進 dispatch,由 routes/ws.py 用 query param 自行驗。
 """
 from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -28,14 +32,13 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self,
         request: Request,
-        call_next: Callable[[Request], Awaitable[Any]],  # type: ignore[name-defined]
+        call_next: Callable[[Request], Awaitable[Any]],
     ):
-        # Allow public paths + WS upgrade (auth via query string handled per-route)
+        # Allow public paths
         if (
             request.url.path in PUBLIC_PATHS
             or request.url.path.startswith("/docs")
             or request.url.path.startswith("/openapi")
-            or request.url.path == "/ws/signals"  # WS auth check in route
         ):
             return await call_next(request)
 
@@ -52,7 +55,3 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
-
-
-# Re-export for typing
-from typing import Any  # noqa: E402

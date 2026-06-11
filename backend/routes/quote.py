@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.fubon_client import get_fubon
+from services.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,17 +79,23 @@ async def snapshot_quotes(req: SnapshotRequest) -> dict:
             },
         )
 
+    # 併發數對齊 limiter 速率 — 50 檔一次全下會同時占用共用執行緒池
+    # (min(32, cpu+4) 條)跑 SDK 呼叫,期間其他富邦呼叫全部排隊;這層上限
+    # 讓 snapshot 不依賴 client 內部等 token 的實作也塞不滿池子
+    sem = asyncio.Semaphore(max(1, int(get_rate_limiter().rate)))
+
     async def one(sym: str) -> dict:
-        try:
-            r = await fubon.intraday_quote(sym)
-            return {
-                "symbol": sym,
-                "prev_close": r.get("previousClose"),
-                "last_price": r.get("lastPrice"),
-            }
-        except Exception as e:
-            logger.warning("snapshot intraday_quote(%s) failed: %s", sym, e)
-            return {"symbol": sym, "prev_close": None, "last_price": None}
+        async with sem:
+            try:
+                r = await fubon.intraday_quote(sym)
+                return {
+                    "symbol": sym,
+                    "prev_close": r.get("previousClose"),
+                    "last_price": r.get("lastPrice"),
+                }
+            except Exception as e:
+                logger.warning("snapshot intraday_quote(%s) failed: %s", sym, e)
+                return {"symbol": sym, "prev_close": None, "last_price": None}
 
     results = await asyncio.gather(*(one(s) for s in req.symbols))
     return {"quotes": results}

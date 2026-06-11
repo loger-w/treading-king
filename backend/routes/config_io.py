@@ -24,5 +24,12 @@ async def import_config(payload: dict) -> dict:
         get_local_store().config.import_config(payload)
     except ValueError as e:
         raise HTTPException(400, detail={"error": "bad_schema", "detail": str(e)})
-    await resync_from_config(prev_owners=prev)  # 熱套用:退訂舊→訂新→refresh
+    try:
+        await resync_from_config(prev_owners=prev)  # 熱套用:退訂舊→訂新→refresh
+    except Exception as e:  # noqa: BLE001
+        # 此時 config 已落盤(import_config 內含備份 + persist),回 500 會讓
+        # client 誤判匯入失敗而重匯;回 200 並標明 resync 失敗 — 訂閱狀態
+        # 不完整,重啟時 startup resync 會補齊
+        logger.exception("config import: resync failed")
+        return {"status": "imported", "resync": "failed", "detail": str(e)}
     return {"status": "ok"}

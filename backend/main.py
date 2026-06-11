@@ -17,8 +17,7 @@ from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
     active_signals, bookmarks, camarilla, candles, capital, cdp as cdp_route,
     config_io, ma, monitor_list as monitor_list_route, mxf,
-    preview, quote, signals_history, symbols,
-    watchlist, ws,
+    preview, quote, signals_history, symbols, ws,
 )  # noqa: E402
 from routes.symbols import bootstrap_symbols_if_missing  # noqa: E402
 from jobs.top_gainers_scheduler import top_gainers_loop  # noqa: E402
@@ -46,7 +45,11 @@ async def lifespan(app: FastAPI):
     fubon = get_fubon()
     await fubon.init()
     get_local_store().init()
-    asyncio.create_task(bootstrap_symbols_if_missing())
+
+    # 背景 task 統一收 reference — event loop 對 task 只持弱參考,fire-and-forget
+    # 可能執行中被 GC;shutdown 時 cancel 後 gather,確保清理跑完再關 SDK
+    bg_tasks: list[asyncio.Task] = []
+    bg_tasks.append(asyncio.create_task(bootstrap_symbols_if_missing()))
 
     pool = get_ws_pool()
     await pool.start()
@@ -58,7 +61,6 @@ async def lifespan(app: FastAPI):
     await engine.start()
 
     # MXF 期貨 WS 訂閱 — 取近月、啟動 session reconcile loop
-    futures_reconcile_task: asyncio.Task | None = None
     try:
         mxf_symbol = await resolve_active_symbol()
         if mxf_symbol:
@@ -68,7 +70,7 @@ async def lifespan(app: FastAPI):
             logger.warning("MXF active symbol unavailable at startup; will retry on reconcile")
     except Exception as e:
         logger.error("MXF futures WS startup failed: %s", e)
-    futures_reconcile_task = asyncio.create_task(session_reconcile_loop())
+    bg_tasks.append(asyncio.create_task(session_reconcile_loop()))
     logger.info("MXF session reconcile loop started")
 
     # 依 config 訂閱書籤/監聽清單並刷新訊號引擎
@@ -76,11 +78,11 @@ async def lifespan(app: FastAPI):
     await resync_from_config()
 
     # 啟動 overnight 8:25 cron — 每個 instance 自己重 login + 重訂閱 ws
-    overnight_task = asyncio.create_task(overnight_loop())
+    bg_tasks.append(asyncio.create_task(overnight_loop()))
     logger.info("overnight loop started")
 
     # 大漲股排程 — 盤中每 1 分鐘更新 top_gainers 記憶體快取
-    top_gainers_task = asyncio.create_task(top_gainers_loop())
+    bg_tasks.append(asyncio.create_task(top_gainers_loop()))
 
     # 群益下單(可選,未設定或失敗都不影響富邦)
     try:
@@ -105,10 +107,11 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down…")
-    overnight_task.cancel()
-    top_gainers_task.cancel()
-    if futures_reconcile_task:
-        futures_reconcile_task.cancel()
+    for t in bg_tasks:
+        t.cancel()
+    # cancel 後等清理跑完 — 不 await 的話 cancellation 可能在 fubon.shutdown()
+    # 之後才執行,順序不保證
+    await asyncio.gather(*bg_tasks, return_exceptions=True)
     await get_futures_ws_pool().stop()
     await engine.shutdown()
     await writer.shutdown()
@@ -137,7 +140,6 @@ app.add_middleware(APIKeyMiddleware)
 app.include_router(quote.router)
 app.include_router(preview.router)
 app.include_router(symbols.router)
-app.include_router(watchlist.router)
 app.include_router(bookmarks.router)
 app.include_router(active_signals.router)
 app.include_router(monitor_list_route.router)

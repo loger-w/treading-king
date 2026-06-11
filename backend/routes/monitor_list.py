@@ -8,14 +8,13 @@ DELETE 反過來 unsubscribe + refresh。
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from routes._item_enrich import enrich_item
-from services.cdp import get_cdp_service
+from routes.bookmarks import _enqueue_backfill
 from services.fubon_ws import get_ws_pool
 from services.local_store import get_local_store
 
@@ -55,8 +54,8 @@ async def add_monitor(payload: MonitorListAdd) -> dict:
     # 寫 local store(add_monitor 已是 idempotent)
     store.config.add_monitor(payload.symbol)
 
-    # CDP backfill 背景跑
-    asyncio.create_task(get_cdp_service().backfill_from_fubon(payload.symbol))
+    # CDP backfill 走共用佇列背景跑(去重+序列消化,task 有人持有、例外有 log)
+    _enqueue_backfill(payload.symbol)
 
     # signal_engine refresh
     try:
