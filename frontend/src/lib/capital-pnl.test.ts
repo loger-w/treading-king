@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { grossPnl, netPnl, snapshotPrices } from "./capital-pnl";
+import { grossPnl, netPnl, pickPrice, snapshotPrices } from "./capital-pnl";
 
 describe("capital-pnl", () => {
   it("gross = qty*1000*(price-avg)", () => {
@@ -28,5 +28,17 @@ describe("snapshotPrices 快照價全量重建", () => {
     expect(r1).toEqual({ "2330": 100 });
     const r2 = snapshotPrices([{ symbol: "2330", last_price: 101.5 }]);
     expect(r2).toEqual({ "2330": 101.5 });
+  });
+});
+
+describe("pickPrice tick/快照雙層選價", () => {
+  it("60s 內 tick 優先;逾期退快照(斷訂的陳舊 tick 不得變成新的凍結源)", () => {
+    expect(pickPrice({ price: 100, ts: 0 }, 99, 30_000)).toBe(100);
+    expect(pickPrice({ price: 100, ts: 0 }, 99, 61_000)).toBe(99);
+  });
+
+  it("無快照時寧用陳舊 tick;兩者皆無回 null", () => {
+    expect(pickPrice({ price: 100, ts: 0 }, undefined, 61_000)).toBe(100);
+    expect(pickPrice(undefined, undefined, 0)).toBeNull();
   });
 });

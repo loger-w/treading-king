@@ -74,6 +74,13 @@ describe("splitMyLots 方格(active)/黃括號(fills)來源拆分", () => {
     expect(fills).toEqual([{ price: 100, buySell: "B", lots: 5 }]);
   });
 
+  it("部分成交後刪掉的單:active 不含、已成交部分留在 fills(spec:黃括號整日留存)", () => {
+    const cancelledPartial = o({ actionable: false, order_qty: 5, filled_qty: 2 });
+    const { active, fills } = splitMyLots([cancelledPartial]);
+    expect(active).toEqual([]);
+    expect(fills).toEqual([{ price: 100, buySell: "B", lots: 2 }]);
+  });
+
   it("市價單(price=null)/側別不明 → 不上階梯", () => {
     const { active, fills } = splitMyLots([
       o({ price: null, filled_qty: 2 }),

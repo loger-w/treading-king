@@ -100,14 +100,22 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
     }
   };
 
-  // 點「我N」→ 刪該價位該方向全部活單(逐筆)
+  // 點紅方格 → 刪該價位該方向全部活單(逐筆)
+  const cancelling = useRef(false);
   const cancelAt = async (price: number, side: "B" | "S") => {
     touchIdle();
+    // 連點防重複:第二輪對同批 seq_no 必被拒,失敗 hint 會蓋掉第一輪的成功訊息
+    if (cancelling.current) return;
     const targets = myActionable.filter((o) => o.price === price && o.buy_sell === side);
     if (targets.length === 0) return;
-    const results = await Promise.allSettled(targets.map((o) => api.capitalCancelOrder({ seq_no: o.seq_no })));
-    const fail = results.filter((r) => r.status === "rejected" || !(r as PromiseFulfilledResult<{ ok: boolean }>).value?.ok).length;
-    setHint(fail === 0 ? `已刪 ${price.toFixed(2)} 的 ${targets.length} 筆掛單` : `✗ ${fail}/${targets.length} 筆刪單失敗`);
+    cancelling.current = true;
+    try {
+      const results = await Promise.allSettled(targets.map((o) => api.capitalCancelOrder({ seq_no: o.seq_no })));
+      const fail = results.filter((r) => r.status === "rejected" || !(r as PromiseFulfilledResult<{ ok: boolean }>).value?.ok).length;
+      setHint(fail === 0 ? `已刪 ${price.toFixed(2)} 的 ${targets.length} 筆掛單` : `✗ ${fail}/${targets.length} 筆刪單失敗`);
+    } finally {
+      cancelling.current = false;
+    }
   };
 
   const cancelAll = async () => {
@@ -158,8 +166,8 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
             <div className="flex items-stretch">
               {/* 方格刪單不設 disabled:刪單是降風險操作,灰區/無券鎖買都不該擋 */}
               {row.myBuyLots > 0 && (
-                <button onClick={() => cancelAt(row.price, "B")}
-                  className="my-0.5 ml-0.5 px-1 min-w-[22px] text-2xs font-bold rounded border border-accent bg-accent/25 text-accent">
+                <button onClick={() => cancelAt(row.price, "B")} aria-label={`刪 ${row.price.toFixed(2)} 買單`}
+                  className="my-0.5 ml-0.5 mr-1 px-1 min-w-[22px] text-2xs font-bold rounded border border-accent bg-accent/25 text-accent">
                   {row.myBuyLots}
                 </button>
               )}
@@ -181,8 +189,8 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
                 {row.mySellFills > 0 && <span className="text-2xs text-ma5">({row.mySellFills})</span>}
               </button>
               {row.mySellLots > 0 && (
-                <button onClick={() => cancelAt(row.price, "S")}
-                  className="my-0.5 mr-0.5 px-1 min-w-[22px] text-2xs font-bold rounded border border-accent bg-accent/25 text-accent">
+                <button onClick={() => cancelAt(row.price, "S")} aria-label={`刪 ${row.price.toFixed(2)} 賣單`}
+                  className="my-0.5 mr-0.5 ml-1 px-1 min-w-[22px] text-2xs font-bold rounded border border-accent bg-accent/25 text-accent">
                   {row.mySellLots}
                 </button>
               )}

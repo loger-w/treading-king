@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CapitalPosition } from "../lib/api";
 import { subscribeTicks } from "../hooks/useSignalsStream";
-import { grossPnl, snapshotPrices } from "../lib/capital-pnl";
+import { grossPnl, pickPrice, snapshotPrices } from "../lib/capital-pnl";
 import { limitDown, limitUp } from "../lib/tick";
 
 /** 庫存總覽:每列 代號/張數/均價/現價/未實現損益;點列帶標的回下單匣;「平」=反向市價單(確認後送)。
@@ -9,7 +9,7 @@ import { limitDown, limitUp } from "../lib/tick";
 export function PositionsList({ positions, env, onPick }: {
   positions: CapitalPosition[]; env: string; onPick: (symbol: string) => void;
 }) {
-  const [tick, setTick] = useState<Record<string, number>>({});   // WS 即時價(有訂閱的標的)
+  const [tick, setTick] = useState<Record<string, { price: number; ts: number }>>({});  // WS 即時價(帶時戳,逾期退快照)
   const [snap, setSnap] = useState<Record<string, number>>({});   // 30s 快照價(每輪全量覆寫)
   const [closing, setClosing] = useState<CapitalPosition | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -21,7 +21,7 @@ export function PositionsList({ positions, env, onPick }: {
     if (symbols.length === 0) return;
     const set = new Set(symbols);
     return subscribeTicks((t) => {
-      if (set.has(t.symbol)) setTick((m) => (m[t.symbol] === t.price ? m : { ...m, [t.symbol]: t.price }));
+      if (set.has(t.symbol)) setTick((m) => (m[t.symbol]?.price === t.price ? m : { ...m, [t.symbol]: { price: t.price, ts: Date.now() } }));
     });
   }, [symbols]);
 
@@ -43,7 +43,8 @@ export function PositionsList({ positions, env, onPick }: {
 
   if (positions.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">目前無庫存部位</div>;
 
-  const priceOf = (s: string) => tick[s] ?? snap[s] ?? null;
+  // 快照 30s 重載觸發 re-render,新鮮度判斷至少每輪重算一次
+  const priceOf = (s: string) => pickPrice(tick[s], snap[s], Date.now());
   const total = positions.reduce((sum, p) => sum + grossPnl(p.qty, p.avg_price, priceOf(p.stock_no)), 0);
   const totalUp = total >= 0;
 
