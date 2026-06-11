@@ -1,4 +1,4 @@
-"""Fubon Neo SDK wrapper — DMA login + degraded mode + auto-retry.
+"""Fubon Neo SDK wrapper — DMA login + auto-retry（status 只有 OK/ERROR 兩態）.
 
 所有 sync SDK call 透過 asyncio.to_thread 包裝。
 
@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 class FubonStatus(str, Enum):
     OK = "ok"
     ERROR = "error"
-    DEGRADED = "degraded"
 
 
 class FubonClient:
@@ -36,6 +35,9 @@ class FubonClient:
         self._last_error: str | None = None
         self._last_attempt_at: datetime | None = None
         self._retry_task: asyncio.Task[None] | None = None
+        # 只在 ok→error 轉變時發 alert — 背景重試每 5 分鐘失敗一次,
+        # 無條件發會把 Discord 灌爆、淹掉真正的新告警
+        self._error_alerted = False
         self._lock = asyncio.Lock()
 
     @property
@@ -48,7 +50,7 @@ class FubonClient:
 
     @property
     def sdk(self) -> Any:
-        """Raw SDK handle. None when degraded/error."""
+        """Raw SDK handle. None when status=error."""
         return self._sdk
 
     async def init(self) -> None:
@@ -69,6 +71,9 @@ class FubonClient:
                     self._status = FubonStatus.OK
                     self._last_error = None
                     logger.info("Fubon SDK login + init_realtime OK")
+                    if self._error_alerted:
+                        self._error_alerted = False
+                        await alerts.notify_critical("Fubon SDK login recovered")
                     return
                 except Exception as e:
                     self._last_error = f"{type(e).__name__}: {e}"
@@ -84,14 +89,25 @@ class FubonClient:
             # All retries exhausted
             self._status = FubonStatus.ERROR
             self._sdk = None
-            await alerts.notify_critical(
-                f"Fubon SDK init failed after {max_attempts} attempts",
-                error=self._last_error or "(no detail)",
-            )
+            if not self._error_alerted:
+                self._error_alerted = True
+                await alerts.notify_critical(
+                    f"Fubon SDK init failed after {max_attempts} attempts",
+                    error=self._last_error or "(no detail)",
+                )
+            else:
+                logger.error("Fubon SDK still down: %s", self._last_error)
 
     def _do_login_sync(self) -> None:
         """Sync SDK login — must run in thread."""
         from fubon_neo.sdk import FubonSDK, Mode  # type: ignore[import-not-found]
+
+        # relogin（overnight 8:25）前先收乾淨舊 SDK — 否則舊 WS 連線繼續推 tick
+        # 造成雙倍行情,且每天洩漏一條連線額度（富邦每帳號上限 5 條）
+        old_sdk = self._sdk
+        if old_sdk is not None:
+            self._sdk = None
+            self._teardown_sdk_sync(old_sdk)
 
         personal_id = (
             os.getenv("FUBON_PERSONAL_ID", "").strip()
@@ -110,15 +126,45 @@ class FubonClient:
         if cert_path:
             cert_pass = os.getenv("FUBON_CERT_PASS", "").strip() or None
             logger.info("Using apikey_login (with cert)")
-            sdk.apikey_login(personal_id, api_key, cert_path, cert_pass)
+            result = sdk.apikey_login(personal_id, api_key, cert_path, cert_pass)
         else:
             logger.info("Using apikey_dma_login (DMA mode, no cert)")
-            sdk.apikey_dma_login(personal_id, api_key)
+            result = sdk.apikey_dma_login(personal_id, api_key)
+
+        # 官方 Result 模式:憑證/金鑰錯誤不丟例外、只回 is_success=False。
+        # 不檢查的話會拖到 init_realtime 的 token exchange 才炸,錯誤訊息遮蔽真因
+        if result is None or not getattr(result, "is_success", False):
+            raise RuntimeError(
+                f"Fubon login failed: {getattr(result, 'message', None) or '(no message)'}"
+            )
 
         # Normal 模式:Speed 預設不支援 candles / aggregates channel (期貨即時 K 需要)。
         # Stock trades / 各 REST 端點兩模式都可用,切 Normal 不破壞既有股票功能。
         sdk.init_realtime(Mode.Normal)
         self._sdk = sdk
+
+    @staticmethod
+    def _teardown_sdk_sync(sdk: Any) -> None:
+        """收掉被汰換的 SDK:先斷 marketdata WS 再 logout,全部防禦式。
+
+        舊 ws 的 on_disconnect 仍 wire 在 WSPool 上 — pool 端以 handle identity
+        判 stale,不會被這裡的 disconnect 誤觸重連。
+        """
+        try:
+            md = getattr(sdk, "marketdata", None)
+            ws_client = getattr(md, "websocket_client", None) if md is not None else None
+            if ws_client is not None:
+                for name in ("stock", "futopt"):
+                    try:
+                        getattr(ws_client, name).disconnect()
+                    except Exception as e:
+                        logger.debug("old ws %s disconnect failed (ignored): %s", name, e)
+        except Exception as e:
+            logger.debug("old sdk ws teardown failed (ignored): %s", e)
+        try:
+            sdk.logout()
+        except Exception as e:
+            logger.debug("old sdk logout failed (ignored): %s", e)
 
     async def _background_retry(self) -> None:
         """Retry login every 5 min while status=error."""
@@ -144,30 +190,13 @@ class FubonClient:
 
     async def intraday_quote(self, symbol: str) -> dict[str, Any]:
         if self._status != FubonStatus.OK or self._sdk is None:
-            raise RuntimeError("Fubon SDK not available (degraded mode)")
-        await asyncio.to_thread(get_rate_limiter().acquire)
+            raise RuntimeError("Fubon SDK not available")
+        # async 版 acquire — 阻塞版丟 to_thread 會在限流排隊時占住 default
+        # thread pool worker,連坐其他 to_thread 操作（WS subscribe/relogin）
+        await get_rate_limiter().acquire_async()
         return await asyncio.to_thread(
             self._sdk.marketdata.rest_client.stock.intraday.quote,
             symbol=symbol,
-        )
-
-    async def intraday_ticker(self, symbol: str) -> dict[str, Any]:
-        if self._status != FubonStatus.OK or self._sdk is None:
-            raise RuntimeError("Fubon SDK not available")
-        await asyncio.to_thread(get_rate_limiter().acquire)
-        return await asyncio.to_thread(
-            self._sdk.marketdata.rest_client.stock.intraday.ticker,
-            symbol=symbol,
-        )
-
-    async def technical_rsi(self, symbol: str, period: int = 14) -> dict[str, Any]:
-        if self._status != FubonStatus.OK or self._sdk is None:
-            raise RuntimeError("Fubon SDK not available")
-        await asyncio.to_thread(get_rate_limiter().acquire)
-        return await asyncio.to_thread(
-            self._sdk.marketdata.rest_client.stock.technical.rsi,
-            symbol=symbol,
-            period=period,
         )
 
 
