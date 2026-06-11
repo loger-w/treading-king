@@ -13,6 +13,7 @@ import {
 interface Props {
   symbol: string;
   name: string | null;
+  active?: boolean;   // 頁面隱藏時暫停 candles 輪詢(回來重抓)
   inAnyBookmark: boolean;
   onOpenBookmarkDialog: () => void;
   inMonitor: boolean;
@@ -21,10 +22,10 @@ interface Props {
 }
 
 
-export function IntradayChart({ symbol, name, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
+export function IntradayChart({ symbol, name, active = true, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
   // candles state 養在本元件而非頁根:選中股是 tick 最密的一檔,
   // state 在 Monitor 的話每筆成交都讓整頁四欄(含下單面板)重繪
-  const { candles, prevClose, onTick } = useIntradayCandles(symbol);
+  const { candles, prevClose, onTick } = useIntradayCandles(active ? symbol : null);
   useEffect(() => subscribeTicks((t) => onTick(t.symbol, t.price)), [onTick]);
 
   const [showVwap, setShowVwap] = useState(true);

@@ -25,7 +25,7 @@ const PAD_T = 12;
 const PAD_B = 28;
 const MIN_CANDLE_PX = 6;
 
-export function MXFIntradayChart() {
+export function MXFIntradayChart({ active = true }: { active?: boolean }) {
   const [tf, setTf] = useState(5);
   const [showVwap, setShowVwap] = useState(true);
   const [showMa, setShowMa] = useState(true);
@@ -38,7 +38,7 @@ export function MXFIntradayChart() {
   const dragStartRange = useRef<ViewRange | null>(null);
   const prevLenRef = useRef(0);
 
-  const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf);
+  const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf, active);
 
   const { ma5, ma20 } = useMemo(() => {
     if (candles.length === 0) {

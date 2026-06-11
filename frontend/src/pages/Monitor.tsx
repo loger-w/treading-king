@@ -27,15 +27,15 @@ import { buildSymbolNames } from "../lib/symbol-name";
  * 搜尋流程：toolbar 搜尋 → setSelected 預覽（不再直接 add 自選）；
  *           IntradayChart header 提供「+ 加入自選 / 已在自選 ✓」按鈕。
  */
-export function Monitor() {
+export function Monitor({ active = true }: { active?: boolean }) {
   return (
     <MonitorListProvider>
-      <MonitorInner />
+      <MonitorInner active={active} />
     </MonitorListProvider>
   );
 }
 
-function MonitorInner() {
+function MonitorInner({ active }: { active: boolean }) {
   const { items: rules, refresh: refreshRules } = useActiveSignals();
   const { counts, bump } = useTodayHits();
 
@@ -222,6 +222,7 @@ function MonitorInner() {
                     <IntradayChart
                       symbol={selected}
                       name={symbolNames[selected] ?? null}
+                      active={active}
                       inAnyBookmark={inAnyBookmark}
                       onOpenBookmarkDialog={handleOpenBookmarkDialog}
                       inMonitor={inMonitor}
@@ -231,7 +232,9 @@ function MonitorInner() {
                   </div>
                 )}
               </div>
-              <QuoteBook symbol={selected} />
+              {/* 頁面隱藏時暫停 1Hz 五檔輪詢(直打富邦);下單面板的輪詢刻意不動,
+                  切頁不可重置使用者下到一半的單 */}
+              <QuoteBook symbol={active ? selected : null} />
             </section>
 
             {/* COL 4: 下單面板(群益) */}

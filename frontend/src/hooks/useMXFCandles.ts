@@ -12,7 +12,7 @@ export interface UseMXFCandlesState {
   error: string | null;
 }
 
-export function useMXFCandles(timeframe: number) {
+export function useMXFCandles(timeframe: number, enabled = true) {
   const [state, setState] = useState<UseMXFCandlesState>({
     symbol: null,
     candles: [],
@@ -50,15 +50,18 @@ export function useMXFCandles(timeframe: number) {
     }
   }, [timeframe]);
 
-  // 初始化 + timeframe 變動 → 重新拉
+  // 初始化 + timeframe 變動 → 重新拉。
+  // enabled=false(頁面隱藏)時暫停 REST 輪詢——WS merge 照常(推送零請求成本),
+  // 回到頁面 effect 重跑會立即重抓
   useEffect(() => {
+    if (!enabled) return;
     setState((prev) => ({ ...prev, loading: true, candles: [] }));
     fetchCandles(symbolRef.current);
     pollTimer.current = setInterval(() => fetchCandles(symbolRef.current), REFRESH_MS);
     return () => {
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
-  }, [fetchCandles]);
+  }, [fetchCandles, enabled]);
 
   // WS push → 合進 candles。後端 WS 固定推 1 分 K(富邦 candles channel 訂閱不帶 timeframe),
   // tf≠1 時 1 分 K 的 date 不等於聚合 bucket 的 date,直接 merge 會在右緣長出假 K 棒:

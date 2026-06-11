@@ -4,8 +4,9 @@ import { CHART_W, CHART_H, TOTAL_H } from "../lib/intraday-chart-svg";
 import { IndexIntradayStatic, computeIndexGeometry, fmtIndex, fmtIndexVol, indexAmplitude } from "../lib/index-intraday-svg";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
 
-export function IndexIntradayChart({ code, name }: { code: string; name: string }) {
-  const { candles, prevClose } = useIntradayCandles(code);
+export function IndexIntradayChart({ code, name, active = true }: { code: string; name: string; active?: boolean }) {
+  // 頁面隱藏時借 null 短路暫停輪詢(回到頁面再重抓,30s 一輪不值得在背景跑)
+  const { candles, prevClose } = useIntradayCandles(active ? code : null);
   const geometry = useMemo(() => computeIndexGeometry({ candles, prevClose }), [candles, prevClose]);
   const { scaleX, scaleY, minutesByIdx, filteredCandles } = geometry;
   const [hover, setHover] = useState<{ idx: number } | null>(null);

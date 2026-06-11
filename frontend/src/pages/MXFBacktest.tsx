@@ -1,6 +1,6 @@
 import { MXFIntradayChart } from "../components/MXFIntradayChart";
 
-export function MXFBacktest() {
+export function MXFBacktest({ active = true }: { active?: boolean }) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="flex flex-col gap-6 px-8 py-6 max-w-[1400px]">
@@ -11,7 +11,7 @@ export function MXFBacktest() {
 
         <section className="rounded-lg border border-line p-4">
           <div className="label mb-3">即時分時走勢</div>
-          <MXFIntradayChart />
+          <MXFIntradayChart active={active} />
         </section>
 
         <section className="rounded-lg border border-line p-4 text-ink-muted">

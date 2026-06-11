@@ -5,11 +5,12 @@ import { computeOverlayGeometry, IndexOverlayStatic, type OverlaySeries } from "
 import { INDEX_SYMBOLS, indexMeta } from "../lib/index-symbols";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
 
-export function IndexOverlayChart() {
+export function IndexOverlayChart({ active = true }: { active?: boolean }) {
   const a = INDEX_SYMBOLS[0];
   const b = INDEX_SYMBOLS[1];
-  const ca = useIntradayCandles(a.code);
-  const cb = useIntradayCandles(b.code);
+  // 頁面隱藏時借 null 短路暫停輪詢
+  const ca = useIntradayCandles(active ? a.code : null);
+  const cb = useIntradayCandles(active ? b.code : null);
   const [hover, setHover] = useState<number | null>(null); // minute of day
 
   const seriesA: OverlaySeries = { code: a.code, short: a.short, color: a.color, candles: ca.candles, prevClose: ca.prevClose };
