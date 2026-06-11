@@ -75,23 +75,6 @@ export function scaleY_clamped(value: number, yMin: number, yMax: number, height
   return height - ((value - yMin) / (yMax - yMin)) * height;
 }
 
-interface VWAPInputCandle {
-  close: number;
-  volume: number;
-}
-
-export function computeVWAP(candles: VWAPInputCandle[]): number[] {
-  const out: number[] = [];
-  let sumPV = 0;
-  let sumV = 0;
-  for (const c of candles) {
-    sumPV += c.close * c.volume;
-    sumV += c.volume;
-    out.push(sumV > 0 ? sumPV / sumV : c.close);
-  }
-  return out;
-}
-
 export function computeMA(closes: number[], period: number): number[] {
   const out: number[] = new Array(closes.length).fill(NaN);
   if (period <= 0 || closes.length < period) return out;
@@ -125,7 +108,6 @@ interface ScaleProps {
 
 interface CandlestickProps extends ScaleProps {
   candles: OHLCCandle[];
-  width: number;
   bullColor?: string;
   bearColor?: string;
 }
@@ -134,7 +116,6 @@ export function CandlestickSeries({
   candles,
   scaleX,
   scaleY,
-  width: _width,
   bullColor = "#d9534f",
   bearColor = "#2e7d32",
 }: CandlestickProps) {
@@ -269,25 +250,3 @@ export function VolumeSubChart({
   );
 }
 
-interface HoverCrosshairProps {
-  x: number;
-  y: number;
-  height: number;
-  width: number;
-  label?: string;
-}
-
-export function HoverCrosshair({ x, y, height, width, label }: HoverCrosshairProps) {
-  return (
-    <g pointerEvents="none">
-      <line x1={x} x2={x} y1={0} y2={height} stroke="#999" strokeDasharray="2 2" strokeWidth={1} />
-      <line x1={0} x2={width} y1={y} y2={y} stroke="#999" strokeDasharray="2 2" strokeWidth={1} />
-      {label && (
-        <g>
-          <rect x={x + 4} y={y - 18} width={120} height={16} fill="white" stroke="#999" />
-          <text x={x + 8} y={y - 6} fontSize={11} fill="#333">{label}</text>
-        </g>
-      )}
-    </g>
-  );
-}

@@ -1,9 +1,5 @@
 import { type StrategyConfig } from "../lib/api";
-
-const ALL_CDP_LEVELS = ["ah", "nh", "cdp", "nl", "al"] as const;
-const CDP_LEVEL_LABEL: Record<typeof ALL_CDP_LEVELS[number], string> = {
-  ah: "AH (最高值)", nh: "NH (近高)", cdp: "CDP 中線", nl: "NL (近低)", al: "AL (最低值)",
-};
+import { ALL_CDP_LEVELS, CDP_LEVEL_LABEL } from "../lib/signal-labels";
 
 interface Props {
   value: StrategyConfig;

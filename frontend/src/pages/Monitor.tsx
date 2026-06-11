@@ -84,7 +84,7 @@ function MonitorInner({ active }: { active: boolean }) {
     [bookmarkSymbols, selected]
   );
 
-  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
+  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor, error: monitorError } = useMonitorList();
 
   const inMonitor = useMemo(
     () => selected !== null && monitorItems.some((m) => m.symbol === selected),
@@ -107,11 +107,12 @@ function MonitorInner({ active }: { active: boolean }) {
   usePreviewSubscribe(selected, bookmarkSymbols);
 
   // 訊號可對非自選股觸發 — 這些 symbol 不在 bookmarkSymbolNames,TriggerList 只剩裸代號。
-  // 補查這些未知 symbol 的名稱(已知的不重打)。
-  const unknownTriggerSymbols = useMemo(
-    () => triggerSymbols.filter((s) => !(s in bookmarkSymbolNames)),
-    [triggerSymbols, bookmarkSymbolNames]
-  );
+  // 補查這些未知 symbol 的名稱(已知的不重打);監聽清單已帶名稱的也不重打——
+  // 訊號只對監聽股觸發,查回來的名稱會被 buildSymbolNames 的監聽來源蓋掉,純浪費
+  const unknownTriggerSymbols = useMemo(() => {
+    const monitorNamed = new Set(monitorItems.filter((m) => m.name != null).map((m) => m.symbol));
+    return triggerSymbols.filter((s) => !(s in bookmarkSymbolNames) && !monitorNamed.has(s));
+  }, [triggerSymbols, bookmarkSymbolNames, monitorItems]);
   const resolvedNames = useSymbolNames(unknownTriggerSymbols);
 
   // chart header / 觸發列表的 symbol → name:書籤/搜尋 + 監聽 + 觸發解析三來源合併。
@@ -161,6 +162,7 @@ function MonitorInner({ active }: { active: boolean }) {
           onOpenRules={() => setDialogOpen((v) => !v)}
           onPickSymbol={handleSearchPick}
         />
+        {monitorError && <div className="text-center text-xs text-bear pb-1">⚠ {monitorError}</div>}
       </div>
 
       <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -196,7 +198,7 @@ function MonitorInner({ active }: { active: boolean }) {
             {/* COL 2: 書籤 */}
             <section className="flex flex-col min-w-0 min-h-0">
               <BookmarksPanel
-                key={bookmarksRefreshKey}
+                refreshToken={bookmarksRefreshKey}
                 rules={rules}
                 hitCounts={counts}
                 selectedSymbol={selected}
@@ -256,7 +258,8 @@ function MonitorInner({ active }: { active: boolean }) {
           symbol={selected}
           onClose={() => setAddToBookmarksOpen(false)}
           onChanged={async () => {
-            // 重新渲染 BookmarksPanel(讓它重新拉 groups + items)
+            // 通知 BookmarksPanel 重抓 groups + items(refreshToken,不 remount——
+            // remount 會丟失選中書籤/編輯模式並全量重拉)
             setBookmarksRefreshKey((k) => k + 1);
             // refreshMonitor 已不需要 — MonitorListProvider 共用同一份 state,
             // add/remove 操作完成後所有消費者(Monitor、BookmarksPanel、AddToBookmarksDialog)都會看到最新資料

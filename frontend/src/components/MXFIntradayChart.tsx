@@ -427,7 +427,7 @@ export function MXFIntradayChart({ active = true }: { active?: boolean }) {
         })}
 
         {/* 主圖 */}
-        <CandlestickSeries candles={visibleCandles} scaleX={sx} scaleY={sy} width={innerW} />
+        <CandlestickSeries candles={visibleCandles} scaleX={sx} scaleY={sy} />
 
         {/* VWAP */}
         {showVwap && <LineSeries candles={visibleCandles} scaleX={sx} scaleY={sy} field="average" stroke="#9aa0a6" dashed />}

@@ -222,19 +222,9 @@ export interface IntradayCandle {
   average: number;    // 富邦給的 minute VWAP
 }
 
-export interface MXFCandle {
-  date: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  average: number;
-}
-
-export interface MXFActiveSymbolResponse {
-  symbol: string;
-}
+// 與 IntradayCandle 同形(後端 MXFCandleDict 同七欄):別名保留呼叫端語意,
+// 欄位單一來源,日後分岔再改 extends
+export type MXFCandle = IntradayCandle;
 
 export type CurrentSession = "day" | "night" | "closed";
 
@@ -488,9 +478,6 @@ export const api = {
     fetchJSON<IntradayCandlesResponse>(
       `/api/candles/${encodeURIComponent(symbol)}/intraday`,
     ),
-
-  mxfSymbolActive: () =>
-    fetchJSON<MXFActiveSymbolResponse>("/api/mxf/symbol/active"),
 
   mxfCandles: (tf: number, symbol?: string) =>
     fetchJSON<MXFCandlesResponse>(

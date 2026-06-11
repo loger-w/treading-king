@@ -6,7 +6,7 @@ import type { IntradayCandle, CdpLevels, CamarillaLevels, MaLevels } from "./api
 import { formatTickPrice, roundToNearestTick } from "./tick";
 import { resolveCollisions, type LabelInput } from "./chart-labels";
 import {
-  MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, minuteOfDay,
+  MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, X_AXIS_TICKS, minuteOfDay,
 } from "./intraday-time";
 
 export const INTRADAY_THEME = {
@@ -68,6 +68,9 @@ export interface IntradayGeometry {
   resolvedLabels: ReturnType<typeof resolveCollisions>;
   minutesByIdx: number[];
   filteredCandles: IntradayCandle[];
+  // 基準價(prevClose ?? 首根開盤)— ±10% 過濾、填色、header 漲跌都用它,
+  // 單一來源,消費端不可各自重算 fallback(會漂移)
+  baseline: number;
 }
 
 // 台股慣例:平盤上紅、平盤下綠、剛好平盤中性。回傳 hex。
@@ -114,6 +117,7 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
       resolvedLabels: [] as ReturnType<typeof resolveCollisions>,
       minutesByIdx: [] as number[],
       filteredCandles: [] as IntradayCandle[],
+      baseline: 0,
     };
   }
 
@@ -141,9 +145,13 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
     (k) => k === "h3" || k === "h4" || k === "l3" || k === "l4"
   );
 
-  // Y 軸：±10% 為最小範圍，價格超出就拉大（隱藏的 CDP 不算）
-  const priceMin = Math.min(...closes, ...vwaps);
-  const priceMax = Math.max(...closes, ...vwaps);
+  // Y 軸：±10% 為最小範圍，價格超出就拉大（隱藏的 CDP 不算）。
+  // high/low 也要納入:無漲跌幅限制的標的(新上市前五日/權證)盤中 spike 的
+  // 高低點可超出所有 close,不納入的話高低 marker 會畫出 viewBox 外
+  const highs = filteredCandles.map((c) => c.high);
+  const lows = filteredCandles.map((c) => c.low);
+  const priceMin = Math.min(...closes, ...vwaps, ...lows);
+  const priceMax = Math.max(...closes, ...vwaps, ...highs);
   const yMin = Math.min(refMin, priceMin) * 0.998;
   const yMax = Math.max(refMax, priceMax) * 1.002;
 
@@ -242,11 +250,13 @@ export function computeIntradayGeometry(input: IntradayChartInput): IntradayGeom
     resolvedLabels,
     minutesByIdx,
     filteredCandles,
+    baseline: refPrice,
   };
 }
 
 export interface IntradayChartStaticProps extends IntradayChartInput {
   geometry: IntradayGeometry;
+  idPrefix?: string; // clipPath id 唯一化 — 同頁兩個 instance 才不會吃到對方的 clip(同 index-intraday-svg)
 }
 
 // presentational 元件 — 所有靜態圖層,不含 hover crosshair、外層 <svg>、toggle 按鈕。
@@ -257,6 +267,7 @@ export const IntradayChartStatic = memo(IntradayChartStaticImpl);
 
 function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
   const t = props.theme ?? INTRADAY_THEME;
+  const idp = props.idPrefix ?? "";
   const { flags, cdp, camarilla, ma } = props;
   const {
     scaleX, scaleY, scaleVolY, yMin: _yMin, yMax: _yMax, polyClose, polyVwap,
@@ -267,7 +278,7 @@ function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
   } = props.geometry;
   const fs = (base: number) => Math.round(base * fontScale);  // 字級:scale=1 時 === 原值
   const sw = (base: number) => base * fontScale;              // 線寬/marker 半徑
-  const baseline = props.prevClose ?? (filteredCandles[0]?.open ?? 0);
+  const baseline = props.geometry.baseline;
   if (filteredCandles.length === 0) return null;
 
   return createElement(Fragment, null,
@@ -285,14 +296,14 @@ function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
       ].join(" ");
       return createElement(Fragment, null,
         createElement("defs", null,
-          createElement("clipPath", { id: "above-baseline" },
+          createElement("clipPath", { id: `${idp}above-baseline` },
             createElement("rect", {
               x: padL, y: padT,
               width: CHART_W - padL - padR,
               height: Math.max(0, baselineY - padT),
             }),
           ),
-          createElement("clipPath", { id: "below-baseline" },
+          createElement("clipPath", { id: `${idp}below-baseline` },
             createElement("rect", {
               x: padL, y: baselineY,
               width: CHART_W - padL - padR,
@@ -300,8 +311,8 @@ function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
             }),
           ),
         ),
-        createElement("polygon", { points, fill: t.bull, fillOpacity: "0.15", clipPath: "url(#above-baseline)" }),
-        createElement("polygon", { points, fill: t.bear, fillOpacity: "0.15", clipPath: "url(#below-baseline)" }),
+        createElement("polygon", { points, fill: t.bull, fillOpacity: "0.15", clipPath: `url(#${idp}above-baseline)` }),
+        createElement("polygon", { points, fill: t.bear, fillOpacity: "0.15", clipPath: `url(#${idp}below-baseline)` }),
       );
     })(),
 
@@ -406,11 +417,11 @@ function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
     polyClose && baseline > 0 && createElement(Fragment, null,
       createElement("polyline", {
         points: polyClose, fill: "none",
-        stroke: t.bull, strokeWidth: sw(1), clipPath: "url(#above-baseline)",
+        stroke: t.bull, strokeWidth: sw(1), clipPath: `url(#${idp}above-baseline)`,
       }),
       createElement("polyline", {
         points: polyClose, fill: "none",
-        stroke: t.bear, strokeWidth: sw(1), clipPath: "url(#below-baseline)",
+        stroke: t.bear, strokeWidth: sw(1), clipPath: `url(#${idp}below-baseline)`,
       }),
     ),
     // baseline 沒值時(極罕見)fallback 單條白線
@@ -487,14 +498,7 @@ function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
 
     // ── 11. X 軸時間 label ────────────────────────────────────────────────────
     // 固定 6 個整點(9/10/11/12/13/13:30),不隨 candle 數量變動
-    ...[
-      { min: 540, label: "9:00" },
-      { min: 600, label: "10:00" },
-      { min: 660, label: "11:00" },
-      { min: 720, label: "12:00" },
-      { min: 780, label: "13:00" },
-      { min: 810, label: "13:30" },
-    ].map(({ min, label }) => createElement("text", {
+    ...X_AXIS_TICKS.map(({ min, label }) => createElement("text", {
       key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle",
       fill: t.inkDim, fontSize: fs(15), fontFamily: t.fontFamily,
       style: { fontVariantNumeric: "tabular-nums" },

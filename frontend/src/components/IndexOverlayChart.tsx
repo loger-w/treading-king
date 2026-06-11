@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useIntradayCandles } from "../hooks/useIntradayCandles";
 import { CHART_W, CHART_H } from "../lib/intraday-chart-svg";
 import { computeOverlayGeometry, IndexOverlayStatic, type OverlaySeries } from "../lib/index-overlay-svg";
-import { INDEX_SYMBOLS, indexMeta } from "../lib/index-symbols";
+import { INDEX_SYMBOLS } from "../lib/index-symbols";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
 
 export function IndexOverlayChart({ active = true }: { active?: boolean }) {
@@ -34,11 +34,10 @@ export function IndexOverlayChart({ active = true }: { active?: boolean }) {
     <div>
       <div className="flex items-center gap-5 mb-3 text-sm">
         {INDEX_SYMBOLS.map((s) => {
-          const meta = indexMeta(s.code)!;
           const line = geometry.lines.find((l) => l.code === s.code);
           const pct = hover != null ? geometry.pctByCodeAtMinute(s.code, hover) : line?.lastPct ?? null;
           return (
-            <span key={s.code} style={{ color: meta.color }} className="tabular-nums">
+            <span key={s.code} style={{ color: s.color }} className="tabular-nums">
               ● {s.short} {pct == null ? "—" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`}
             </span>
           );

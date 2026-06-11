@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { tickSize, roundToTick, limitUp, limitDown } from "./tick";
+import { isTickAligned, tickSize, roundToTick, limitUp, limitDown } from "./tick";
+
+describe("isTickAligned 委託價檔位驗證", () => {
+  // 前端不驗的話,off-tick 限價(105.13 / 1003)會通過二次確認,
+  // 到券商/交易所才被退單,白費一輪失敗往返
+  it.each([
+    [105.13, false], [105.5, true], [105.0, true],   // 100–500 tick 0.5
+    [1003, false], [1005, true],                      // >=1000 tick 5
+    [9.99, true], [9.995, false],                     // <10 tick 0.01
+    [23.45, true], [23.47, false],                    // 10–50 tick 0.05
+  ])("price %f → %s", (price, ok) => {
+    expect(isTickAligned(price)).toBe(ok);
+  });
+});
 
 describe("tickSize 台股六級距", () => {
   it.each([

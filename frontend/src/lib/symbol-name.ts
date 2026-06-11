@@ -31,5 +31,15 @@ export function buildSymbolNames(
 ): Record<string, string | null> {
   const monitorNames: Record<string, string | null> = {};
   for (const it of monitorItems) monitorNames[it.symbol] = it.name ?? null;
-  return { ...resolved, ...monitorNames, ...bookmarkNames };
+  // 高優先來源只在「有名」時覆蓋:書籤 capture 時可能沒帶名稱(name=null),
+  // null 不是明確命名,蓋掉低優先來源的真名會讓 header 永久「—」
+  // (Monitor 用 in 檢查 key 存在即跳過補查,null 不會被補救)
+  const out: Record<string, string | null> = { ...resolved };
+  for (const src of [monitorNames, bookmarkNames]) {
+    for (const [sym, name] of Object.entries(src)) {
+      if (name !== null) out[sym] = name;
+      else if (!(sym in out)) out[sym] = null;
+    }
+  }
+  return out;
 }

@@ -31,19 +31,13 @@ export function useBookmarkItems(groupId: string | null) {
   // 切換 group 先清空,舊 group 的列表不掛在新 group 標題下
   useEffect(() => { setItems([]); refresh(); }, [refresh]);
 
-  const addItems = useCallback(async (symbols: string[]) => {
-    if (!groupId) return;
-    await api.bookmarks.addItems(groupId, symbols);
-    await refresh();
-  }, [groupId, refresh]);
-
   const removeItem = useCallback(async (symbol: string) => {
     if (!groupId) return;
     await api.bookmarks.removeItem(groupId, symbol);
     await refresh();
   }, [groupId, refresh]);
 
-  return { items, loading, refresh, addItems, removeItem };
+  return { items, loading, refresh, removeItem };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type ActiveSignal, type BookmarkGroup, type BookmarkItem, type MonitorListItem } from "../lib/api";
 import { useBookmarks } from "../hooks/useBookmarks";
 import { useAllBookmarkItems, useBookmarkItems } from "../hooks/useBookmarkItems";
@@ -12,7 +12,7 @@ import { SignalChip } from "./SignalChip";
 import { resolveDisplayChangePct } from "../lib/quote-display";
 
 /**
- * 書籤面板 — 取代舊 WatchlistWithChips。
+ * 書籤面板。
  *
  * 內嵌 sidebar(110px)+ list(剩餘)layout,沿用 Editorial Dark 風格。
  * 「全部」mode 把所有書籤的股票合併展示(去重 + section heading 分組)。
@@ -24,17 +24,10 @@ const MONITOR_VIEW = "__monitor__";
 interface Props {
   rules: ActiveSignal[];
   hitCounts: HitCounts;
+  refreshToken?: number;   // 外部 mutation(加入書籤 dialog)後 bump,觸發重抓而非 remount
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onItemsChanged: (allSymbols: string[], names: Record<string, string | null>) => void;  // 給 Monitor 同步 watchlistSymbols + symbolNames
-}
-
-function rulesForSymbol(_symbol: string, rules: ActiveSignal[]): ActiveSignal[] {
-  // Post-refactor:每條啟用的規則都對 monitor_list 裡的每個 symbol 觸發,scope 欄位不再控制範圍。
-  // MonitorRow 呼叫此函式時完全正確(每個 MonitorRow 都在 monitor_list 裡)。
-  // ItemRow(書籤列)呼叫時有 v1 妥協:不在 monitor_list 的書籤也會顯示 chip,但實際上不會觸發。
-  // 這個視覺謊言在 v1 可接受 — IntradayChart 的「+ 加入監聽」按鈕才是監聽資格的正式入口。
-  return rules.filter((r) => r.enabled);
 }
 
 function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {
@@ -43,14 +36,19 @@ function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {
 }
 
 export function BookmarksPanel({
-  rules, hitCounts, selectedSymbol, onSelectSymbol, onItemsChanged,
+  rules, hitCounts, refreshToken = 0, selectedSymbol, onSelectSymbol, onItemsChanged,
 }: Props) {
-  const { groups, refresh: refreshGroups, create, remove: removeGroup, rename } = useBookmarks();
+  const { groups, loading: groupsLoading, error: groupsError, refresh: refreshGroups, create, remove: removeGroup, rename } = useBookmarks();
   const { items: monitorItems, remove: removeFromMonitor } = useMonitorList();
   const [selectedGroupId, setSelectedGroupId] = useState<string>(ALL_VIEW);
   const [newDialogOpen, setNewDialogOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
+
+  // 每條啟用的規則都對 monitor_list 裡的每個 symbol 觸發(post-refactor scope 不再控制範圍)。
+  // 書籤列也顯示 chip 是 v1 妥協:不在 monitor_list 的書籤實際不會觸發——
+  // IntradayChart 的「+ 加入監聽」按鈕才是監聽資格的正式入口。
+  const enabledRules = useMemo(() => rules.filter((r) => r.enabled), [rules]);
 
   // 拿單一書籤 items(selectedGroupId !== ALL_VIEW)
   const singleGroupId = selectedGroupId === ALL_VIEW ? null : selectedGroupId;
@@ -101,6 +99,15 @@ export function BookmarksPanel({
   async function refreshAfterMutation() {
     await Promise.all([refreshGroups(), refreshSingle(), refreshAll()]);
   }
+
+  // 外部 mutation(chart header 的加入書籤 dialog)→ 重抓,不 remount
+  const lastToken = useRef(refreshToken);
+  useEffect(() => {
+    if (refreshToken === lastToken.current) return;
+    lastToken.current = refreshToken;
+    refreshAfterMutation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken]);
 
   // 單列 × 移除也要走同一條 refresh 路:只 refreshSingle 的話 sidebar 計數、
   // 「全部」view 與報價訂閱 union(onItemsChanged)全部不會同步
@@ -166,13 +173,21 @@ export function BookmarksPanel({
           </button>
         </div>
 
-        {/* Main list */}
+        {/* Main list — 首載與後端失聯要跟「真的空」區分,不可顯示誤導性空狀態 */}
         <div className="overflow-y-auto scroll-editorial">
-          {selectedGroupId === MONITOR_VIEW ? (
+          {groupsLoading ? (
+            <EmptyState text="載入中…" />
+          ) : groupsError && groups.length === 0 ? (
+            <div className="p-6 text-center text-sm">
+              <div className="text-bear mb-2">書籤載入失敗(後端未連線?)</div>
+              <button type="button" onClick={() => refreshGroups()}
+                className="text-xs text-ink-dim border border-line px-3 py-1 hover:text-accent hover:border-accent">重試</button>
+            </div>
+          ) : selectedGroupId === MONITOR_VIEW ? (
             <MonitorListView
               items={monitorItems}
               quotes={quotes}
-              rules={rules}
+              rules={enabledRules}
               hitCounts={hitCounts}
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
@@ -184,7 +199,7 @@ export function BookmarksPanel({
               byGroup={byGroup}
               bySymbolFirst={bySymbolFirst}
               quotes={quotes}
-              rules={rules}
+              rules={enabledRules}
               hitCounts={hitCounts}
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
@@ -202,7 +217,7 @@ export function BookmarksPanel({
             <SingleListView
               items={singleItems}
               quotes={quotes}
-              rules={rules}
+              rules={enabledRules}
               hitCounts={hitCounts}
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
@@ -397,20 +412,21 @@ function SingleListView({
 }
 
 // ---------------------------------------------------------------------------
-// 單一 row — 沿用 WatchlistWithChips 的視覺
+// 單一 row — 書籤列與監聽列共用(item 只需代號/名稱,change_pct 為書籤獨有的退階欄位)
 // ---------------------------------------------------------------------------
 
-function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRemove, showRemove }: {
-  item: BookmarkItem;
+function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRemove, showRemove, removeLabel }: {
+  item: { symbol: string; name: string | null; change_pct?: number | null };
   quote: WatchlistQuote | undefined;
-  rules: ActiveSignal[];
+  rules: ActiveSignal[];   // 已過濾 enabled
   hitCounts: HitCounts;
   selectedSymbol: string | null;
   onSelect: (s: string) => void;
   onRemove?: (s: string) => void;
   showRemove: boolean;
+  removeLabel?: string;
 }) {
-  const symRules = rulesForSymbol(item.symbol, rules);
+  const symRules = rules;
   const isSel = item.symbol === selectedSymbol;
   const totalHits = totalHitsForSymbol(item.symbol, hitCounts);
   const hasHit = totalHits > 0;
@@ -466,7 +482,7 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
           type="button"
           onClick={(e) => { e.stopPropagation(); onRemove(item.symbol); }}
           className="absolute right-2.5 top-3 text-base text-ink-dim hover:text-accent px-1"
-          aria-label={`移除 ${item.symbol}`}
+          aria-label={removeLabel ?? `移除 ${item.symbol}`}
         >
           ×
         </button>
@@ -504,84 +520,19 @@ function MonitorListView({
   return (
     <ul>
       {items.map((it) => (
-        <MonitorRow
+        <ItemRow
           key={it.symbol}
-          symbol={it.symbol}
-          name={it.name}
+          item={{ symbol: it.symbol, name: it.name }}
           quote={quotes[it.symbol]}
           rules={rules}
           hitCounts={hitCounts}
           selectedSymbol={selectedSymbol}
           onSelect={onSelect}
           onRemove={onRemove}
+          showRemove
+          removeLabel={`從監聽清單移除 ${it.symbol}`}
         />
       ))}
     </ul>
-  );
-}
-
-function MonitorRow({
-  symbol, name, quote, rules, hitCounts, selectedSymbol, onSelect, onRemove,
-}: {
-  symbol: string;
-  name: string | null;
-  quote: WatchlistQuote | undefined;
-  rules: ActiveSignal[];
-  hitCounts: HitCounts;
-  selectedSymbol: string | null;
-  onSelect: (s: string) => void;
-  onRemove: (s: string) => void;
-}) {
-  const symRules = rulesForSymbol(symbol, rules);
-  const isSel = symbol === selectedSymbol;
-  const totalHits = totalHitsForSymbol(symbol, hitCounts);
-  const hasHit = totalHits > 0;
-
-  const price = quote?.price;
-  const pct = quote?.changePct ?? null;
-  const priceCls = pct == null ? "text-ink-dim"
-    : pct > 0 ? "text-bull"
-    : pct < 0 ? "text-bear" : "text-ink-dim";
-  const isDown = pct != null && pct < 0;
-  const markerBg = isDown ? "bg-bear" : "bg-accent";
-  const markerBorder = isDown ? "border-l-bear" : "border-l-accent";
-
-  return (
-    <li
-      className={[
-        "relative px-3.5 py-4 border-b border-line cursor-pointer transition-colors duration-200",
-        isSel ? `bg-bg-card border-l-2 ${markerBorder} pl-3` : "hover:bg-bg-card/40",
-      ].join(" ")}
-      onClick={() => onSelect(symbol)}
-    >
-      {hasHit && !isSel && (
-        <span className={`absolute left-0 top-4 w-[3px] h-[22px] ${markerBg}`} aria-hidden />
-      )}
-      <div className="flex items-baseline gap-2 min-w-0 mb-2.5 pr-7">
-        <span className="text-[19px] font-medium shrink-0 text-ink">{symbol}</span>
-        <span className="text-sm text-ink-muted truncate">{name ?? "(無名稱)"}</span>
-        <span className={`shrink-0 text-sm tabular-nums ${priceCls}`}>
-          {price != null ? price.toFixed(2) : "—"}
-          {pct != null && (
-            <span className="ml-1 text-xs">
-              {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
-            </span>
-          )}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {symRules.map((r) => (
-          <SignalChip key={r.id} ruleName={r.name} count={hitCounts[symbol]?.[r.id] ?? 0} />
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); onRemove(symbol); }}
-        className="absolute right-2.5 top-3 text-base text-ink-dim hover:text-accent px-1"
-        aria-label={`從監聽清單移除 ${symbol}`}
-      >
-        ×
-      </button>
-    </li>
   );
 }

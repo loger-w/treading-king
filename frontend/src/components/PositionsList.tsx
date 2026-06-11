@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CapitalPosition } from "../lib/api";
+import { EnvNotice, ModalShell } from "./ModalShell";
 import { subscribeTicks } from "../hooks/useSignalsStream";
 import { brokerPnl, grossPnl, pickPrice, snapshotPrices } from "../lib/capital-pnl";
 import { limitDown, limitUp } from "../lib/tick";
@@ -43,6 +44,13 @@ export function PositionsList({ positions, env, onPick }: {
     const id = setInterval(load, 30000);
     return () => { alive = false; clearInterval(id); };
   }, [symbols]);
+
+  // 平倉確認框要跟最新部位走:closing 是點「平」當下的快照,dialog 開著時
+  // 部分成交回報會改變實際張數(後端以當下部位平、請求不帶 qty),
+  // 顯示舊張數=確認的數字與執行的數字不同;部位已全平則自動關窗
+  useEffect(() => {
+    if (closing && !positions.some((p) => p.stock_no === closing.stock_no)) setClosing(null);
+  }, [positions, closing]);
 
   if (positions.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">目前無庫存部位</div>;
 
@@ -96,10 +104,13 @@ export function PositionsList({ positions, env, onPick }: {
         );
       })}
       {msg && <div className="text-center text-xs mt-2 text-ink-muted">{msg}</div>}
-      {closing && (
-        <ClosePositionDialog pos={closing} env={env} cur={priceOf(closing.stock_no)}
-          onDone={(m) => { setMsg(m); setClosing(null); }} onClose={() => setClosing(null)} />
-      )}
+      {closing && (() => {
+        const live = positions.find((p) => p.stock_no === closing.stock_no) ?? closing;
+        return (
+          <ClosePositionDialog pos={live} env={env} cur={priceOf(live.stock_no)}
+            onDone={(m) => { setMsg(m); setClosing(null); }} onClose={() => setClosing(null)} />
+        );
+      })()}
     </div>
   );
 }
@@ -109,11 +120,6 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [refPrice, setRefPrice] = useState<number | null>(null);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   // 漲跌停的法定基準是平盤參考價,開窗時抓一次(同 OrderTicket 模式)
   useEffect(() => {
@@ -123,7 +129,6 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
   }, [pos.stock_no]);
 
   const isLong = pos.qty > 0;
-  const prod = env === "prod";
   // 市價平倉的「閘用估價」:賣出用跌停、買回用漲停(最保守的金額上限);
   // 基準優先用平盤參考價(limitUp/Down 的語意本來就是它)。quote 失敗才退
   // 現價/均價,且取保守邊(買回取大、賣出取小)——長抱空單斷線時若用均價,
@@ -149,15 +154,9 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
   };
 
   return (
-    <>
-      <div onClick={onClose} className="fixed inset-0 z-20 bg-bg-deep/85" style={{ backdropFilter: "blur(2px)" }} />
-      <div role="dialog" aria-modal="true"
-        className={`fixed top-1/2 left-1/2 z-[21] bg-bg-card border p-5 w-[min(340px,90vw)] ${prod ? "border-bull" : "border-line-strong"}`}
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="340px" env={env} className="p-5">
         <h3 className="font-serif font-bold text-lg mb-1">確認平倉</h3>
-        <p className={`text-xs mb-3 ${prod ? "text-bull font-bold" : "text-bear"}`}>
-          {prod ? "⚠ 正式環境(真錢)" : "測試環境"}
-        </p>
+        <EnvNotice env={env} />
         <div className="text-sm space-y-1 tabular-nums">
           <div className="flex justify-between"><span className="text-ink-dim">標的</span><span>{pos.stock_no} {pos.name}</span></div>
           <div className="flex justify-between"><span className="text-ink-dim">部位</span><span>{pos.qty} 張 · 均 {pos.avg_price != null ? pos.avg_price.toFixed(2) : "—"}</span></div>
@@ -173,7 +172,6 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
             確認平倉
           </button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 }

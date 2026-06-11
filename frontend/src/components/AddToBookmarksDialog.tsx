@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type BookmarkGroup } from "../lib/api";
 import { useMonitorList } from "../hooks/useMonitorList";
+import { ModalShell } from "./ModalShell";
 
 /**
  * 「加股票到書籤」modal — 從 IntradayChart header「+ 加入書籤」開。
@@ -25,12 +26,6 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [newName, setNewName] = useState("");
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   // Load groups + 每個 group 看 symbol 是否在內。
   // list() 失敗必須有 catch:否則是 unhandled rejection + 安靜顯示「空書籤」,
   // 使用者會誤以為自己沒有任何書籤;items() 失敗會讓已收藏顯示未勾,擋儲存
@@ -39,8 +34,7 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
       try {
         const r = await api.bookmarks.list();
         const userGroups = r.groups.filter((g) => !g.is_system);
-        const systemGroups = r.groups.filter((g) => g.is_system);
-        setGroups([...systemGroups, ...userGroups]);
+        setGroups(r.groups);   // render 自行分組,這裡不用重排
 
         const containing = new Set<string>();
         let itemsFailed = false;
@@ -108,6 +102,9 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
       setGroups((prev) => [...prev, g]);
       setSelected((prev) => new Set(prev).add(g.id));
       setNewName("");
+      // server 上群組已存在,立刻通知 parent 刷新——否則按「取消」關閉後
+      // sidebar 看不到新書籤(再建同名還會撞 409),像「新增失蹤」
+      await onChanged();
     } catch (e) {
       alert(`新增失敗:${(e as Error).message}`);
     }
@@ -117,15 +114,7 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
   const systemGroups = groups.filter((g) => g.is_system);
 
   return (
-    <>
-      <div onClick={onClose}
-        className="fixed inset-0 z-20 bg-bg-deep/85"
-        style={{ backdropFilter: "blur(2px)" }} />
-
-      <div role="dialog" aria-modal="true"
-        className="fixed top-1/2 left-1/2 z-[21] bg-bg-card border border-line-strong p-6
-                   w-[min(420px,90vw)] max-h-[82vh] overflow-y-auto scroll-editorial"
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="420px" scroll>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">
             加入 <span className="text-accent">{symbol}</span> 到書籤
@@ -216,7 +205,6 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
             {submitting ? "儲存中…" : "儲存"}
           </button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 }

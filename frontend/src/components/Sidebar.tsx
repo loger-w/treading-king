@@ -1,4 +1,4 @@
-import { useSidebarState } from '../hooks/useSidebarState';
+import { useLocalToggle } from '../hooks/useLocalToggle';
 
 export type Page = 'monitor' | 'mxf_backtest' | 'index_board';
 
@@ -32,7 +32,9 @@ interface Props {
 }
 
 export function Sidebar({ current, onNavigate }: Props) {
-  const [expanded, setExpanded] = useSidebarState();
+  // 原 useSidebarState 與 useLocalToggle 重複實作 localStorage boolean 且少了
+  // quota/private mode 保護;key 換 tk: 前綴慣例(舊值格式 1/0 與新格式不相容)
+  const [expanded, setExpanded] = useLocalToggle('tk:sidebar:expanded', false);
 
   return (
     <aside

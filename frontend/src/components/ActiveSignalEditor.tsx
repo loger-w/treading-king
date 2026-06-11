@@ -1,11 +1,12 @@
 import { useState } from "react";
 import {
   ALL_FIELDS, api, type ActiveFilter, type ActiveSignal,
-  type BreakoutRetestStrategy, type CdpProximity, type Condition,
+  type BreakoutRetestStrategy, type Condition,
   type ConditionField, type ConditionOperator, type LimitUpOpenTouchStrategy,
-  type MAProximity, type StrategyConfig,
+  type StrategyConfig,
   type WindowCondition, type WindowConditionType, type WindowSeconds,
 } from "../lib/api";
+import { ALL_CDP_LEVELS, CDP_LEVEL_LABEL, STRATEGY_LABEL } from "../lib/signal-labels";
 import { PresetStrategyFields } from "./PresetStrategyFields";
 
 const FIELD_LABEL: Record<ConditionField, string> = {
@@ -29,13 +30,6 @@ const WINDOW_OPTIONS: { value: WindowSeconds; label: string }[] = [
 const WINDOW_TYPE_LABEL: Record<WindowConditionType, string> = {
   price_change_pct: "漲跌幅 %", volume_burst: "累積成交量", trade_count: "成交筆數",
 };
-
-const CDP_LEVEL_LABEL: Record<"ah" | "nh" | "cdp" | "nl" | "al", string> = {
-  ah: "AH (最高值)", nh: "NH (近高)", cdp: "CDP 中線",
-  nl: "NL (近低)", al: "AL (最低值)",
-};
-
-const ALL_CDP_LEVELS = ["ah", "nh", "cdp", "nl", "al"] as const;
 
 const ALL_MA_LEVELS = ["sma_5", "sma_20"] as const;
 
@@ -67,7 +61,8 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   const [strategy, setStrategy] = useState<StrategyConfig | null>(initial?.filter_json?.strategy ?? null);
   const [notifyDiscord, setNotifyDiscord] = useState(initial?.notify_discord ?? true);
   const [cooldown, setCooldown] = useState(initial?.cooldown_seconds ?? 1800);
-  const [enabled] = useState(initial?.enabled ?? true);
+  // 編輯器不提供 enabled 開關(列表的 toggle 才是入口),保留原值送回
+  const enabled = initial?.enabled ?? true;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,64 +96,6 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
   }
   function removeCond(i: number) {
     setFilter({ ...filter, conditions: filter.conditions.filter((_, j) => j !== i) });
-  }
-
-  function enableCdpProx() {
-    setFilter({
-      ...filter,
-      cdp_proximity: { levels: [...ALL_CDP_LEVELS], tolerance_ticks: 0 },
-    });
-  }
-  function disableCdpProx() {
-    setFilter({ ...filter, cdp_proximity: null });
-  }
-  function toggleCdpLevel(level: typeof ALL_CDP_LEVELS[number]) {
-    const prox = filter.cdp_proximity;
-    if (!prox) return;
-    const checked = prox.levels.includes(level);
-    let next: CdpProximity["levels"];
-    if (checked) {
-      if (prox.levels.length <= 1) return;  // 至少留 1 個
-      next = prox.levels.filter((l) => l !== level);
-    } else {
-      next = [...prox.levels, level];
-    }
-    setFilter({ ...filter, cdp_proximity: { ...prox, levels: next } });
-  }
-  function updateCdpTolerance(tol: number) {
-    const prox = filter.cdp_proximity;
-    if (!prox) return;
-    const clamped = Math.max(0, Math.min(10, Math.round(tol)));
-    setFilter({ ...filter, cdp_proximity: { ...prox, tolerance_ticks: clamped } });
-  }
-
-  function enableMaProx() {
-    setFilter({
-      ...filter,
-      ma_proximity: { levels: [...ALL_MA_LEVELS], tolerance_ticks: 1 },
-    });
-  }
-  function disableMaProx() {
-    setFilter({ ...filter, ma_proximity: null });
-  }
-  function toggleMaLevel(level: typeof ALL_MA_LEVELS[number]) {
-    const prox = filter.ma_proximity;
-    if (!prox) return;
-    const checked = prox.levels.includes(level);
-    let next: MAProximity["levels"];
-    if (checked) {
-      if (prox.levels.length <= 1) return;  // 至少留 1 個
-      next = prox.levels.filter((l) => l !== level);
-    } else {
-      next = [...prox.levels, level];
-    }
-    setFilter({ ...filter, ma_proximity: { ...prox, levels: next } });
-  }
-  function updateMaTolerance(tol: number) {
-    const prox = filter.ma_proximity;
-    if (!prox) return;
-    const clamped = Math.max(0, Math.min(10, Math.round(tol)));
-    setFilter({ ...filter, ma_proximity: { ...prox, tolerance_ticks: clamped } });
   }
 
   async function save() {
@@ -223,8 +160,8 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
             className="bg-bg-deep border border-line text-sm px-2 py-1 mb-3"
           >
             <option value="none">無(自訂條件)</option>
-            <option value="limit_up_open_touch">漲停打開碰 CDP</option>
-            <option value="breakout_retest">順勢爆拉突破回踩</option>
+            <option value="limit_up_open_touch">{STRATEGY_LABEL.limit_up_open_touch}</option>
+            <option value="breakout_retest">{STRATEGY_LABEL.breakout_retest}</option>
           </select>
           {strategy && <PresetStrategyFields value={strategy} onChange={setStrategy} />}
         </div>
@@ -300,89 +237,27 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
           <button type="button" onClick={addCond} className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">+ 新增條件</button>
         </div>
 
-        {/* CDP 觸發區塊 */}
-        <div className="border-t border-line pt-3 mb-4">
-          <div className="label-tiny mb-2">CDP 觸發</div>
-          <p className="text-2xs text-ink-dim mb-3 leading-relaxed">
-            價格打到(或接近)任一所選 CDP 線即觸發。Tolerance = 0 為嚴格打到,&gt;0 為 ± N tick 內也算。
-          </p>
-          {filter.cdp_proximity === null || filter.cdp_proximity === undefined ? (
-            <button type="button" onClick={enableCdpProx}
-              className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">
-              + 啟用 CDP 觸發
-            </button>
-          ) : (
-            <div className="border border-line p-3 space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                {ALL_CDP_LEVELS.map((lv) => {
-                  const checked = filter.cdp_proximity!.levels.includes(lv);
-                  const isLastChecked = checked && filter.cdp_proximity!.levels.length === 1;
-                  return (
-                    <label key={lv} className={`text-sm flex items-center gap-1 ${isLastChecked ? "opacity-60" : "cursor-pointer"}`}>
-                      <input type="checkbox" checked={checked}
-                        disabled={isLastChecked}
-                        onChange={() => toggleCdpLevel(lv)}
-                        className="accent-accent" />
-                      {CDP_LEVEL_LABEL[lv]}
-                    </label>
-                  );
-                })}
-                <button type="button" onClick={disableCdpProx}
-                  className="ml-auto text-ink-dim hover:text-bear text-xs">移除</button>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-ink-muted">Tolerance:</span>
-                <input type="number" min={0} max={10} step={1}
-                  value={filter.cdp_proximity.tolerance_ticks}
-                  onChange={(e) => updateCdpTolerance(Number(e.target.value))}
-                  className="bg-bg-deep border border-line text-sm px-2 py-1 w-20 tabular-nums" />
-                <span className="text-xs text-ink-dim">tick (0 = 嚴格打到,&gt;0 = 接近也算)</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* MA 觸發區塊 */}
-        <div className="border-t border-line pt-3 mb-4">
-          <div className="label-tiny mb-2">MA 觸發</div>
-          <p className="text-2xs text-ink-dim mb-3 leading-relaxed">
-            價格打到(或接近)所選 MA 線即觸發。SMA raw 不在合法 tick 上,Tolerance 建議 ≥ 1。
-          </p>
-          {filter.ma_proximity === null || filter.ma_proximity === undefined ? (
-            <button type="button" onClick={enableMaProx}
-              className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">
-              + 啟用 MA 觸發
-            </button>
-          ) : (
-            <div className="border border-line p-3 space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                {ALL_MA_LEVELS.map((lv) => {
-                  const checked = filter.ma_proximity!.levels.includes(lv);
-                  const isLastChecked = checked && filter.ma_proximity!.levels.length === 1;
-                  return (
-                    <label key={lv} className={`text-sm flex items-center gap-1 ${isLastChecked ? "opacity-60" : "cursor-pointer"}`}>
-                      <input type="checkbox" checked={checked}
-                        disabled={isLastChecked}
-                        onChange={() => toggleMaLevel(lv)}
-                        className="accent-accent" />
-                      {MA_LEVEL_LABEL[lv]}
-                    </label>
-                  );
-                })}
-                <button type="button" onClick={disableMaProx}
-                  className="ml-auto text-ink-dim hover:text-bear text-xs">移除</button>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-ink-muted">Tolerance:</span>
-                <input type="number" min={0} max={10} step={1}
-                  value={filter.ma_proximity.tolerance_ticks}
-                  onChange={(e) => updateMaTolerance(Number(e.target.value))}
-                  className="bg-bg-deep border border-line text-sm px-2 py-1 w-20 tabular-nums" />
-                <span className="text-xs text-ink-dim">tick (SMA raw 不在合法 tick,建議 ≥ 1)</span>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* CDP / MA 觸發 — 共用一份編輯器(「至少留 1 個」「clamp 0-10」規則單一來源) */}
+        <ProximityEditor
+          title="CDP 觸發"
+          desc="價格打到(或接近)任一所選 CDP 線即觸發。Tolerance = 0 為嚴格打到,>0 為 ± N tick 內也算。"
+          tolHint="tick (0 = 嚴格打到,>0 = 接近也算)"
+          allLevels={ALL_CDP_LEVELS}
+          levelLabel={CDP_LEVEL_LABEL}
+          value={filter.cdp_proximity}
+          onChange={(next) => setFilter({ ...filter, cdp_proximity: next })}
+          defaults={{ levels: [...ALL_CDP_LEVELS], tolerance_ticks: 0 }}
+        />
+        <ProximityEditor
+          title="MA 觸發"
+          desc="價格打到(或接近)所選 MA 線即觸發。SMA raw 不在合法 tick 上,Tolerance 建議 ≥ 1。"
+          tolHint="tick (SMA raw 不在合法 tick,建議 ≥ 1)"
+          allLevels={ALL_MA_LEVELS}
+          levelLabel={MA_LEVEL_LABEL}
+          value={filter.ma_proximity}
+          onChange={(next) => setFilter({ ...filter, ma_proximity: next })}
+          defaults={{ levels: [...ALL_MA_LEVELS], tolerance_ticks: 1 }}
+        />
 
         </>)}
 
@@ -425,6 +300,72 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// CDP / MA 觸發共用編輯器 — 「至少留 1 個」與「tolerance clamp 0-10」只寫一份
+function ProximityEditor<L extends string>({
+  title, desc, tolHint, allLevels, levelLabel, value, onChange, defaults,
+}: {
+  title: string;
+  desc: string;
+  tolHint: string;
+  allLevels: readonly L[];
+  levelLabel: Record<L, string>;
+  value: { levels: L[]; tolerance_ticks: number } | null | undefined;
+  onChange: (next: { levels: L[]; tolerance_ticks: number } | null) => void;
+  defaults: { levels: L[]; tolerance_ticks: number };
+}) {
+  function toggleLevel(level: L) {
+    if (!value) return;
+    const checked = value.levels.includes(level);
+    if (checked && value.levels.length <= 1) return;  // 至少留 1 個
+    const levels = checked ? value.levels.filter((l) => l !== level) : [...value.levels, level];
+    onChange({ ...value, levels });
+  }
+  function setTolerance(tol: number) {
+    if (!value) return;
+    onChange({ ...value, tolerance_ticks: Math.max(0, Math.min(10, Math.round(tol))) });
+  }
+  return (
+    <div className="border-t border-line pt-3 mb-4">
+      <div className="label-tiny mb-2">{title}</div>
+      <p className="text-2xs text-ink-dim mb-3 leading-relaxed">{desc}</p>
+      {value == null ? (
+        <button type="button" onClick={() => onChange({ ...defaults })}
+          className="text-xs text-ink-dim hover:text-accent border border-dashed border-line px-3 py-1">
+          + 啟用 {title}
+        </button>
+      ) : (
+        <div className="border border-line p-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {allLevels.map((lv) => {
+              const checked = value.levels.includes(lv);
+              const isLastChecked = checked && value.levels.length === 1;
+              return (
+                <label key={lv} className={`text-sm flex items-center gap-1 ${isLastChecked ? "opacity-60" : "cursor-pointer"}`}>
+                  <input type="checkbox" checked={checked}
+                    disabled={isLastChecked}
+                    onChange={() => toggleLevel(lv)}
+                    className="accent-accent" />
+                  {levelLabel[lv]}
+                </label>
+              );
+            })}
+            <button type="button" onClick={() => onChange(null)}
+              className="ml-auto text-ink-dim hover:text-bear text-xs">移除</button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-ink-muted">Tolerance:</span>
+            <input type="number" min={0} max={10} step={1}
+              value={value.tolerance_ticks}
+              onChange={(e) => setTolerance(Number(e.target.value))}
+              className="bg-bg-deep border border-line text-sm px-2 py-1 w-20 tabular-nums" />
+            <span className="text-xs text-ink-dim">{tolHint}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

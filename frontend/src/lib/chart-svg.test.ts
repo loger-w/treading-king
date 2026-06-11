@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   scaleX_compressed,
   scaleY_clamped,
-  computeVWAP,
   computeMA,
 } from "./chart-svg";
 
@@ -46,24 +45,6 @@ describe("scaleY_clamped", () => {
   });
   it("中間值線性內插", () => {
     expect(scaleY_clamped(17050, 17000, 17100, 400)).toBeCloseTo(200);
-  });
-});
-
-describe("computeVWAP", () => {
-  it("空陣列回空", () => {
-    expect(computeVWAP([])).toEqual([]);
-  });
-  it("累積 VWAP 計算正確", () => {
-    const candles = [
-      { close: 100, volume: 10, average: 100, date: "", open: 0, high: 0, low: 0 },
-      { close: 110, volume: 10, average: 0, date: "", open: 0, high: 0, low: 0 },
-      { close: 120, volume: 10, average: 0, date: "", open: 0, high: 0, low: 0 },
-    ];
-    // 第一根 = 100, 第二根 = (100*10+110*10)/20 = 105, 第三根 = (100+110+120)*10/30 = 110
-    const v = computeVWAP(candles);
-    expect(v[0]).toBeCloseTo(100);
-    expect(v[1]).toBeCloseTo(105);
-    expect(v[2]).toBeCloseTo(110);
   });
 });
 

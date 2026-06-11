@@ -9,13 +9,18 @@ import { api, type BookmarkGroup } from "../lib/api";
 export function useBookmarks() {
   const [groups, setGroups] = useState<BookmarkGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  // 失敗要可見:只 console.warn 的話,後端沒起來時面板顯示「都還是空的」,
+  // 使用者會以為資料遺失而不是連線失敗
+  const [error, setError] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const r = await api.bookmarks.list();
       setGroups(r.groups);
+      setError(false);
     } catch (e) {
       console.warn("useBookmarks refresh failed:", e);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -33,15 +38,10 @@ export function useBookmarks() {
     await refresh();
   }, [refresh]);
 
-  const reorder = useCallback(async (id: string, sort_order: number) => {
-    await api.bookmarks.patch(id, { sort_order });
-    await refresh();
-  }, [refresh]);
-
   const remove = useCallback(async (id: string) => {
     await api.bookmarks.delete(id);
     await refresh();
   }, [refresh]);
 
-  return { groups, loading, refresh, create, rename, reorder, remove };
+  return { groups, loading, error, refresh, create, rename, remove };
 }

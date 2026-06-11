@@ -44,4 +44,17 @@ describe("buildSymbolNames", () => {
     const r = buildSymbolNames({ "1785": "光洋科" }, [], {});
     expect(r["1785"]).toBe("光洋科");
   });
+
+  test("書籤 name=null 不可蓋掉低優先來源已知的真名(null 不是「明確命名」)", () => {
+    // 系統書籤 capture 時可能沒帶名稱(後端 symbols 快取未載入 → name=None),
+    // null 蓋掉監聽/解析的真名會讓 header 永久「—」(Monitor 用 in 檢查不會補查)
+    const r = buildSymbolNames(
+      { "2330": "台積電" },
+      [{ symbol: "3357", name: "臺慶科" }],
+      { "2330": null, "3357": null, "9999": null },
+    );
+    expect(r["2330"]).toBe("台積電");
+    expect(r["3357"]).toBe("臺慶科");
+    expect(r["9999"]).toBeNull();  // 全來源皆無名才留 null
+  });
 });

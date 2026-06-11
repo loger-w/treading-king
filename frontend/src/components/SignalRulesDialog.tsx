@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ActiveSignalEditor } from "./ActiveSignalEditor";
 import { api, type ActiveSignal } from "../lib/api";
+import { STRATEGY_LABEL } from "../lib/signal-labels";
 
 /**
  * 訊號規則 Dialog — 列表 + 新增/編輯 + toggle 啟用 + 刪除。
@@ -21,11 +22,19 @@ function pillsForRule(r: ActiveSignal): string[] {
   // 改以 Discord 通知狀態取代,讓 UI 反映實際有意義的設定。
   const pills: string[] = [];
   if (r.notify_discord) pills.push("🔔 Discord");
-  const cd = `cd ${r.cooldown_seconds}s`;
-  const conditions = (r.filter_json.conditions?.length ?? 0)
-    + (r.filter_json.window_conditions?.length ?? 0);
-  const logic = `${r.filter_json.logic} · ${conditions} 條件`;
-  pills.push(cd, logic);
+  pills.push(`cd ${r.cooldown_seconds}s`);
+  // preset 策略規則存的是 conditions=[](策略定義整條 filter),
+  // 照舊數條件會顯示誤導性的「AND · 0 條件」;proximity 也各算一條
+  const f = r.filter_json;
+  if (f.strategy) {
+    pills.push(`策略:${STRATEGY_LABEL[f.strategy.type] ?? f.strategy.type}`);
+    return pills;
+  }
+  const conditions = (f.conditions?.length ?? 0)
+    + (f.window_conditions?.length ?? 0)
+    + (f.cdp_proximity ? 1 : 0)
+    + (f.ma_proximity ? 1 : 0);
+  pills.push(`${f.logic} · ${conditions} 條件`);
   return pills;
 }
 
@@ -46,22 +55,31 @@ export function SignalRulesDialog({ open, rules, onClose, onChanged }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose, creating, editing]);
 
+  // 失敗要可見(同 editor 的 fail-loud):無聲失敗時 toggle 看起來「點了沒反應」
   async function toggleEnabled(r: ActiveSignal) {
-    await api.activeSignals.update(r.id, {
-      name: r.name,
-      filter_json: r.filter_json,
-      scope: r.scope,
-      cooldown_seconds: r.cooldown_seconds,
-      enabled: !r.enabled,
-      notify_discord: r.notify_discord,
-    });
-    onChanged();
+    try {
+      await api.activeSignals.update(r.id, {
+        name: r.name,
+        filter_json: r.filter_json,
+        scope: r.scope,
+        cooldown_seconds: r.cooldown_seconds,
+        enabled: !r.enabled,
+        notify_discord: r.notify_discord,
+      });
+      onChanged();
+    } catch (e) {
+      alert(`切換失敗:${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function removeRule(r: ActiveSignal) {
     if (!confirm(`刪除「${r.name}」？`)) return;
-    await api.activeSignals.delete(r.id);
-    onChanged();
+    try {
+      await api.activeSignals.delete(r.id);
+      onChanged();
+    } catch (e) {
+      alert(`刪除失敗:${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   return (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type CapitalPosition, type CapitalStockOrderReq } from "../lib/api";
 import { subscribeOrderTicket, subscribeTicks } from "../hooks/useSignalsStream";
 import { brokerPnl, grossPnl } from "../lib/capital-pnl";
-import { limitUp, limitDown } from "../lib/tick";
+import { isTickAligned, limitUp, limitDown } from "../lib/tick";
 import { initialQtyState, manualQty, pressQuick, QTY_PRESETS, type QtyState } from "../lib/qty-quick";
 import { TIF_VALUES, TRADE_KINDS, TRADE_KIND_LABELS, type TifValue, type TradeKindValue } from "../lib/capital-labels";
 import { OrderConfirmDialog } from "./OrderConfirmDialog";
@@ -59,8 +59,9 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
   }, [isMarket, buySell, refPrice]);
 
   const qty = qtyState.qty;
-  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入);市價時閘價由 refPrice 推導,缺參考價不放行
-  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0;
+  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入)且要對齊 tick 檔位
+  // (off-tick 會到券商才被退);市價時閘價由 refPrice 推導,缺參考價不放行
+  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0 && isTickAligned(Number(price));
   const inputOk = (isMarket ? refPrice != null : priceOk) && qty > 0;
   const isBuy = buySell === "buy";
 

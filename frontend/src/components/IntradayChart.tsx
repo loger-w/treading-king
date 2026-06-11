@@ -125,9 +125,8 @@ export function IntradayChart({ symbol, name, active = true, inAnyBookmark, onOp
   }
 
   const latest = filteredCandles[filteredCandles.length - 1];
-  const first = filteredCandles[0];
-  // 漲跌基準：昨日收盤；prev_close 沒拿到時 fallback 今日開盤
-  const baseline = prevClose ?? (first ? first.open : 0);
+  // 漲跌基準與圖內填色同源(geometry.baseline = prevClose ?? 首根開盤)
+  const baseline = geometry.baseline;
   const change = latest && baseline ? latest.close - baseline : 0;
   const changePct = latest && baseline ? (change / baseline) * 100 : 0;
   const isUp = change > 0;

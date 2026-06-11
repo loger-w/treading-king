@@ -51,6 +51,14 @@ export function roundToTick(price: number, dir: "up" | "down"): number {
   return (units * tickDeci) / 1000;
 }
 
+/** 委託價是否落在合法檔位 — off-tick 限價會被券商/交易所退單,前端先擋。
+ *  deci-cent 整數運算殺 float 雜訊。 */
+export function isTickAligned(price: number): boolean {
+  const deci = Math.round(price * 1000);
+  const tickDeci = Math.round(tickSize(price) * 1000);
+  return deci % tickDeci === 0;
+}
+
 /** 台股漲停價 = 參考價 ×1.1 尾數捨去(絕不超過 +10%);tick 以漲停價當下級距為準。 */
 export function limitUp(reference: number): number {
   return roundToTick(reference * 1.1, "down");

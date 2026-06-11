@@ -56,51 +56,52 @@ export function QuoteBook({ symbol }: Props) {
       </div>
 
       <div className="grid grid-cols-2 gap-8">
-        <div>
-          {bids.length === 0 ? (
-            <div className="text-xs text-ink-dim italic py-2">—</div>
-          ) : (
-            bids.map((b, i) => (
-              <div
-                key={i}
-                onClick={() => b.price > 0 && emitOrderTicket({ symbol, price: b.price })}
-                className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums cursor-pointer hover:bg-bg-card/40"
-              >
-                <span
-                  className="absolute top-0 bottom-0 right-0 bg-bull/10 pointer-events-none"
-                  style={{ width: `${(b.size / maxQty) * 100}%` }}
-                />
-                <span className="relative z-[1] text-ink-muted">{b.size > 0 ? `${b.size} 張` : "—"}</span>
-                <span className="relative z-[1] text-right text-bull font-medium">
-                  {b.price === 0 ? "市價" : b.price.toFixed(2)}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-        <div>
-          {asks.length === 0 ? (
-            <div className="text-xs text-ink-dim italic py-2">—</div>
-          ) : (
-            asks.map((a, i) => (
-              <div
-                key={i}
-                onClick={() => a.price > 0 && emitOrderTicket({ symbol, price: a.price })}
-                className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums cursor-pointer hover:bg-bg-card/40"
-              >
-                <span
-                  className="absolute top-0 bottom-0 left-0 bg-bear/10 pointer-events-none"
-                  style={{ width: `${(a.size / maxQty) * 100}%` }}
-                />
-                <span className="relative z-[1] text-bear font-medium">
-                  {a.price === 0 ? "市價" : a.price.toFixed(2)}
-                </span>
-                <span className="relative z-[1] text-right text-ink-muted">{a.size > 0 ? `${a.size} 張` : "—"}</span>
-              </div>
-            ))
-          )}
-        </div>
+        <BookSide side="bid" symbol={symbol} levels={bids} maxQty={maxQty} />
+        <BookSide side="ask" symbol={symbol} levels={asks} maxQty={maxQty} />
       </div>
+    </div>
+  );
+}
+
+// 買賣兩欄共用一份:點價 guard(鎖停的市價檔 price=0 不可帶價下單)、
+// 市價/缺量顯示規則只寫一次——點價直通下單匣,兩側規則不可漂移
+function BookSide({ side, symbol, levels, maxQty }: {
+  side: "bid" | "ask";
+  symbol: string;
+  levels: Array<{ price: number; size: number }>;
+  maxQty: number;
+}) {
+  if (levels.length === 0) return <div><div className="text-xs text-ink-dim italic py-2">—</div></div>;
+  const isBid = side === "bid";
+  return (
+    <div>
+      {levels.map((l, i) => {
+        const sizeText = l.size > 0 ? `${l.size} 張` : "—";
+        const priceText = l.price === 0 ? "市價" : l.price.toFixed(2);
+        return (
+          <div
+            key={i}
+            onClick={() => l.price > 0 && emitOrderTicket({ symbol, price: l.price })}
+            className="relative grid grid-cols-2 gap-2.5 px-2 py-1.5 border-b border-line text-sm tabular-nums cursor-pointer hover:bg-bg-card/40"
+          >
+            <span
+              className={`absolute top-0 bottom-0 pointer-events-none ${isBid ? "right-0 bg-bull/10" : "left-0 bg-bear/10"}`}
+              style={{ width: `${(l.size / maxQty) * 100}%` }}
+            />
+            {isBid ? (
+              <>
+                <span className="relative z-[1] text-ink-muted">{sizeText}</span>
+                <span className="relative z-[1] text-right text-bull font-medium">{priceText}</span>
+              </>
+            ) : (
+              <>
+                <span className="relative z-[1] text-bear font-medium">{priceText}</span>
+                <span className="relative z-[1] text-right text-ink-muted">{sizeText}</span>
+              </>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

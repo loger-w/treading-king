@@ -1,12 +1,12 @@
 // 指數分時圖共用畫圖層 — 網頁(IndexIntradayChart)與 Discord bot 共用同一份 JSX。
 // 精簡版:autofit Y、不碰 average(指數無此欄位)、不套股票 tick(指數非個股 tick ladder)。
 // 顏色一律 inline hex(resvg 不解析 Tailwind / var(--color-…))。
-import { createElement, Fragment } from "react";
+import { createElement, Fragment, memo } from "react";
 import type { IntradayCandle } from "./api";
 import {
   CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, VOL_GAP, VOL_PAD_T, TOTAL_H, INTRADAY_THEME, type ChartTheme,
 } from "./intraday-chart-svg";
-import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, minuteOfDay } from "./intraday-time";
+import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, X_AXIS_TICKS, minuteOfDay } from "./intraday-time";
 
 const Y_BUFFER = 0.0015; // autofit 上下各留 0.15%
 
@@ -111,13 +111,21 @@ function priceColor(price: number, baseline: number, t: ChartTheme): string {
   return t.ink;
 }
 
-export interface IndexIntradayStaticProps extends IndexChartInput {
+// 只收實際用到的欄位(geometry 已含 filteredCandles,candles/scale 不再必填);
+// bot 以 {...input, geometry} 餵進來的多餘欄位無害
+export interface IndexIntradayStaticProps {
   geometry: IndexGeometry;
+  prevClose: number | null;
+  theme?: ChartTheme;
   idPrefix?: string; // clipPath id 唯一化 — 並排兩張同頁時避免 id 衝突
 }
 
 // presentational — 靜態圖層,不含 hover / 外層 <svg>。網頁與 bot resvg 共用。
-export function IndexIntradayStatic(props: IndexIntradayStaticProps) {
+// memo:hover 十字線的每個 mousemove 都 re-render 父層,靜態層(~270 根量能
+// bar + polyline + labels)只在 geometry/prevClose 變動時重建
+export const IndexIntradayStatic = memo(IndexIntradayStaticImpl);
+
+function IndexIntradayStaticImpl(props: IndexIntradayStaticProps) {
   const t = props.theme ?? INTRADAY_THEME;
   const idp = props.idPrefix ?? "";
   const aboveId = `idx-above-${idp}`;
@@ -196,10 +204,7 @@ export function IndexIntradayStatic(props: IndexIntradayStaticProps) {
       }),
     ),
     // 5. X 軸時間 label(固定 6 點)
-    ...[
-      { min: 540, label: "9:00" }, { min: 600, label: "10:00" }, { min: 660, label: "11:00" },
-      { min: 720, label: "12:00" }, { min: 780, label: "13:00" }, { min: 810, label: "13:30" },
-    ].map(({ min, label }) => createElement("text", {
+    ...X_AXIS_TICKS.map(({ min, label }) => createElement("text", {
       key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle",
       fill: t.inkDim, fontSize: fs(14), fontFamily: t.fontFamily,
     }, label)),

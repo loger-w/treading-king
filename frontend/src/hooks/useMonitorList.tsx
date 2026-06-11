@@ -29,14 +29,26 @@ export function MonitorListProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // 失敗寫進 error state(呼叫端多半丟棄 promise):無聲失敗的話,
+  // 使用者以為已加入監聽但訊號引擎不會對該股觸發
   const add = useCallback(async (symbol: string) => {
-    await api.monitorList.add(symbol);
-    await refresh();
+    try {
+      setError(null);
+      await api.monitorList.add(symbol);
+      await refresh();
+    } catch (e) {
+      setError(`加入監聽失敗:${e instanceof Error ? e.message : String(e)}`);
+    }
   }, [refresh]);
 
   const remove = useCallback(async (symbol: string) => {
-    await api.monitorList.remove(symbol);
-    await refresh();
+    try {
+      setError(null);
+      await api.monitorList.remove(symbol);
+      await refresh();
+    } catch (e) {
+      setError(`移除監聽失敗:${e instanceof Error ? e.message : String(e)}`);
+    }
   }, [refresh]);
 
   useEffect(() => { refresh(); }, [refresh]);

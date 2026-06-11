@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { type BookmarkGroup } from "../lib/api";
 import { ConfigIODialog } from "./ConfigIODialog";
+import { ModalShell } from "./ModalShell";
 
 /**
  * 「管理書籤」modal — 改名 / 刪 / 新增。排序留待後續(暫不實作拖拉)。
@@ -20,12 +21,6 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
   const [creating, setCreating] = useState(false);
   const [ioOpen, setIoOpen] = useState(false);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   function startRename(g: BookmarkGroup) {
     setRenamingId(g.id);
     setRenameValue(g.name);
@@ -33,10 +28,13 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
 
   async function submitRename() {
     if (!renamingId) return;
-    const v = renameValue.trim();
-    if (!v) { setRenamingId(null); return; }
-    try { await onRename(renamingId, v); } catch (e) { alert(`改名失敗:${(e as Error).message}`); }
+    const id = renamingId;
+    // 先卸載 input 再 await:input 同掛 onBlur 與 Enter,await 期間 blur
+    // (點別處/alert 搶焦點)會用同一個 renamingId 重複提交
     setRenamingId(null);
+    const v = renameValue.trim();
+    if (!v) return;
+    try { await onRename(id, v); } catch (e) { alert(`改名失敗:${(e as Error).message}`); }
   }
 
   async function handleDelete(g: BookmarkGroup) {
@@ -65,15 +63,7 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
   });
 
   return (
-    <>
-      <div onClick={onClose}
-        className="fixed inset-0 z-20 bg-bg-deep/85"
-        style={{ backdropFilter: "blur(2px)" }} />
-
-      <div role="dialog" aria-modal="true"
-        className="fixed top-1/2 left-1/2 z-[21] bg-bg-card border border-line-strong p-6
-                   w-[min(460px,90vw)] max-h-[82vh] overflow-y-auto scroll-editorial"
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="460px" scroll>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">
             {ioOpen ? "匯出 / 匯入設定" : "管理書籤"}
@@ -157,7 +147,6 @@ export function BookmarkManageDialog({ groups, onClose, onRename, onDelete, onCr
         </div>
         </>
         )}
-      </div>
-    </>
+    </ModalShell>
   );
 }

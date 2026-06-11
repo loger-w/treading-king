@@ -66,7 +66,7 @@ export function IndexIntradayChart({ code, name, active = true }: { code: string
           onMouseMove={handleMove}
           onMouseLeave={() => setHover(null)}
         >
-          <IndexIntradayStatic candles={candles} prevClose={prevClose} geometry={geometry} idPrefix={code} />
+          <IndexIntradayStatic prevClose={prevClose} geometry={geometry} idPrefix={code} />
           {hover && filteredCandles[hover.idx] && (() => {
             const cd = filteredCandles[hover.idx];
             const x = scaleX(minutesByIdx[hover.idx]);

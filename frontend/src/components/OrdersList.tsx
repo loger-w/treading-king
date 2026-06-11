@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { api, ApiError, type CapitalOrderResult } from "../lib/api";
+import { EnvNotice, ModalShell } from "./ModalShell";
 import { buildOrderRow, localYmd, type CapitalOrder, type OrderRowVM } from "../lib/capital-orders";
+import { isTickAligned } from "../lib/tick";
 
 /** 委託清單(聚合列)+ 活單刪/改。結果靠 OnNewData 回報刷新,不樂觀更新。 */
 export function OrdersList({ orders, env }: { orders: CapitalOrder[]; env: string }) {
@@ -31,8 +33,9 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
   const latestPending = useRef(pending);   // doSend 完成時比對歸屬:Esc 後重開的新動作不可被舊回應關掉
   latestPending.current = pending;
 
-  // 台股 tick 最小 0.01:>2 位小數會被後端 %.2f 無聲四捨五入,送出值≠確認框顯示值,前端先擋
-  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0;
+  // 台股 tick 最小 0.01:>2 位小數會被後端 %.2f 無聲四捨五入,送出值≠確認框顯示值,
+  // 前端先擋;off-tick 檔位(105.13)也擋,否則要到券商才被退單
+  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0 && isTickAligned(Number(price));
   // 減量是整數;小數會被 pydantic 422 短路(進不了安全閘=不留稽核),前端就要擋
   const decOk = /^\d+$/.test(decQty.trim()) && Number(decQty) > 0;
 
@@ -110,26 +113,13 @@ function OrderRow({ row, env, onResult }: { row: OrderRowVM; env: string; onResu
 function ActionConfirm({ row, action, env, busy, onConfirm, onClose }: {
   row: OrderRowVM; action: PendingAction; env: string; busy: boolean; onConfirm: () => void; onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const prod = env === "prod";
   const desc = action.kind === "cancel" ? "刪單"
     : action.kind === "correct_price" ? `改價 → ${action.price.toFixed(2)}`
     : `減量 ${action.qty} ${row.unit}`;
   return (
-    <>
-      <div onClick={onClose} className="fixed inset-0 z-20 bg-bg-deep/85" style={{ backdropFilter: "blur(2px)" }} />
-      <div role="dialog" aria-modal="true"
-        className={`fixed top-1/2 left-1/2 z-[21] bg-bg-card border p-5 w-[min(340px,90vw)] ${prod ? "border-bull" : "border-line-strong"}`}
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="340px" env={env} className="p-5">
         <h3 className="font-serif font-bold text-lg mb-1">確認{action.kind === "cancel" ? "刪單" : "修改委託"}</h3>
-        <p className={`text-xs mb-3 ${prod ? "text-bull font-bold" : "text-bear"}`}>
-          {prod ? "⚠ 正式環境(真錢)" : env === "test" ? "測試環境" : "環境未知"}
-        </p>
+        <EnvNotice env={env} />
         <div className="text-sm space-y-1 tabular-nums">
           <div className="flex justify-between"><span className="text-ink-dim">標的</span><span>{row.title}</span></div>
           <div className="flex justify-between"><span className="text-ink-dim">原委託</span><span>{row.priceText} · {row.qtyText}</span></div>
@@ -139,7 +129,6 @@ function ActionConfirm({ row, action, env, busy, onConfirm, onClose }: {
           <button onClick={onClose} className="px-3 py-1.5 text-sm border border-line-strong text-ink-muted hover:text-ink">取消</button>
           <button onClick={onConfirm} disabled={busy} className="px-3 py-1.5 text-sm text-bg font-medium bg-bull disabled:opacity-40">確認</button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 }
