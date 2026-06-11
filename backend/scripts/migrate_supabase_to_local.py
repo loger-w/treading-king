@@ -15,6 +15,10 @@ from typing import Any
 
 from services.local_store import get_local_store
 
+# PostgREST 預設單次回應上限 1000 筆,不分頁會靜默截斷
+# (實際發生過:signals_log 漏了 435 筆)
+_PAGE_SIZE = 1000
+
 
 def _strip_label(row: dict) -> dict:
     return {k: v for k, v in row.items() if k != "user_label"}
@@ -32,13 +36,24 @@ def migrate(sb: Any, user_label: str, *, force: bool = False) -> dict:
     store.init()
     cfg = store.config
 
-    def pull(table: str) -> list[dict]:
-        res = sb.table(table).select("*").eq("user_label", user_label).execute()
-        return res.data or []
+    def pull(table: str, *, filter_label: bool = True) -> list[dict]:
+        # .order("id") 讓分頁切點穩定、JSONL 順序可重現;
+        # 迴圈撈到「回傳筆數 < 頁大小」為止,避免 1000 筆截斷
+        out: list[dict] = []
+        while True:
+            q = sb.table(table).select("*")
+            if filter_label:
+                q = q.eq("user_label", user_label)
+            res = q.order("id").range(len(out), len(out) + _PAGE_SIZE - 1).execute()
+            page = res.data or []
+            out.extend(page)
+            if len(page) < _PAGE_SIZE:
+                return out
 
     groups = [_strip_label(g) for g in pull("bookmark_groups") if not g.get("is_system")]
-    items = [_strip_label(i) for i in
-             (sb.table("watchlist_items").select("*").execute().data or [])
+    # watchlist_items 沿用「拉全體、本機用自己的 group_id 過濾」—
+    # 分頁吃在全體資料上,截斷風險最高,更需要撈完
+    items = [_strip_label(i) for i in pull("watchlist_items", filter_label=False)
              if any(i["group_id"] == g["id"] for g in groups)]
     signals = [_strip_label(s) for s in pull("active_signals")]
     monitor = [_strip_label(m) for m in pull("monitor_list")]

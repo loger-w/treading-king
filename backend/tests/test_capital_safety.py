@@ -34,6 +34,17 @@ def test_zero_qty_blocks():
     assert check_stock_order(_req(qty=0), _cfg()).allowed is False
 
 
+def test_unset_limits_fail_closed():
+    # .env.example 承諾「0=擋」:CAPITAL_MAX_QTY/CAPITAL_MAX_AMOUNT 漏設或打錯
+    # 變數名(factory 落 0)必須拒單,不可變成「無上限放行」
+    r = check_stock_order(_req(), _cfg(max_qty=0))
+    assert r.allowed is False and "上限" in r.reason
+    r = check_stock_order(_req(), _cfg(max_amount=0))
+    assert r.allowed is False and "上限" in r.reason
+    g = check_correct_price(90.0, 1000, _cfg(max_amount=0))
+    assert g.allowed is False and "上限" in g.reason
+
+
 def test_valid_order_allowed():
     r = check_stock_order(_req(qty=1), _cfg())
     assert r.allowed is True

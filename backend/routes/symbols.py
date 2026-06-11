@@ -70,6 +70,10 @@ async def _fetch_isin(client: httpx.AsyncClient, mode: int, market: str) -> tupl
         # ISIN 表是 big5
         html = r.content.decode("big5", errors="replace")
         pairs = _parse_isin_html(html)
+        if not pairs:
+            # section regex 沒命中(TWSE 改版?)也視為失敗 — 否則 ISIN 來源
+            # 靜默變零筆,主表會被只剩「當日有交易股」的 OpenAPI 補充來源覆蓋
+            return [], "parsed 0 symbols (section regex mismatch?)"
         rows = [
             {
                 "symbol": code,
@@ -188,6 +192,17 @@ async def refresh_symbols() -> dict:
         raise HTTPException(
             502,
             detail={"error": "no_symbols_fetched", "fetch_errors": errors},
+        )
+
+    # 防線:新抓到的筆數遠低於既有主表(< 50%)時拒絕整表替換 — 來源殘缺
+    # (例如 ISIN 失效只剩 OpenAPI 當日有交易股)會讓合法代碼加自選全變 404
+    existing_count = len(get_local_store().market.search("", 100_000))
+    if existing_count and len(rows) < existing_count * 0.5:
+        raise HTTPException(
+            502,
+            detail={"error": "suspiciously_few_symbols",
+                    "fetched": len(rows), "existing": existing_count,
+                    "fetch_errors": errors},
         )
 
     get_local_store().market.replace_symbols(rows)

@@ -6,10 +6,20 @@ import logging
 import re
 from datetime import datetime, time, timedelta
 from typing import Literal, Optional, TypedDict
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
+TPE = ZoneInfo("Asia/Taipei")
+
 Session = Literal["day", "night", "closed"]
+
+
+class FubonUnavailableError(RuntimeError):
+    """富邦行情源不可用(SDK 未初始化或日夜盤呼叫全失敗)。
+
+    與「查得到但無資料」(空陣列)區分,route 據此回 503 而非 200 空圖。
+    """
 
 
 class ProductRow(TypedDict):
@@ -70,7 +80,9 @@ async def resolve_active_symbol() -> Optional[str]:
     # lazy import 避免測試環境在 module 載入時拉入 fubon_client 相依鏈
     from services.fubon_client import get_fubon  # noqa: PLC0415
 
-    now = datetime.now()
+    # expiry 是台北曆日,today 必須用台北時區算 — 機器時區偏移會讓
+    # 結算日前後的 expiry > today 比較差一天(提前跳月或選到已結算合約)
+    now = datetime.now(TPE)
     cached = _ACTIVE_SYMBOL_CACHE.get("mxf")
     if cached and (now - cached[1]) < _ACTIVE_SYMBOL_TTL:
         return cached[0]
@@ -157,23 +169,21 @@ def determine_current_session(now: datetime) -> Session:
     """判斷 now(必須帶 tz)屬於哪個 session。
 
     交易日 D = D-1 15:00 → D 13:45。
-    週五日盤後到下週一日盤開盤之間皆 closed(週五無夜盤)。
+    期交所盤後交易為每一交易日 15:00 至次日 05:00,週五照開
+    (週五 15:00–週六 05:00,歸屬下週一交易日)。國定假日休市不在此處理。
     """
     weekday = now.weekday()  # Mon=0 ... Sun=6
     t = now.time()
 
-    # 週六(5)整天 closed
-    # 週日(6)整天 closed(週日夜盤是「週一交易日」的夜盤,但實務上不開,所以仍 closed)
+    # 週六 05:00 前仍是週五夜盤的尾段;05:00 起到週一開盤前 closed
     if weekday == 5:
-        return "closed"
+        return "night" if t < NIGHT_CLOSE else "closed"
+
+    # 週日(6)整天 closed(週日 15:00 起的夜盤不存在 — 週日非交易日)
     if weekday == 6:
         return "closed"
 
-    # 週五日盤後到 23:59:59 = closed(週五無夜盤)
-    if weekday == 4 and t >= DAY_CLOSE:
-        return "closed"
-
-    # 週一凌晨 00:00-05:00 屬於「週日夜盤」— 但週日不開夜盤,所以 closed
+    # 週一凌晨 00:00-05:00 對應「週日夜盤」— 週日非交易日不開,所以 closed
     if weekday == 0 and t < DAY_OPEN:
         return "closed"
 
@@ -199,6 +209,9 @@ async def fetch_candles(symbol: str, timeframe: int) -> list[MXFCandleDict]:
     參數:timeframe ∈ {1, 5, 10, 15, 30, 60}。
     依賴 merge_candles 假設 date 字串可字典序排序 — 後續實測若富邦回傳
     tz 格式不一致(如混 `+0800` 無冒號)需先正規化。
+
+    SDK 未初始化或日夜盤呼叫全失敗 → raise FubonUnavailableError,
+    讓「行情源死亡」與「成功但無資料」(回空陣列)可區分。
     """
     if timeframe not in SUPPORTED_TIMEFRAMES:
         raise ValueError(f"unsupported timeframe: {timeframe}")
@@ -209,11 +222,11 @@ async def fetch_candles(symbol: str, timeframe: int) -> list[MXFCandleDict]:
 
     fubon = get_fubon()
     if fubon.sdk is None:
-        return []
+        raise FubonUnavailableError("fubon sdk not initialized")
 
     tf_str = str(timeframe)
 
-    async def _fetch(session: Optional[str]) -> list[MXFCandleDict]:
+    async def _fetch(session: Optional[str]) -> Optional[list[MXFCandleDict]]:
         kwargs: dict = {"symbol": symbol, "timeframe": tf_str}
         if session:
             kwargs["session"] = session
@@ -227,8 +240,16 @@ async def fetch_candles(symbol: str, timeframe: int) -> list[MXFCandleDict]:
             raise  # 呼叫方 bug 不要吞
         except Exception as e:
             logger.warning("fetch_candles session=%s failed: %s", session, e)
-            return []
+            return None  # None=呼叫失敗,與「成功但無資料」的 [] 區分
         return list(raw.get("data") or [])
 
     day, night = await asyncio.gather(_fetch(None), _fetch("afterhours"))
-    return merge_candles(day=day, night=night)
+    if day is None and night is None:
+        raise FubonUnavailableError("both day and night candle fetches failed")
+    if day is None or night is None:
+        # 單邊失敗仍降級合併另一邊,但升 error 讓行情中斷在 log 可見
+        logger.error(
+            "fetch_candles partial failure: day_ok=%s night_ok=%s",
+            day is not None, night is not None,
+        )
+    return merge_candles(day=day or [], night=night or [])

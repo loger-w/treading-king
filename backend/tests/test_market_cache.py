@@ -30,6 +30,23 @@ def test_daily_ohlc_upsert_keeps_latest(tmp_path):
     assert mc.get_latest_daily_ohlc("9999") is None
 
 
+def test_daily_ohlc_identical_upsert_skips_rewrite(tmp_path, monkeypatch):
+    # 為何重要:backfill 每天重抓同一批昨日 OHLC 是常態,內容沒變不該全檔重寫
+    import services.local_store.market_cache as mc_module
+    mc = MarketCache(tmp_path / "symbols.json", tmp_path / "daily_ohlc.json")
+    mc.load()
+    row = {"symbol": "2330", "date": "2026-05-20", "high": 1.0, "low": 1.0, "close": 1.0}
+    mc.upsert_daily_ohlc([row])
+
+    writes = []
+    monkeypatch.setattr(mc_module, "atomic_write_json", lambda *a, **k: writes.append(a))
+    mc.upsert_daily_ohlc([dict(row)])  # 內容完全相同 → 不寫檔
+    assert writes == []
+    mc.upsert_daily_ohlc([{**row, "close": 2.0}])  # 同日但值變 → 要寫
+    assert len(writes) == 1
+    assert mc.get_latest_daily_ohlc("2330")["close"] == 2.0
+
+
 def test_get_symbol_returns_metadata_or_none(tmp_path):
     mc = MarketCache(tmp_path / "symbols.json", tmp_path / "daily_ohlc.json")
     mc.load()

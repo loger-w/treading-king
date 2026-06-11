@@ -177,11 +177,6 @@ export interface WatchlistRow {
   note: string | null;
 }
 
-export interface WatchlistResponse {
-  watchlist: WatchlistRow[];
-  count: number;
-}
-
 // ---------------------------------------------------------------------------
 // Bookmarks(取代單一 watchlist)
 // ---------------------------------------------------------------------------
@@ -302,8 +297,6 @@ export interface TodayCountsRow {
 }
 
 export interface TodayCountsResponse {
-  as_of: string;
-  today_start: string;
   counts: TodayCountsRow[];
 }
 
@@ -384,19 +377,6 @@ export const api = {
       }),
     remove: (symbol: string) =>
       fetchJSON(`/api/monitor_list/${encodeURIComponent(symbol)}`, {
-        method: "DELETE",
-      }),
-  },
-
-  watchlist: {
-    list: () => fetchJSON<WatchlistResponse>("/api/watchlist"),
-    add: (symbol: string, note?: string) =>
-      fetchJSON<{symbol: string; status: string}>("/api/watchlist", {
-        method: "POST",
-        body: JSON.stringify({ symbol, note: note ?? null }),
-      }),
-    remove: (symbol: string) =>
-      fetchJSON<void>(`/api/watchlist/${encodeURIComponent(symbol)}`, {
         method: "DELETE",
       }),
   },

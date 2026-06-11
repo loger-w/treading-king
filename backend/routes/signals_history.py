@@ -1,12 +1,9 @@
 """GET /api/signals/history?... — 訊號歷史查詢。
-GET /api/signals/today_counts — 今日累計命中數（給前端 chip 上標）。
+GET /api/signals/today_counts — 今日累計命中數（給前端 chip 上標,只回 counts）。
 
 儲存層為本機 SignalsLog。
 """
 from __future__ import annotations
-
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
@@ -37,16 +34,9 @@ async def today_counts() -> dict:
     前端 group by (symbol, active_signal_id) 算 count。
     Row 量小（cooldown ≥ 1800s × N 規則 × N 自選），不需 backend aggregate。
     """
-    tz_tw = ZoneInfo("Asia/Taipei")
-    today_start_tw = datetime.now(tz_tw).replace(hour=0, minute=0, second=0, microsecond=0)
-
     rows = get_local_store().signals.today_rows()
     counts = [
         {"symbol": r.get("symbol"), "active_signal_id": r.get("active_signal_id")}
         for r in rows
     ]
-    return {
-        "as_of": datetime.now(tz_tw).isoformat(),
-        "today_start": today_start_tw.isoformat(),
-        "counts": counts,
-    }
+    return {"counts": counts}

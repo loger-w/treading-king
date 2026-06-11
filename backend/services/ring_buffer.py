@@ -50,10 +50,12 @@ class RingBuffer:
     def append(self, symbol: str, tick: Tick) -> None:
         """從 fubon WS callback 餵進來。symbol 必須先 ensure 過。"""
         lock = self._locks.get(symbol)
-        if lock is None:
+        # buffers 也要用 .get — 兩步取值間 event loop 的 discard() 可插入,
+        # 裸索引會讓 KeyError 外洩進 SDK callback 執行緒
+        buf = self._buffers.get(symbol)
+        if lock is None or buf is None:
             logger.warning("append before ensure: %s — dropping tick", symbol)
             return
-        buf = self._buffers[symbol]
         with lock:
             buf.append(tick)
             # tail trim：砍超過 max window 的舊 tick
@@ -64,9 +66,9 @@ class RingBuffer:
     def window(self, symbol: str, seconds: int) -> list[Tick]:
         """拿過去 N 秒的 ticks（含 latest），ascending by time。"""
         lock = self._locks.get(symbol)
-        if lock is None:
+        buf = self._buffers.get(symbol)
+        if lock is None or buf is None:
             return []
-        buf = self._buffers[symbol]
         with lock:
             if not buf:
                 return []
@@ -75,9 +77,9 @@ class RingBuffer:
 
     def latest(self, symbol: str) -> Tick | None:
         lock = self._locks.get(symbol)
-        if lock is None:
+        buf = self._buffers.get(symbol)
+        if lock is None or buf is None:
             return None
-        buf = self._buffers[symbol]
         with lock:
             return buf[-1] if buf else None
 

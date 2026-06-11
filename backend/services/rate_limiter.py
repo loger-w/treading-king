@@ -2,11 +2,13 @@
 
 Token bucket：每秒補 N 個 token，每次 acquire() 消耗 1 個；不夠就 sleep 到夠。
 Sync 版可從 thread 內呼叫 → 用 threading 原語(不是 asyncio)。
+Event loop 端用 acquire_async() — sync 版丟 to_thread 會在排隊時占住 worker。
 
 調率：環境變數 FUBON_RATE_LIMIT_PER_SEC，預設 5。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
@@ -22,11 +24,13 @@ class TokenBucket:
         """
         Args:
             rate: tokens per second (steady-state allowance).
-            capacity: max bucket size; defaults to `rate` (allows ~1s burst).
+            capacity: max bucket size; defaults to `max(rate, 1)` (allows ~1s burst).
+                下限 1 — rate < 1（調慢限流）時 acquire(1) 的語意是「等更久」,
+                不能因 capacity < 1 直接 ValueError 讓所有 REST 呼叫失效。
         """
         if rate <= 0:
             raise ValueError(f"rate must be > 0, got {rate}")
-        cap = float(capacity) if capacity is not None else float(rate)
+        cap = float(capacity) if capacity is not None else max(float(rate), 1.0)
         if cap <= 0:
             raise ValueError(f"capacity must be > 0, got {cap}")
 
@@ -79,6 +83,34 @@ class TokenBucket:
                 wait = min(wait, remaining)
 
             time.sleep(wait)
+
+    async def acquire_async(self, tokens: int = 1, timeout: float | None = None) -> bool:
+        """acquire() 的 asyncio 版 — 等待用 asyncio.sleep,不占 thread pool worker。
+
+        與 sync 版共用同一個 bucket/lock（lock 內只做算術,不會卡 event loop）。
+        """
+        if tokens > self._capacity:
+            raise ValueError(
+                f"requested {tokens} tokens > capacity {self._capacity}"
+            )
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+
+        while True:
+            with self._lock:
+                self._refill_locked()
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    return True
+                wait = (tokens - self._tokens) / self._rate
+
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                wait = min(wait, remaining)
+
+            await asyncio.sleep(wait)
 
 
 _default_bucket: TokenBucket | None = None

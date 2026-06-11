@@ -32,6 +32,7 @@ from typing import Any
 from services.fubon_client import FubonStatus, get_fubon
 from services.fubon_ws import get_ws_pool
 from services.local_store import get_local_store
+from services.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +66,19 @@ def _in_market_hours(now: datetime | None = None) -> bool:
     return MARKET_OPEN <= t < MARKET_CLOSE
 
 
-def _fetch_market_movers(market: str) -> list[dict[str, Any]]:
-    """同步 wrapper — 呼叫富邦 snapshot.movers,server-side 已過濾 ETF + 漲跌幅範圍。"""
+def _fetch_market_movers(market: str) -> list[dict[str, Any]] | None:
+    """同步 wrapper — 呼叫富邦 snapshot.movers,server-side 已過濾 ETF + 漲跌幅範圍。
+
+    回 None 表示「抓取失敗」(SDK 未 ready / API 錯誤) — 跟「查詢成功但 0 筆」
+    區分,讓 caller 不把暫時性失敗當成真的沒有大漲股而清空快取、退訂 ws。
+    """
     fubon = get_fubon()
     if fubon.status != FubonStatus.OK or fubon.sdk is None:
         logger.warning("top_gainers: fubon SDK not ready, skip market=%s", market)
-        return []
+        return None
     try:
+        # Snapshot 跟其餘 REST 呼叫記同一本帳(已在 to_thread 的 sync context)
+        get_rate_limiter().acquire()
         result = fubon.sdk.marketdata.rest_client.stock.snapshot.movers(
             market=market,
             direction="up",
@@ -83,14 +90,18 @@ def _fetch_market_movers(market: str) -> list[dict[str, Any]]:
         return list(result.get("data") or [])
     except Exception as e:
         logger.warning("top_gainers: movers(market=%s) failed: %s", market, e)
-        return []
+        return None
 
 
 async def refresh_top_gainers() -> dict:
     """執行一次 refresh — 拉漲跌幅榜 + 過濾 + 整批 replace。"""
     raw: list[tuple[str, float, int, str]] = []  # (symbol, change_pct, volume_lots, market)
+    ok_markets = 0
     for market in ("TSE", "OTC"):
         items = await asyncio.to_thread(_fetch_market_movers, market)
+        if items is None:
+            continue
+        ok_markets += 1
         for it in items:
             symbol = (it.get("symbol") or "").strip()
             pct = it.get("changePercent")
@@ -102,6 +113,13 @@ async def refresh_top_gainers() -> dict:
             if not SYMBOL_RE.match(symbol):
                 continue  # 雙保險:擋權證 / 可轉債(非 4 位純數字)
             raw.append((symbol, float(pct), int(vol), market))
+
+    if ok_markets == 0:
+        # 兩市場都抓失敗(暫時性:斷線重連中 / API 抖動):保留上一輪 snapshot
+        # 與訂閱,下一輪自然恢復。「清空表示無 stale」只適用於查詢成功但結果為空。
+        logger.warning("top_gainers: all movers fetches failed, keep previous snapshot")
+        return {"status": "error",
+                "count": get_local_store().market.top_gainers_count()}
 
     if not raw:
         logger.info("top_gainers: nothing passes filters")
@@ -143,10 +161,14 @@ async def _sync_subscriptions(new_set: set[str]) -> None:
     pool = get_ws_pool()
     to_add = new_set - _subscribed_symbols
     to_remove = _subscribed_symbols - new_set
+    failed: set[str] = set()
     for s in to_add:
         try:
             await pool.subscribe(s, owner_id=TOP_GAINERS_OWNER)
         except RuntimeError as e:
+            # 失敗(如 capacity full)的不算進已訂閱 — 否則之後永不重試,
+            # 該股在榜上卻沒有 tick;留給下一輪 diff,額度釋出後自然補訂
+            failed.add(s)
             logger.warning("top_gainers: ws sub %s failed: %s", s, e)
     for s in to_remove:
         try:
@@ -156,7 +178,7 @@ async def _sync_subscriptions(new_set: set[str]) -> None:
     if to_add or to_remove:
         logger.info("top_gainers: ws sync +%d -%d (total=%d)",
                     len(to_add), len(to_remove), len(new_set))
-    _subscribed_symbols = new_set
+    _subscribed_symbols = new_set - failed
 
 
 async def _replace_snapshot(rows: list[dict]) -> None:
@@ -167,10 +189,18 @@ async def _replace_snapshot(rows: list[dict]) -> None:
 async def top_gainers_loop() -> None:
     """背景 task — 盤中每 1 分鐘 refresh。lifespan 啟動時 create_task。"""
     logger.info("top_gainers loop started")
+    was_in_market = False
     while True:
         try:
             if _in_market_hours():
+                was_in_market = True
                 await refresh_top_gainers()
+            elif was_in_market:
+                # 跨入盤後的第一輪:退訂 ws、釋放共享的 200 檔額度
+                # (否則最後一輪的 top 50 訂閱掛整夜,8:25 重連還原樣重訂);
+                # snapshot 保留供盤後瀏覽,隔天開盤 refresh 重建訂閱
+                was_in_market = False
+                await _sync_subscriptions(set())
             await asyncio.sleep(SCHEDULE_INTERVAL_S)
         except asyncio.CancelledError:
             logger.info("top_gainers loop cancelled")

@@ -201,6 +201,12 @@ class WatchlistScope(BaseModel):
 
 
 class SymbolsScope(BaseModel):
+    """已淘汰 — 引擎一律以 monitor_list 為評估範圍,symbols 清單從未生效。
+
+    只保留給 ActiveSignalOut 載入磁碟上的舊 row;create/update 不再接受,
+    避免 API 假裝訊號會被限縮在指定 symbols。
+    """
+
     type: Literal["symbols"]
     symbols: list[str] = Field(min_length=1, max_length=500)
 
@@ -211,7 +217,9 @@ Scope = WatchlistScope | SymbolsScope
 class ActiveSignalCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     filter_json: ActiveFilter
-    scope: Scope
+    # 引擎不讀 scope(評估範圍 = monitor_list);只收 watchlist 讓 API contract
+    # 不再誤導直接打 API 的 client
+    scope: WatchlistScope
     cooldown_seconds: int = Field(default=1800, ge=60, le=86400)
     enabled: bool = True
     notify_discord: bool = True
@@ -220,3 +228,5 @@ class ActiveSignalCreate(BaseModel):
 class ActiveSignalOut(ActiveSignalCreate):
     id: str
     created_at: str
+    # 磁碟 / 匯入檔可能還有舊版 symbols scope 的 row — 載入容忍,不影響評估範圍
+    scope: Scope

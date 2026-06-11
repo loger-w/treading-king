@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from services.fubon_futures import (
     SUPPORTED_TIMEFRAMES,
+    FubonUnavailableError,
     determine_current_session,
     fetch_candles,
     resolve_active_symbol,
@@ -37,7 +38,11 @@ async def get_mxf_candles(
     if not use_symbol:
         raise HTTPException(503, detail={"error": "mxf_symbol_unavailable"})
 
-    candles = await fetch_candles(use_symbol, tf)
+    try:
+        candles = await fetch_candles(use_symbol, tf)
+    except FubonUnavailableError:
+        # 與股票 candles 口徑一致:行情源死亡回 503,讓前端能與「休市無資料」區分
+        raise HTTPException(503, detail={"error": "fubon_unavailable"})
     return {
         "symbol": use_symbol,
         "timeframe": tf,

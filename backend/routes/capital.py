@@ -52,7 +52,13 @@ async def capital_positions() -> dict:
     c = capital_factory.get_capital()
     if c is None:
         return {"positions": []}
-    return {"positions": [p.model_dump(mode="json") for p in c.store.positions()]}
+    out = []
+    for p in c.store.positions():
+        # 先 dump 再填名稱:store 發布的是共享物件,就地改寫會污染快取
+        d = p.model_dump(mode="json")
+        d["name"] = d["name"] or _symbol_name(p.stock_no)
+        out.append(d)
+    return {"positions": out}
 
 
 def _require_capital():

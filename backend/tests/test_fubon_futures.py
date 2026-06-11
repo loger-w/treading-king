@@ -31,14 +31,17 @@ def dt(s: str) -> datetime:
         # ---- night → closed 邊界 ----
         ("2026-05-26T05:00:00", "closed"), # 夜盤收盤
         ("2026-05-26T07:00:00", "closed"), # 開盤前休市
-        # ---- 週五無夜盤(5/29 為週五)----
+        # ---- 週五夜盤照開(期交所盤後交易:每交易日 15:00–次日 05:00;5/29 為週五)----
         ("2026-05-29T13:44:59", "day"),    # 週五日盤
-        ("2026-05-29T13:45:00", "closed"), # 週五收盤後
-        ("2026-05-29T15:00:00", "closed"), # 週五本應夜盤但無
-        ("2026-05-29T22:00:00", "closed"), # 週五本應夜盤但無
-        ("2026-05-30T01:00:00", "closed"), # 週六凌晨無夜盤
-        # ---- 週六、週日全 closed ----
-        ("2026-05-30T10:00:00", "closed"), # 週六
+        ("2026-05-29T13:45:00", "closed"), # 週五日盤收盤後、夜盤開盤前
+        ("2026-05-29T15:00:00", "night"),  # 週五夜盤開
+        ("2026-05-29T22:00:00", "night"),  # 週五夜盤中
+        ("2026-05-30T01:00:00", "night"),  # 週六凌晨仍是週五夜盤
+        ("2026-05-30T04:59:59", "night"),  # 週五夜盤收盤前
+        # ---- 週六 05:00 收盤後、週日全 closed ----
+        ("2026-05-30T05:00:00", "closed"), # 週六夜盤收盤瞬間
+        ("2026-05-30T10:00:00", "closed"), # 週六白天
+        ("2026-05-30T16:00:00", "closed"), # 週六傍晚(非交易日,無夜盤)
         ("2026-05-31T22:00:00", "closed"), # 週日(夜盤本身不開)
         # ---- 週一凌晨(週日無夜盤,週一 guard 必須攔截)----
         ("2026-06-01T00:00:00", "closed"), # 週一凌晨(週日無夜盤)
@@ -240,3 +243,65 @@ async def test_resolve_active_symbol_uses_afterhours_when_regular_empty(monkeypa
     assert result == "MXFF6"
     # 必須真的查過 AFTERHOURS,而不是只查預設 REGULAR
     assert "AFTERHOURS" in {c.get("session") for c in intraday.calls}
+
+
+# ---- fetch_candles: 行情源死亡 vs「真的沒資料」的區分 ----
+# SDK 未初始化或日夜盤呼叫全失敗必須 raise(route 轉 503),
+# 不能回 200 空陣列把行情中斷偽裝成休市/新合約無成交。
+
+
+class _FakeCandlesAPI:
+    """依 session 回資料或丟例外(None key = 日盤,不帶 session 參數)。"""
+
+    def __init__(self, by_session: dict):
+        self._by_session = by_session
+
+    def candles(self, **kwargs):
+        r = self._by_session.get(kwargs.get("session"))
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def _patch_fubon(monkeypatch, intraday) -> None:
+    monkeypatch.setattr("services.fubon_client.get_fubon", lambda: _fake_fubon(intraday))
+    monkeypatch.setattr(
+        "services.rate_limiter.get_rate_limiter",
+        lambda: SimpleNamespace(acquire=lambda: None),
+    )
+
+
+async def test_fetch_candles_raises_when_sdk_not_initialized(monkeypatch):
+    monkeypatch.setattr(
+        "services.fubon_client.get_fubon", lambda: SimpleNamespace(sdk=None)
+    )
+    with pytest.raises(ff.FubonUnavailableError):
+        await ff.fetch_candles("MXFF6", 5)
+
+
+async def test_fetch_candles_raises_when_both_sessions_fail(monkeypatch):
+    _patch_fubon(monkeypatch, _FakeCandlesAPI({
+        None: RuntimeError("day source down"),
+        "afterhours": RuntimeError("night source down"),
+    }))
+    with pytest.raises(ff.FubonUnavailableError):
+        await ff.fetch_candles("MXFF6", 5)
+
+
+async def test_fetch_candles_partial_failure_degrades_to_other_session(monkeypatch):
+    # 單邊掛 → 降級回另一邊的資料,不 raise(行情仍可看,log 已升 error)
+    night_rows = [c("2026-05-28T22:00:00+08:00")]
+    _patch_fubon(monkeypatch, _FakeCandlesAPI({
+        None: RuntimeError("day source down"),
+        "afterhours": {"data": night_rows},
+    }))
+    assert await ff.fetch_candles("MXFF6", 5) == night_rows
+
+
+async def test_fetch_candles_empty_data_is_not_an_error(monkeypatch):
+    # 兩段都成功但無資料(休市/新合約沒成交)→ 合法空陣列,不該 raise
+    _patch_fubon(monkeypatch, _FakeCandlesAPI({
+        None: {"data": []},
+        "afterhours": {"data": None},
+    }))
+    assert await ff.fetch_candles("MXFF6", 5) == []

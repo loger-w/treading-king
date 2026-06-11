@@ -78,7 +78,7 @@ async def test_service_refresh_caches_levels(local_store_tmp):
 
     svc = cam_module.CamarillaService()
     await svc.refresh("2330")
-    assert svc.has("2330")
+    assert "2330" in svc._cache
     levels = svc._cache["2330"]
     assert levels["h4"] == 111.0
     assert levels["l4"] == 89.0
@@ -87,71 +87,40 @@ async def test_service_refresh_caches_levels(local_store_tmp):
 
 
 @pytest.mark.asyncio
-async def test_service_get_triggers_daily_backfill_once(monkeypatch):
-    """同一 symbol 同一日,get() 只 trigger backfill 一次。"""
-    svc = cam_module.CamarillaService()
-    backfill_calls = []
+async def test_service_get_uses_shared_daily_ohlc_backfill(monkeypatch, local_store_tmp):
+    """get() 走 CDP/Camarilla 共用的 ensure_daily_ohlc(同 symbol 每天只打一次富邦),
+    再從 daily_ohlc 重算 — once-per-day / cooldown 行為在 test_cdp_service.py 驗。"""
+    ensure_calls = []
 
-    async def fake_backfill(symbol):
-        backfill_calls.append(symbol)
+    async def fake_ensure(symbol):
+        ensure_calls.append(symbol)
         return True
 
-    svc.backfill_from_fubon = fake_backfill  # type: ignore[method-assign]
+    monkeypatch.setattr(cam_module, "ensure_daily_ohlc", fake_ensure)
+    get_local_store().market.upsert_daily_ohlc([
+        {"symbol": "2330", "date": "2026-05-21", "high": 110.0, "low": 90.0, "close": 100.0}
+    ])
 
-    async def fake_refresh(symbol):
-        svc._cache[symbol] = {
-            "h4": 0, "h3": 0, "h2": 0, "h1": 0,
-            "l1": 0, "l2": 0, "l3": 0, "l4": 0,
-            "as_of_date": "2026-05-21", "prev_close": 0.0,
-        }
-
-    svc.refresh = fake_refresh  # type: ignore[method-assign]
-
-    await svc.get("2330")
-    await svc.get("2330")
-    assert backfill_calls == ["2330"]
+    svc = cam_module.CamarillaService()
+    levels = await svc.get("2330")
+    assert ensure_calls == ["2330"]
+    assert levels is not None and levels["h4"] == 111.0
 
 
 @pytest.mark.asyncio
-async def test_service_get_retriggers_backfill_after_date_rollover(monkeypatch):
-    """日期跨日後 get() 應該再次觸發 backfill — 驗 _last_backfill_attempt 不是「永不過期」。"""
-    from datetime import date as date_real
+async def test_service_get_falls_back_to_stale_ohlc_when_fubon_down(monkeypatch, local_store_tmp):
+    """富邦不可用(ensure 回 False)時 get() 仍讀既有 daily_ohlc — stale 但有總比沒有好。"""
+    async def fake_ensure(symbol):
+        return False
+
+    monkeypatch.setattr(cam_module, "ensure_daily_ohlc", fake_ensure)
+    get_local_store().market.upsert_daily_ohlc([
+        {"symbol": "2330", "date": "2026-05-20", "high": 110.0, "low": 90.0, "close": 100.0}
+    ])
 
     svc = cam_module.CamarillaService()
-    backfill_calls = []
-
-    async def fake_backfill(symbol):
-        backfill_calls.append(symbol)
-        return True
-
-    svc.backfill_from_fubon = fake_backfill  # type: ignore[method-assign]
-
-    async def fake_refresh(symbol):
-        svc._cache[symbol] = {
-            "h4": 0, "h3": 0, "h2": 0, "h1": 0,
-            "l1": 0, "l2": 0, "l3": 0, "l4": 0,
-            "as_of_date": "x", "prev_close": 0.0,
-        }
-
-    svc.refresh = fake_refresh  # type: ignore[method-assign]
-
-    # Day 1 — first call triggers backfill
-    class FakeDateDay1:
-        @staticmethod
-        def today():
-            return date_real(2026, 5, 21)
-    monkeypatch.setattr(cam_module, "date", FakeDateDay1)
-    await svc.get("2330")
-
-    # Day 2 — should retrigger
-    class FakeDateDay2:
-        @staticmethod
-        def today():
-            return date_real(2026, 5, 22)
-    monkeypatch.setattr(cam_module, "date", FakeDateDay2)
-    await svc.get("2330")
-
-    assert backfill_calls == ["2330", "2330"]  # 兩天各 backfill 一次
+    levels = await svc.get("2330")
+    assert levels is not None and levels["as_of_date"] == "2026-05-20"
 
 
 @pytest.mark.asyncio
@@ -160,7 +129,7 @@ async def test_service_refresh_missing_row_returns_silently(local_store_tmp):
     # 不 seed local_store，local cache 為空
     svc = cam_module.CamarillaService()
     await svc.refresh("UNKNOWN")
-    assert not svc.has("UNKNOWN")
+    assert "UNKNOWN" not in svc._cache
 
 
 def test_get_camarilla_service_singleton():

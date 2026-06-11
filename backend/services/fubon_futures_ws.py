@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from services.fubon_futures import determine_current_session
+from services.fubon_futures import determine_current_session, resolve_active_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ class FuturesWSPool:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._reconnect_attempt = 0
         self._reconnecting: bool = False
+        # SDK 對主動 close 也會 fire disconnect 事件;記下 pending 的主動斷線數,
+        # 讓 _handle_disconnect 不把 session 切換的 teardown 當故障去清狀態+重連
+        self._expected_disconnects = 0
         self._lock = asyncio.Lock()
 
     async def start(self, symbol: str) -> None:
@@ -117,9 +121,12 @@ class FuturesWSPool:
     async def _teardown_ws(self) -> None:
         if self._ws is None:
             return
+        self._expected_disconnects += 1
         try:
             await asyncio.to_thread(self._ws.disconnect)
         except Exception as e:
+            # close 失敗時 disconnect 事件多半不會來,把計數補回去免得吞掉下次真斷線
+            self._expected_disconnects -= 1
             logger.debug("futures_ws disconnect raised: %s", e)
         finally:
             self._ws = None
@@ -143,12 +150,25 @@ class FuturesWSPool:
             pass
 
     async def _handle_message(self, raw) -> None:
-        # raw 結構(預期):{"event": "data", "channel": "candles",
-        #                  "data": {"symbol": "MXFF6", "date": "...", "open": ..., ...}}
+        # SDK 的 message event 給的是原始 JSON 字串(client emit 前不 parse),
+        # 必須先 json.loads;dict 也照收以保相容。payload 結構(預期):
+        # {"event": "data", "channel": "candles",
+        #  "data": {"symbol": "MXFF6", "date": "...", "open": ..., ...}}
         from ws_broadcaster import get_broadcaster  # noqa: PLC0415
         try:
-            data = raw.get("data") if isinstance(raw, dict) else None
-            if not data:
+            try:
+                payload = json.loads(raw) if isinstance(raw, str) else raw
+            except Exception:
+                # 丟棄時留 log,避免格式變動造成推送靜默失效
+                logger.warning("futures_ws dropping non-JSON message: %.200s", raw)
+                return
+            if not isinstance(payload, dict):
+                logger.warning(
+                    "futures_ws dropping unexpected message type: %s", type(raw).__name__
+                )
+                return
+            data = payload.get("data")
+            if not data or not isinstance(data, dict):
                 return
             symbol = data.get("symbol")
             if symbol != self._symbol:
@@ -172,10 +192,14 @@ class FuturesWSPool:
             logger.warning("futures_ws handle_message error: %s", e)
 
     async def _handle_disconnect(self) -> None:
-        logger.info("futures_ws disconnected, scheduling reconnect")
         async with self._lock:
+            if self._expected_disconnects > 0:
+                # 主動 teardown 引發的事件 — 不是故障,別清掉剛建好的訂閱也別重連
+                self._expected_disconnects -= 1
+                return
             self._ws = None
             self._current_after_hours = None
+        logger.info("futures_ws disconnected, scheduling reconnect")
         await self._schedule_reconnect()
 
     async def _schedule_reconnect(self) -> None:
@@ -211,12 +235,26 @@ def get_futures_ws_pool() -> FuturesWSPool:
     return _pool
 
 
+async def reconcile_pool(pool: FuturesWSPool) -> None:
+    """單次 reconcile:近月 symbol 變了就切換訂閱,否則只對齊 session。
+
+    沒有這步,合約換月(或 startup 解析失敗)後 WS 會永遠停在舊 symbol 直到重啟。
+    resolve_active_symbol 有 1h cache,每分鐘呼叫的額度成本可忽略;
+    回 None(SDK 掛/查不到)時不動 symbol,維持既有訂閱。
+    """
+    symbol = await resolve_active_symbol()
+    if symbol and symbol != pool._symbol:
+        await pool.start(symbol)
+    else:
+        await pool.reconcile_session()
+
+
 async def session_reconcile_loop() -> None:
-    """每分鐘檢查 session,跨邊界時切訂閱。Startup 後 fire-and-forget 跑。"""
+    """每分鐘檢查 session 與近月 symbol,跨邊界/換月時切訂閱。Startup 後 fire-and-forget 跑。"""
     pool = get_futures_ws_pool()
     while True:
         try:
-            await pool.reconcile_session()
+            await reconcile_pool(pool)
         except Exception as e:
             logger.warning("session_reconcile_loop error: %s", e)
         await asyncio.sleep(60)

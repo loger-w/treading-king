@@ -23,6 +23,11 @@ QUEUE_MAXSIZE = 5000
 BACKPRESSURE_LAG_MS = 5000
 BACKPRESSURE_DURATION_S = 30
 HEARTBEAT_INTERVAL_S = 1.0
+# heartbeat 重評估的 tick 新鮮度上限。平日休市(國定假日/颱風假)wall-clock gate
+# 照常全開,但 ring_buffer.latest 停在前一交易日收盤 tick — 不擋的話每個 cooldown
+# 週期都重複觸發假訊號 4.5 小時。上限必須 > lock_seconds 最大值(600s):漲停鎖死
+# 期間無新成交,鎖死計時靠 heartbeat 重餵同一筆 tick 推進,不能被新鮮度檢查截斷。
+STALE_TICK_MAX_AGE_S = 900
 
 # 正盤定義為週一~五 09:00 ≤ t < 13:30(台北時間),半開區間跟 PRE_OPEN/MARKET_OPEN
 # 對稱。試撮 / 盤後 / 隔夜 / 週末皆不評估訊號:
@@ -64,6 +69,7 @@ class SignalEngine:
         self._day_volume: dict[str, int] = {}
         # metrics
         self._dropped_today = 0
+        self._invalid_rules = 0
         self._last_lag_ms = 0.0
         self._lag_violation_started: float | None = None
         self._degraded = False
@@ -93,12 +99,29 @@ class SignalEngine:
     async def refresh_active_signals(self) -> None:
         """從本機 ConfigStore 讀 enabled active_signals，刷新 in-memory list 跟 field cache。"""
         rows = get_local_store().config.list_active_signals(enabled_only=True)
-        self._active = [self._row_to_active(r) for r in rows]
+        # 磁碟上的 row 可能來自舊 schema 或匯入檔(import 不逐筆驗證)——
+        # 壞一筆只跳過該筆,不讓整批規則失效、更不能阻斷 lifespan 啟動
+        active: list[ActiveSignalOut] = []
+        invalid = 0
+        for r in rows:
+            try:
+                active.append(self._row_to_active(r))
+            except Exception:
+                invalid += 1
+                rid = r.get("id", "?") if isinstance(r, dict) else "?"
+                logger.warning("active_signal row skipped (invalid): id=%s", rid, exc_info=True)
+        self._active = active
+        self._invalid_rules = invalid
         self._limit_up_active = any(
             self._strategy_type(a) == "limit_up_open_touch" for a in self._active
         )
         await self._refill_field_cache()
-        logger.info("active_signals reloaded: %d enabled", len(self._active))
+        # 重載規則代表操作者已介入 — 清 degraded,讓 lag 過載的 auto-disable 保護
+        # 可再次觸發(否則 health 永遠顯示 degraded、保護變一次性)
+        self._degraded = False
+        self._lag_violation_started = None
+        logger.info("active_signals reloaded: %d enabled, %d invalid skipped",
+                    len(self._active), invalid)
 
     def health(self) -> dict[str, Any]:
         return {
@@ -107,6 +130,7 @@ class SignalEngine:
             "dropped_today": self._dropped_today,
             "degraded": self._degraded,
             "active_count": len(self._active),
+            "invalid_rules": self._invalid_rules,
         }
 
     # ---------- internal ----------
@@ -138,12 +162,18 @@ class SignalEngine:
         for stale in self._field_cache.keys() - symbols_needed:
             self._field_cache.pop(stale, None)
 
+        # scope 資格與欄位有無解耦:monitor symbol 一律建 entry。cdp+sma 全失敗的
+        # symbol 沒 entry 會被 _scope_includes/_scope_symbols 整個踢出評估,連
+        # close / day_volume 這類不依賴 cache 的條件也被連坐
+        for sym in symbols_needed:
+            self._field_cache.setdefault(sym, {})
+
         # cdp 5 值 + 昨日收盤(供 day_change_pct 算式分母)
         cdp = get_cdp_service()
         for sym in symbols_needed:
             levels = await cdp.get(sym)
             if levels:
-                d = self._field_cache.setdefault(sym, {})
+                d = self._field_cache[sym]
                 d["cdp_ah"] = levels["ah"]
                 d["cdp_nh"] = levels["nh"]
                 d["cdp"] = levels["cdp"]
@@ -151,16 +181,26 @@ class SignalEngine:
                 d["cdp_al"] = levels["al"]
                 d["prev_close"] = levels["prev_close"]
 
-        # sma 5 / 20(失敗欄位回 None,不寫 cache)
+        # sma 5 / 20(失敗欄位回 None,不寫 cache)。當日 daily SMA 不變(實測,
+        # 見 CLAUDE.md)— 同日已有兩條就不重打 rate-limited REST,規則 / 監聽 CRUD
+        # 觸發的 refill 才不會每存一次就重燒整輪配額、拖慢 API 回應
+        same_day = self._last_field_refill_date == date.today()
         for sym in symbols_needed:
+            d = self._field_cache[sym]
+            if same_day and "sma_5" in d and "sma_20" in d:
+                continue
             sma_5, sma_20 = await ma_service.fetch_sma_5_20(sym)
-            if sma_5 is not None or sma_20 is not None:
-                d = self._field_cache.setdefault(sym, {})
-                if sma_5  is not None: d["sma_5"]  = sma_5
-                if sma_20 is not None: d["sma_20"] = sma_20
+            if sma_5  is not None: d["sma_5"]  = sma_5
+            if sma_20 is not None: d["sma_20"] = sma_20
 
-        # 跨午夜後重新累積今日成交量(跟 _gc_touch_counts 一樣的 daily reset 邏輯)
-        self._day_volume.clear()
+        # 全欄位空 = cdp 跟 sma 這輪都抓不到 — 留 warning 痕跡,
+        # 此 symbol 只剩 close / day_volume / window 類條件可評估
+        for sym in symbols_needed:
+            if not self._field_cache[sym]:
+                logger.warning(
+                    "field_cache refill: %s cdp+sma 全失敗,cache 欄位條件將不觸發", sym
+                )
+
         self._last_field_refill_date = date.today()
 
     async def _consume_loop(self) -> None:
@@ -172,7 +212,12 @@ class SignalEngine:
                 return
             # lag 只在 tick-driven path 計（heartbeat 用的是舊 tick，會誤判 backpressure）
             self._last_lag_ms = (time.time() - tick.time) * 1000.0
-            await self._evaluate(symbol, tick)
+            try:
+                await self._evaluate(symbol, tick)
+            except Exception:
+                # 單筆 tick 炸掉不能殺死 consumer task — 否則 queue 永遠堆積、
+                # 所有訊號靜默停擺到重啟,health 也看不出來
+                logger.exception("evaluate failed for %s", symbol)
 
     async def _heartbeat_loop(self) -> None:
         """每秒對所有 active scope 內的 symbol 用 ring_buffer 最新 tick 重評估一次。
@@ -202,6 +247,7 @@ class SignalEngine:
                     # refill 失敗不影響 heartbeat — 下個 heartbeat 會再試
                     logger.warning("signal_engine: daily field_cache refill failed: %s", e)
 
+            now = time.time()
             symbols: set[str] = set()
             for a in self._active:
                 symbols.update(self._scope_symbols(a))
@@ -209,7 +255,15 @@ class SignalEngine:
                 tick = rb.latest(symbol)
                 if tick is None:
                     continue
-                await self._evaluate(symbol, tick)
+                # 過舊的 tick 不重評估 — 平日休市日 wall-clock gate 全開,latest
+                # 停在前一交易日收盤 tick,會整個「假盤中」反覆觸發(見常數註解)
+                if now - tick.time > STALE_TICK_MAX_AGE_S:
+                    continue
+                try:
+                    await self._evaluate(symbol, tick)
+                except Exception:
+                    # 同 consumer — 一筆炸掉不能殺死 heartbeat task
+                    logger.exception("heartbeat evaluate failed for %s", symbol)
 
     def _scope_symbols(self, active: ActiveSignalOut) -> list[str]:
         """所有 rule 共用 monitor_list;heartbeat 用此列舉 candidate symbols。"""
@@ -226,8 +280,11 @@ class SignalEngine:
         now = time.time()
         if self._limit_up_active:
             self._update_limit_up_state(symbol, tick, now)
-        # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染
-        self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
+        # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染。
+        # heartbeat 每秒重餵 ring_buffer.latest 的同一個 Tick 物件 — 用 identity
+        # 去重,同一筆成交只加一次,否則成交稀疏的股票 day_volume 會膨脹數倍
+        if tick is not self._prev_tick.get(symbol):
+            self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
         prev = self._prev_tick.get(symbol)
         try:
@@ -397,11 +454,20 @@ class SignalEngine:
         return None
 
     def _reset_daily_strategy_state(self) -> None:
-        """跨午夜清 strategy 當日狀態。放 heartbeat daily 分支,不放 _refill_field_cache —
-        後者也在規則編輯時被呼叫,會誤清盤中累積的鎖死 / arming 狀態。"""
+        """跨午夜清當日狀態。放 heartbeat daily 分支,不放 _refill_field_cache —
+        後者也在規則 / 監聽編輯時被呼叫,會誤清盤中累積的鎖死 / arming / 總量狀態。"""
         self._limit_at_since.clear()
         self._limit_lock_best.clear()
         self._breakout_armed.clear()
+        self._day_volume.clear()
+        # 昨日收盤 tick 不該當隔日第一筆的方向參考;順手擋 24/7 長駐下
+        # 換股訂閱(top_gainers / preview)造成的慢速累積
+        self._prev_tick.clear()
+        # cooldown 上限 86400s — 更舊的 key 不可能再擋觸發,留著只會累積
+        cutoff = time.time() - 86400
+        self._cooldown = {k: ts for k, ts in self._cooldown.items() if ts >= cutoff}
+        # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
+        self._dropped_today = 0
 
     def _eval_with_touch_meta(
         self, active: ActiveSignalOut, symbol: str, tick: Tick, prev: Tick | None,
@@ -488,29 +554,6 @@ class SignalEngine:
     def _scope_includes(self, active: ActiveSignalOut, symbol: str) -> bool:
         """所有 rule 共用 monitor_list;field_cache key = monitor_list union。"""
         return symbol in self._field_cache
-
-    def _eval_conditions(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool:
-        # WindowCondition + Filter.conditions + CdpProximity + MAProximity
-        f = active.filter_json
-        results: list[bool] = []
-        for wc in (f.get("window_conditions") if isinstance(f, dict) else getattr(f, "window_conditions", [])):
-            results.append(self._eval_window(symbol, tick, wc))
-        for c in (f.get("conditions") if isinstance(f, dict) else getattr(f, "conditions", [])):
-            results.append(self._eval_filter_cond(symbol, tick, c))
-        cdp_prox = (f.get("cdp_proximity") if isinstance(f, dict)
-                    else getattr(f, "cdp_proximity", None))
-        if cdp_prox is not None:
-            ok, _ = self._eval_cdp_proximity(symbol, tick, cdp_prox)
-            results.append(ok)
-        ma_prox = (f.get("ma_proximity") if isinstance(f, dict)
-                   else getattr(f, "ma_proximity", None))
-        if ma_prox is not None:
-            ok, _ = self._eval_ma_proximity(symbol, tick, ma_prox)
-            results.append(ok)
-        if not results:
-            return False
-        logic = (f.get("logic") if isinstance(f, dict) else getattr(f, "logic", "AND"))
-        return all(results) if logic == "AND" else any(results)
 
     def _gc_touch_counts(self) -> None:
         """清掉非當天的 touch_count key — 跨午夜 heartbeat 呼叫。"""

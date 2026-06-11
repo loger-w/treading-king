@@ -1,5 +1,5 @@
 """Discord notifier — 訊號觸發 POST 給 bot(失敗 silent log)。"""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -31,7 +31,7 @@ async def test_send_signal_posts_to_bot_when_url_set(monkeypatch):
     fake_client = AsyncMock()
     fake_client.__aenter__.return_value = fake_client
     fake_client.__aexit__.return_value = False
-    fake_client.post = AsyncMock()
+    fake_client.post = AsyncMock(return_value=MagicMock(status_code=202))
     with patch("services.discord_notifier.httpx.AsyncClient", return_value=fake_client):
         await discord_notifier.send_signal(
             rule_name="漲停打開碰CDP",
@@ -74,13 +74,33 @@ async def test_send_signal_swallows_errors(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_send_signal_logs_non_2xx_response(monkeypatch, caplog):
+    """httpx 不對 4xx/5xx 拋例外 — bot 回非 2xx(schema 漂移 / URL 路徑錯)
+    必須留 warning 痕跡,否則圖卡無聲丟失,只能事後對 signals_log 才發現。"""
+    monkeypatch.setenv("SIGNALS_BOT_PUSH_URL", "http://127.0.0.1:8787/push-signal")
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = False
+    fake_client.post = AsyncMock(
+        return_value=MagicMock(status_code=400, text='{"error":"invalid payload"}')
+    )
+    with patch("services.discord_notifier.httpx.AsyncClient", return_value=fake_client):
+        await discord_notifier.send_signal(
+            rule_name="t", symbol="2330", price=600.0, volume=10,
+            triggered_at_iso="2026-06-08T05:30:00+00:00",
+        )
+    assert "Discord signal push rejected" in caplog.text
+    assert "400" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_send_signal_name_defaults_to_none_in_body(monkeypatch):
     """未帶 name(期貨 / symbols 快取查不到)→ payload name 為 None。"""
     monkeypatch.setenv("SIGNALS_BOT_PUSH_URL", "http://127.0.0.1:8787/push-signal")
     fake_client = AsyncMock()
     fake_client.__aenter__.return_value = fake_client
     fake_client.__aexit__.return_value = False
-    fake_client.post = AsyncMock()
+    fake_client.post = AsyncMock(return_value=MagicMock(status_code=202))
     with patch("services.discord_notifier.httpx.AsyncClient", return_value=fake_client):
         await discord_notifier.send_signal(
             rule_name="t", symbol="MXFF6", price=20000.0, volume=1,

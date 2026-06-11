@@ -25,7 +25,11 @@ async def run_overnight_reconnect() -> bool:
 
     logger.info("overnight reconnect starting…")
 
-    # 1. 重 login + init_realtime（重用 fubon_client 的 retry）
+    # 0. 先把舊 ws 收乾淨 — 只 pop 不 disconnect 會讓舊連線繼續推 tick（雙倍行情）
+    #    且洩漏富邦每帳號 5 條的連線額度
+    await pool.disconnect_all()
+
+    # 1. 重 login + init_realtime（重用 fubon_client 的 retry；內部也會 logout 舊 SDK）
     await fubon.init()
     if fubon.status != FubonStatus.OK:
         logger.error("overnight relogin failed: %s", fubon.last_error)
@@ -35,19 +39,10 @@ async def run_overnight_reconnect() -> bool:
         )
         return False
 
-    # 2. 重連所有 ws connection + 重訂閱
+    # 2. 重連 + 重訂閱 — 走 pool 公開方法（持 pool._lock,與 subscribe/_reconnect
+    #    不競態），成功會把 CIRCUIT_OPEN/DEGRADED 復位
     try:
-        for conn_idx in list(pool._ws_handles.keys()):
-            symbols = list(pool._conn_subs.get(conn_idx, set()))
-            pool._ws_handles.pop(conn_idx, None)  # discard old
-            ws = await pool._ensure_handle(conn_idx)
-            if ws is None:
-                raise RuntimeError(f"conn[{conn_idx}] ensure_handle None")
-            if symbols:
-                await asyncio.to_thread(
-                    ws.subscribe, {"channel": "trades", "symbols": symbols}
-                )
-                logger.info("conn[%d] re-subscribed %d symbols", conn_idx, len(symbols))
+        await pool.resubscribe_all()
         logger.info("overnight reconnect OK")
         return True
     except Exception as e:

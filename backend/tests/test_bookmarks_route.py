@@ -1,4 +1,4 @@
-"""驗 /api/bookmarks + /api/watchlist route 改 ConfigStore 後行為不變。
+"""驗 /api/bookmarks route 改 ConfigStore 後行為不變。
 
 重點:回應 shape 不變、item 的 name/market/is_etf 由 MarketCache.get_symbol 補回、
 新增 / 刪除股票會帶動 WS subscribe / unsubscribe 副作用。
@@ -79,19 +79,45 @@ def test_delete_item_unsubscribes(local_store_tmp, monkeypatch):
     fake_pool.unsubscribe.assert_awaited_with("2330", owner_id=f"bookmark:{gid}")
 
 
-def test_watchlist_add_subscribes_default_group(local_store_tmp, monkeypatch):
+def test_add_item_subscribe_failure_rolls_back(local_store_tmp, monkeypatch):
+    """subscribe 失敗(WS pool 容量滿)要回滾 store 並回報 failed。
+
+    否則書籤看得到該股票、卻整個 session 收不到即時行情(靜默不一致)—
+    與 monitor_list 的「訂閱失敗就不寫 store」原則對齊。
+    """
     fake_pool = AsyncMock()
-    monkeypatch.setattr("routes.watchlist.get_ws_pool", lambda: fake_pool)
-    monkeypatch.setattr("routes.watchlist.get_cdp_service", lambda: AsyncMock())
+    fake_pool.subscribe.side_effect = RuntimeError("capacity full")
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    r = client.post("/api/watchlist", json={"symbol": "2330"})
+    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    r = client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
     assert r.status_code == 201
-    assert r.json() == {"symbol": "2330", "status": "added"}
-    fake_pool.subscribe.assert_awaited()
-    body = client.get("/api/watchlist").json()
-    assert "watchlist" in body and body["count"] == 1
-    assert body["watchlist"][0]["name"] == "台積電"
+    body = r.json()
+    assert body["added"] == [] and body["failed"] == ["2330"] and body["count"] == 0
+    # store 已回滾 — 不會留下「有股票、沒行情」的殘骸
+    assert client.get(f"/api/bookmarks/{gid}/items").json()["count"] == 0
+
+
+def test_move_keeps_source_when_all_targets_fail(local_store_tmp, monkeypatch):
+    """move 時目的群組全部訂閱失敗 → symbol 留在來源,不可兩頭皆空。"""
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
+    get_local_store().market.replace_symbols(
+        [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
+    g1 = client.post("/api/bookmarks", json={"name": "來源"}).json()["id"]
+    g2 = client.post("/api/bookmarks", json={"name": "目的"}).json()["id"]
+    client.post(f"/api/bookmarks/{g1}/items", json={"symbols": ["2330"]})
+    fake_pool.subscribe.side_effect = RuntimeError("capacity full")
+    r = client.patch("/api/bookmarks/items/move",
+                     json={"symbols": ["2330"], "from_group_id": g1,
+                           "to_group_ids": [g2], "op": "move"})
+    assert r.status_code == 200
+    assert r.json()["failed"] == [{"symbol": "2330", "group_id": g2}]
+    assert client.get(f"/api/bookmarks/{g1}/items").json()["count"] == 1  # 留在來源
+    assert client.get(f"/api/bookmarks/{g2}/items").json()["count"] == 0  # 目的已回滾
 
 
 def test_delete_item_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):

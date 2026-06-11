@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import json
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -34,6 +33,38 @@ def _empty_config() -> dict[str, Any]:
     }
 
 
+_LIST_KEYS = ("bookmark_groups", "watchlist_items", "active_signals", "monitor_list")
+
+# 匯入檔使用者可手改 — 缺鍵會在訊號引擎重建 / 訂閱 resync / 各 route 以 KeyError
+# 或 ValidationError 炸成 500 甚至啟動失敗,必須在落地前整包擋下
+_IMPORT_REQUIRED_FIELDS = {
+    "bookmark_groups": ("id", "name"),
+    "watchlist_items": ("id", "group_id", "symbol"),
+    "active_signals": ("id", "name", "filter_json", "scope", "enabled"),
+    "monitor_list": ("symbol",),
+}
+
+
+def _validate_import_lists(data: dict) -> None:
+    """逐筆驗四個清單的形狀,任一筆壞就 raise ValueError(route 轉 400)。"""
+    for k in _LIST_KEYS:
+        v = data.get(k, [])
+        if not isinstance(v, list):
+            raise ValueError(f"{k}: expected a list, got {type(v).__name__}")
+        for i, item in enumerate(v):
+            if not isinstance(item, dict):
+                raise ValueError(f"{k}[{i}]: expected an object")
+            missing = [f for f in _IMPORT_REQUIRED_FIELDS[k] if f not in item]
+            if missing:
+                raise ValueError(f"{k}[{i}]: missing fields {missing}")
+            if k == "active_signals":
+                # filter_json / scope 形狀錯會在訊號引擎建 ActiveSignalOut 時炸
+                if not isinstance(item["filter_json"], dict):
+                    raise ValueError(f"{k}[{i}].filter_json: expected an object")
+                if not isinstance(item["scope"], dict):
+                    raise ValueError(f"{k}[{i}].scope: expected an object")
+
+
 class ConfigStore:
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
@@ -42,15 +73,32 @@ class ConfigStore:
     # ---- lifecycle ----
     def load(self) -> None:
         try:
-            self._data = read_json(self._path, None) or _empty_config()
-        except (json.JSONDecodeError, OSError):
-            # 壞檔不讓後端起不來:備份後重建
+            data = self._read_validated()
+        except (ValueError, OSError):
+            # 壞檔不讓後端起不來:備份後重建。
+            # ValueError 同時涵蓋 JSONDecodeError(壞 JSON)、UnicodeDecodeError
+            # (非 UTF-8 編輯器改壞)與形狀錯誤(合法 JSON 但非 dict)
             if self._path.exists():
                 self._path.replace(self._path.with_suffix(".json.corrupt"))
-            self._data = _empty_config()
-        for k, v in _empty_config().items():
-            self._data.setdefault(k, v)
+            data = _empty_config()
+        self._data = data
         self._seed_defaults()
+
+    def _read_validated(self) -> dict[str, Any]:
+        """讀檔 + 形狀防護:根須為 dict、四個清單須為 list 且只留 dict 元素。"""
+        data = read_json(self._path, None)
+        if data is None:
+            return _empty_config()
+        if not isinstance(data, dict):
+            raise ValueError("config root is not an object")
+        for k, v in _empty_config().items():
+            data.setdefault(k, v)
+        for k in _LIST_KEYS:
+            if not isinstance(data[k], list):
+                raise ValueError(f"{k} is not a list")
+            # 清單內殘留的非 dict 元素直接丟棄 — 半毀損仍盡量保住其餘資料
+            data[k] = [x for x in data[k] if isinstance(x, dict)]
+        return data
 
     def _seed_defaults(self) -> None:
         """無任何使用者書籤時建「自選」。"""
@@ -220,6 +268,9 @@ class ConfigStore:
     def import_config(self, data: dict) -> None:
         if data.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(f"unsupported schema_version: {data.get('schema_version')}")
+        # 整包先驗過才動狀態 — 任一筆壞就整包拒絕,記憶體與磁碟維持原狀
+        # (半套用會讓之後任何寫入把壞資料寫穿磁碟,下次啟動掛掉)
+        _validate_import_lists(data)
         # 備份現有檔(誤匯入可從備份救回)
         if self._path.exists():
             n = 1
@@ -227,7 +278,7 @@ class ConfigStore:
                 n += 1
             shutil.copy2(self._path, bak)
         new = _empty_config()
-        for k in ("bookmark_groups", "watchlist_items", "active_signals", "monitor_list"):
+        for k in _LIST_KEYS:
             new[k] = data.get(k, [])
         self._data = new
         self._seed_defaults()  # 匯入空設定也要有「自選」

@@ -8,7 +8,8 @@ class FakeCom:
     def __init__(self):
         self.sent = []
 
-    def setup(self, on_reply=None, on_balance=None, on_profit=None): ...
+    def setup(self, on_reply=None, on_balance=None, on_profit=None,
+              on_reply_disconnect=None): ...
     def set_authority(self, flag): return 0
     def login(self, u, p): return 0
     def init_order(self): return 0
@@ -49,7 +50,8 @@ class RecordingCom(FakeCom):
         super().__init__()
         self.calls = []
 
-    def setup(self, on_reply=None, on_balance=None, on_profit=None): self.calls.append("setup")
+    def setup(self, on_reply=None, on_balance=None, on_profit=None,
+              on_reply_disconnect=None): self.calls.append("setup")
     def set_authority(self, flag): self.calls.append("set_authority"); return 0
     def login(self, u, p): self.calls.append("login"); return 0
     def init_order(self): self.calls.append("init_order"); return 0
@@ -193,10 +195,10 @@ def _run_write(client, make_coro):
     return asyncio.run(_go())
 
 
-def _stock_evt(seq, qty="1000", price="90.0000"):
+def _stock_evt(seq, qty="1000", price="90.0000", bs="B00R2"):
     arr = [""] * 47
     arr[0], arr[1], arr[2], arr[3] = seq, "TS", "N", "N"
-    arr[6], arr[8], arr[11], arr[20] = "B00R2", "3357", price, qty
+    arr[6], arr[8], arr[11], arr[20] = bs, "3357", price, qty
     return parse_onnewdata(",".join(arr))
 
 
@@ -359,3 +361,105 @@ def test_audit_failure_after_send_does_not_fail_order(tmp_path, monkeypatch):
     res = _run_write(client, lambda: client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
     assert res.ok is True                      # 單已送出,結果照實回報
     assert ("cancel", "S1") in com.sent
+
+
+from services.capital_models import Position, PositionCloseRequest
+
+
+def test_close_position_second_close_blocked_inflight(tmp_path):
+    # 部位快取要等成交回報→debounce→重查回來才更新:第一筆平倉在途的數秒窗口內,
+    # 第二筆同股號請求仍看得到原始全量持倉、照樣過量閘 → 兩張全量反向單都會送進
+    # 群益(融券回補是 BUY,券商不會以庫存擋)。第二次必須被擋且留稽核。
+    com = FakeCom()
+    audit = tmp_path / "a.jsonl"
+    client = _ready_client(com, audit)
+    client.store.set_positions([Position(stock_no="2330", qty=1, kind="cash")])
+    res1 = _run_write(client, lambda: client.close_position(
+        PositionCloseRequest(stock_no="2330", price=590.0)))
+    assert res1.ok is True
+    assert len(com.sent) == 1
+    res2 = asyncio.run(client.close_position(PositionCloseRequest(stock_no="2330", price=590.0)))
+    assert res2.ok is False and "在途" in res2.message
+    assert len(com.sent) == 1                  # 第二張絕不可送到 COM
+    entry = _last_audit(audit)
+    assert entry["action"] == "close" and "在途" in entry["blocked"]
+
+
+def test_close_blocked_when_same_side_active_order_in_store(tmp_path):
+    # in-flight 窗口過後由這層接手:store 已有同檔同向活躍委託(回報已到、尚未成交)
+    # 就拒平 — 再送一張等於重複平倉
+    com = FakeCom()
+    client = _ready_client(com, tmp_path / "a.jsonl")
+    client.store.set_positions([Position(stock_no="3357", qty=1, kind="cash")])
+    client.store.apply_reply(_stock_evt("S1", bs="S00R2"))   # 活躍賣單(現股多平倉同向)
+    res = asyncio.run(client.close_position(PositionCloseRequest(stock_no="3357", price=90.0)))
+    assert res.ok is False and "活躍委託" in res.message
+    assert com.sent == []
+
+
+def test_write_timeout_returns_unknown_result(tmp_path, monkeypatch):
+    # SendStockOrder 是同步呼叫:群益端掛起時 future 永不 resolve → 請求永久懸掛。
+    # 逾時要回「結果未知」(不可回失敗誘發重送)並照樣稽核留帳。
+    import services.capital_client as mod
+    monkeypatch.setattr(mod, "_WRITE_TIMEOUT_S", 0.01)
+    com = FakeCom()
+    audit = tmp_path / "a.jsonl"
+    client = _ready_client(com, audit)
+
+    async def _go():
+        client._loop = asyncio.get_running_loop()
+        return await client.cancel_stock_order(CancelOrderRequest(seq_no="S1"))
+
+    res = asyncio.run(_go())                   # 沒人消化佇列 = COM 卡死
+    assert res.ok is False and "結果未知" in res.message
+    entry = _last_audit(audit)
+    assert entry["action"] == "cancel" and "結果未知" in entry["result"]["message"]
+
+
+def test_run_thread_exit_fails_queued_futures(tmp_path):
+    # 執行緒亡故時佇列殘留的命令沒人消化:future 必須被 set_exception,
+    # 否則 status 檢查通過後才入佇列的寫入請求會永久懸掛
+    com = RecordingCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    loop = asyncio.new_event_loop()
+    try:
+        client._loop = loop
+        fut = loop.create_future()
+        client._cmd_q.put(None)                       # 終止訊號
+        client._cmd_q.put((lambda: ("OK", 0), fut))   # 終止後殘留的命令
+        client._run()
+        loop.run_until_complete(asyncio.sleep(0))     # 消化 call_soon_threadsafe
+        assert fut.done()
+        assert isinstance(fut.exception(), RuntimeError)
+    finally:
+        loop.close()
+
+
+def test_reply_disconnect_degrades_status_not_writes(tmp_path):
+    # 回報斷線 → status 降 degraded + last_error(前端才不會把過期委託當健康資料);
+    # 但送單通道獨立可用,刪單/平倉是降風險操作,不可被擋;部位也只剩 60s 輪詢可靠
+    com = RecordingCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    assert client._init_com() is True
+    client._handle_reply_disconnect(3002)
+    assert client.status == "degraded"
+    assert "3002" in client.last_error
+    res = _run_write(client, lambda: client.cancel_stock_order(CancelOrderRequest(seq_no="S1")))
+    assert res.ok is True                      # degraded 不擋寫入
+    client._balance_last_ts = 0.0
+    client._maybe_query_balance()
+    assert ("get_real_balance", "1234567890A") in com.sent   # degraded 仍要定時查部位
+
+
+def test_profit_rows_apply_only_matching_kind(tmp_path):
+    # 同檔現股+融資並存時損益報告每種類一列、store 以 stock_no 為鍵 last-wins:
+    # 不過濾的話融資部位會被後到的現股列蓋掉均價 — 資/券成本基礎不可混用
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._handle_balance("3357,C,2000,1944,0,0,3000,0,0,0,0,3000,0,0,3000,0,155.63,A123456789,1234567890")
+    client._handle_balance("##")
+    client._handle_profit("000,查詢成功")
+    client._handle_profit("臺慶科,3357,新台幣,融資,3000,156.00,0.27,468000,464000,12345,150.55,451650,0,0,665,0,1404,135495,316155,89,,2.73,0,,Y")
+    client._handle_profit("臺慶科,3357,新台幣,現股,1000,156.00,0.27,468000,464000,12345,999.00,451650,0,0,665,0,1404,135495,316155,89,,2.73,0,,Y")
+    client._handle_profit("##,,,,")
+    assert client.store.position_for("3357").avg_price == 150.55   # 現股列(999)不可套到融資部位

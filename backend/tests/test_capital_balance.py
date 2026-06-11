@@ -97,6 +97,25 @@ def test_collector_timeout_flush():
     assert len(got) == 1
 
 
+def test_collector_timeout_flush_closes_round():
+    # timeout 保險先 flush 後,殘餘事件與遲到的 ## 不可再 flush —
+    # on_complete 是全量取代語意,二次 flush 會把部位整批換成尾段幾檔或空集合
+    got = []
+    c = BalanceCollector(on_complete=got.append, timeout_s=0.0)
+    c.feed(RAW_T_BOUGHT)
+    c.poll()                               # timeout flush(部分清單)
+    assert len(got) == 1
+    c.feed(RAW_C_MARGIN)                   # 同一輪殘餘事件 → 丟棄
+    c.feed(RAW_END)                        # 遲到的結束標記 → 不得 flush 空/尾段集合
+    c.poll()
+    assert len(got) == 1
+    c.reset()                              # 下一輪查詢重新開張
+    c.feed(RAW_C_MARGIN)
+    c.feed(RAW_END)
+    assert len(got) == 2
+    assert [p.stock_no for p in got[1]] == ["3357"]
+
+
 def test_collector_new_query_resets_staging():
     got = []
     c = BalanceCollector(on_complete=got.append)
@@ -116,15 +135,22 @@ RAW_PNL_STATUS = "000,"
 
 
 def test_parse_profit_line():
-    # 均價之外還要 [9]損益(含費稅息)/[5]報告市價/[12]成交價金 —— 前端「券商基底+即時平移」口徑用
-    assert parse_profit_line(RAW_PNL_ROW) == ProfitRow("2493", 178.05, 1368.0, 180.0, 178000.0)
-    assert parse_profit_line(RAW_PNL_MARGIN) == ProfitRow("3357", 311.75, -74636.0, 288.0, 935000.0)
+    # 均價之外還要 [9]損益(含費稅息)/[5]報告市價/[12]成交價金 —— 前端「券商基底+即時平移」口徑用;
+    # [3]交易種類也要解析:同檔多種庫存並存時每種類一列,回填只認同種類(成本基礎不可混用)
+    assert parse_profit_line(RAW_PNL_ROW) == ProfitRow("2493", 178.05, 1368.0, 180.0, 178000.0, "cash")
+    assert parse_profit_line(RAW_PNL_MARGIN) == ProfitRow("3357", 311.75, -74636.0, 288.0, 935000.0, "margin")
 
 
 def test_parse_profit_line_pnl_fields_optional():
     # 損益欄壞掉只丟那幾欄,均價仍要保住(均價是主要產出)
     bad = RAW_PNL_ROW.replace(",1368.00,", ",x,")
-    assert parse_profit_line(bad) == ProfitRow("2493", 178.05, None, 180.0, 178000.0)
+    assert parse_profit_line(bad) == ProfitRow("2493", 178.05, None, 180.0, 178000.0, "cash")
+
+
+def test_parse_profit_line_unknown_kind_is_none():
+    # 未知交易種類標籤 → kind=None:回填端視為不符、略過(寧缺均價,不可套錯成本基礎)
+    row = parse_profit_line(RAW_PNL_ROW.replace(",現股,", ",信用,"))
+    assert row is not None and row.kind is None
 
 
 def test_parse_profit_skips_status_total_end_and_junk():
@@ -144,4 +170,4 @@ def test_collector_with_profit_parser():
     c.feed(RAW_PNL_ROW)
     c.feed(RAW_PNL_TOTAL)
     c.feed("##")
-    assert got == [[ProfitRow("2493", 178.05, 1368.0, 180.0, 178000.0)]]
+    assert got == [[ProfitRow("2493", 178.05, 1368.0, 180.0, 178000.0, "cash")]]

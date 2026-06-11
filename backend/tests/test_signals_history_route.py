@@ -1,8 +1,8 @@
-"""驗 /api/signals/history + /api/signals/today_counts 改讀本機 SignalsLog 後行為不變。
+"""驗 /api/signals/history + /api/signals/today_counts 讀本機 SignalsLog。
 
-response 形狀必須跟舊 Supabase 版完全一致:
+response 形狀:
 - history    → {"signals": [...], "count": N}
-- today_counts → {"as_of": iso, "today_start": iso, "counts": [{symbol, active_signal_id}...]}
+- today_counts → {"counts": [{symbol, active_signal_id}...]}(前端只讀 counts)
 """
 from fastapi.testclient import TestClient
 
@@ -61,8 +61,8 @@ def test_today_counts_shape(local_store_tmp):
     r = client.get("/api/signals/today_counts")
     assert r.status_code == 200
     body = r.json()
-    assert "as_of" in body
-    assert "today_start" in body
+    # 只回 counts — as_of / today_start 無消費者,已移除
+    assert set(body) == {"counts"}
     counts = body["counts"]
     assert isinstance(counts, list)
     # 前端 group by (symbol, active_signal_id):row 只需含這兩個 key

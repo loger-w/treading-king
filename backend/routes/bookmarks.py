@@ -44,6 +44,42 @@ def _owner_id(group_id: str) -> str:
     return f"bookmark:{group_id}"
 
 
+# ---------- CDP backfill 佇列 ----------
+# 批次加股票若每檔各開 task,backfill 內的 historical limiter(1 req/s)是阻塞式
+# 等 token、又包在 to_thread,200 檔會佔滿 asyncio 共用執行緒池,卡住全後端的
+# 富邦呼叫。改成單一 worker 序列消化;pending set 同時去重(跨群組複製同檔
+# 只 backfill 一次)。worker reference 存模組變數,避免 task 被 GC。
+_backfill_queue: asyncio.Queue[str] | None = None
+_backfill_pending: set[str] = set()
+_backfill_worker: asyncio.Task | None = None
+
+
+def _enqueue_backfill(symbol: str) -> None:
+    global _backfill_queue, _backfill_pending, _backfill_worker
+    loop = asyncio.get_running_loop()
+    # worker 綁 event loop — 測試等情境每次起新 loop 時,舊 worker 作廢重建
+    if (_backfill_worker is None or _backfill_worker.done()
+            or _backfill_worker.get_loop() is not loop):
+        _backfill_queue = asyncio.Queue()
+        _backfill_pending = set()
+        _backfill_worker = loop.create_task(_backfill_worker_loop(_backfill_queue))
+    if symbol in _backfill_pending:
+        return
+    _backfill_pending.add(symbol)
+    _backfill_queue.put_nowait(symbol)
+
+
+async def _backfill_worker_loop(queue: asyncio.Queue[str]) -> None:
+    while True:
+        symbol = await queue.get()
+        try:
+            await get_cdp_service().backfill_from_fubon(symbol)
+        except Exception as e:  # noqa: BLE001 — 單檔失敗不影響佇列後續
+            logger.warning("cdp backfill %s failed: %s", symbol, e)
+        finally:
+            _backfill_pending.discard(symbol)
+
+
 def _require_user_group(group_id: str) -> dict:
     """取 user 書籤 + 擋系統書籤。系統 id → 403;不存在 → 404。"""
     if group_id == SYSTEM_TOP_GAINERS_ID:
@@ -212,21 +248,28 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
                if it["symbol"] in set(payload.symbols)}
     to_insert = [s for s in payload.symbols if s not in already]
 
+    # WS subscribe (owner_id 用 bookmark:{bid}) + backfill CDP。
+    # subscribe 失敗(pool 容量滿)就回滾 store 並回報 failed — 否則書籤
+    # 看得到股票、卻整個 session 收不到即時行情(靜默不一致,同 monitor_list
+    # 的「訂閱失敗就不寫 store」原則)。
+    owner = _owner_id(bid)
+    added: list[str] = []
+    failed: list[str] = []
     for s in to_insert:
         store.config.add_item(bid, s)
-
-    # WS subscribe (owner_id 用 bookmark:{bid}) + backfill CDP
-    owner = _owner_id(bid)
-    for s in to_insert:
         try:
             await get_ws_pool().subscribe(s, owner_id=owner)
         except RuntimeError as e:
             logger.warning("add items: ws subscribe %s failed: %s", s, e)
-        asyncio.create_task(get_cdp_service().backfill_from_fubon(s))
+            store.config.remove_item(bid, s)
+            failed.append(s)
+            continue
+        added.append(s)
+        _enqueue_backfill(s)
 
     # 不 refresh signal_engine:同 remove_item — 書籤股票不在訊號評估範圍
     # (monitor_list),refresh 只會白白重算 monitor 的 CDP、拖慢加入。
-    return {"added": to_insert, "skipped": list(already), "count": len(to_insert)}
+    return {"added": added, "skipped": list(already), "failed": failed, "count": len(added)}
 
 
 @router.delete("/api/bookmarks/{bid}/items/{symbol}", status_code=204)
@@ -262,27 +305,36 @@ async def move_items(payload: ItemsMove) -> dict:
     for to_id in payload.to_group_ids:
         _require_user_group(to_id)
 
-    # 加到 to_groups(同 group 已在則略過)
+    # 加到 to_groups(同 group 已在則略過)。subscribe 失敗回滾該 group 的寫入
+    # 並回報 failed — 同 add_items,避免「股票在書籤裡但沒行情」的靜默不一致。
+    failed: list[dict] = []
+    ok_symbols: set[str] = set()  # 至少在一個目的群組成功(原本已在也算)
     for to_id in payload.to_group_ids:
         already = {it["symbol"] for it in store.config.list_items(to_id)
                    if it["symbol"] in set(payload.symbols)}
+        ok_symbols.update(already)
         to_insert = [s for s in payload.symbols if s not in already]
-        for s in to_insert:
-            store.config.add_item(to_id, s)
         owner_to = _owner_id(to_id)
         for s in to_insert:
+            store.config.add_item(to_id, s)
             try:
                 await get_ws_pool().subscribe(s, owner_id=owner_to)
             except RuntimeError as e:
                 logger.warning("move: ws sub %s to %s failed: %s", s, to_id, e)
-            asyncio.create_task(get_cdp_service().backfill_from_fubon(s))
+                store.config.remove_item(to_id, s)
+                failed.append({"symbol": s, "group_id": to_id})
+                continue
+            ok_symbols.add(s)
+            _enqueue_backfill(s)
 
-    # 如果 op="move",從 from_group 移除(refcount 自動處理同檔多書籤)
+    # 如果 op="move",從 from_group 移除(refcount 自動處理同檔多書籤)。
+    # 所有目的群組都失敗的 symbol 留在來源 — 否則兩頭皆空、股票直接消失。
     if payload.op == "move":
         owner_from = _owner_id(payload.from_group_id)
-        for s in payload.symbols:
+        moved = [s for s in payload.symbols if s in ok_symbols]
+        for s in moved:
             store.config.remove_item(payload.from_group_id, s)
-        for s in payload.symbols:
+        for s in moved:
             try:
                 await get_ws_pool().unsubscribe(s, owner_id=owner_from)
             except Exception as e:
@@ -290,7 +342,8 @@ async def move_items(payload: ItemsMove) -> dict:
 
     # 不 refresh signal_engine:書籤股票搬移不改 monitor_list,refresh 多餘且慢。
     return {"status": "ok", "op": payload.op, "symbols": payload.symbols,
-            "from_group_id": payload.from_group_id, "to_group_ids": payload.to_group_ids}
+            "from_group_id": payload.from_group_id, "to_group_ids": payload.to_group_ids,
+            "failed": failed}
 
 
 # ---------- 大漲股(系統書籤)refresh 端點 ----------
