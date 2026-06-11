@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type BookmarkGroup } from "../lib/api";
 import { useMonitorList } from "../hooks/useMonitorList";
+import { ModalShell } from "./ModalShell";
 
 /**
  * 「加股票到書籤」modal — 從 IntradayChart header「+ 加入書籤」開。
@@ -21,35 +22,39 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
   const [initial, setInitial] = useState<Set<string>>(new Set());  // 進入時已勾
   const [selected, setSelected] = useState<Set<string>>(new Set());  // 目前勾選
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newName, setNewName] = useState("");
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  // Load groups + 每個 group 看 symbol 是否在內
+  // Load groups + 每個 group 看 symbol 是否在內。
+  // list() 失敗必須有 catch:否則是 unhandled rejection + 安靜顯示「空書籤」,
+  // 使用者會誤以為自己沒有任何書籤;items() 失敗會讓已收藏顯示未勾,擋儲存
   useEffect(() => {
     (async () => {
       try {
         const r = await api.bookmarks.list();
         const userGroups = r.groups.filter((g) => !g.is_system);
-        const systemGroups = r.groups.filter((g) => g.is_system);
-        setGroups([...systemGroups, ...userGroups]);
+        setGroups(r.groups);   // render 自行分組,這裡不用重排
 
         const containing = new Set<string>();
+        let itemsFailed = false;
         await Promise.all(userGroups.map(async (g) => {
           try {
             const items = await api.bookmarks.items(g.id);
             if (items.items.some((it) => it.symbol === symbol)) {
               containing.add(g.id);
             }
-          } catch {}
+          } catch (e) {
+            itemsFailed = true;
+            console.warn("AddToBookmarksDialog items load failed:", g.id, e);
+          }
         }));
+        if (itemsFailed) { setLoadError(true); return; }
         setInitial(containing);
         setSelected(new Set(containing));
+      } catch (e) {
+        console.warn("AddToBookmarksDialog load failed:", e);
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -97,6 +102,9 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
       setGroups((prev) => [...prev, g]);
       setSelected((prev) => new Set(prev).add(g.id));
       setNewName("");
+      // server 上群組已存在,立刻通知 parent 刷新——否則按「取消」關閉後
+      // sidebar 看不到新書籤(再建同名還會撞 409),像「新增失蹤」
+      await onChanged();
     } catch (e) {
       alert(`新增失敗:${(e as Error).message}`);
     }
@@ -106,15 +114,7 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
   const systemGroups = groups.filter((g) => g.is_system);
 
   return (
-    <>
-      <div onClick={onClose}
-        className="fixed inset-0 z-20 bg-bg-deep/85"
-        style={{ backdropFilter: "blur(2px)" }} />
-
-      <div role="dialog" aria-modal="true"
-        className="fixed top-1/2 left-1/2 z-[21] bg-bg-card border border-line-strong p-6
-                   w-[min(420px,90vw)] max-h-[82vh] overflow-y-auto scroll-editorial"
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="420px" scroll>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">
             加入 <span className="text-accent">{symbol}</span> 到書籤
@@ -128,6 +128,8 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
 
         {loading ? (
           <div className="text-sm text-ink-dim font-serif italic py-4 text-center">載入中…</div>
+        ) : loadError ? (
+          <div className="text-sm text-bear py-4 text-center">書籤載入失敗 — 勾選狀態不可靠,請關閉重試。</div>
         ) : (
           <>
             <ul>
@@ -198,12 +200,11 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
             className="px-4 py-2 text-sm border border-line-strong text-ink-muted hover:border-ink-muted hover:text-ink">
             取消
           </button>
-          <button onClick={submit} disabled={loading || submitting}
+          <button onClick={submit} disabled={loading || submitting || loadError}
             className="px-4 py-2 text-sm bg-accent text-bg font-medium disabled:opacity-40">
             {submitting ? "儲存中…" : "儲存"}
           </button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 }

@@ -1,20 +1,17 @@
-import { useEffect, useState } from "react";
-import { api, type CapitalStockOrderReq } from "../lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, type CapitalPosition, type CapitalStockOrderReq } from "../lib/api";
 import { subscribeOrderTicket, subscribeTicks } from "../hooks/useSignalsStream";
-import { grossPnl, netPnl } from "../lib/capital-pnl";
-import { limitUp, limitDown } from "../lib/tick";
+import { brokerPnl, grossPnl } from "../lib/capital-pnl";
+import { isTickAligned, limitUp, limitDown } from "../lib/tick";
 import { initialQtyState, manualQty, pressQuick, QTY_PRESETS, type QtyState } from "../lib/qty-quick";
 import { TIF_VALUES, TRADE_KINDS, TRADE_KIND_LABELS, type TifValue, type TradeKindValue } from "../lib/capital-labels";
 import { OrderConfirmDialog } from "./OrderConfirmDialog";
-
-const FEE = Number(import.meta.env.VITE_CAPITAL_FEE_RATE ?? "0.001425");
-const TAX = Number(import.meta.env.VITE_CAPITAL_TAX_RATE ?? "0.003");
 
 interface Props {
   selected: string | null;
   ready: boolean;
   env: string;
-  pos: { qty: number; avg_price: number | null; name: string } | null;
+  pos: CapitalPosition | null;
 }
 
 export function OrderTicket({ selected, ready, env, pos }: Props) {
@@ -29,14 +26,18 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
-  // 五檔點價 → 帶入委託價(沿用既有 bus)
+  // 五檔點價 → 帶入委託價(沿用既有 bus)。市價模式 price 是閘用估價,點價不可覆寫
   useEffect(() => subscribeOrderTicket((h) => {
+    if (isMarket) return;
     if (!selected || h.symbol === selected || h.symbol == null) setPrice(h.price.toFixed(2));
-  }), [selected]);
+  }), [selected, isMarket]);
 
-  // 平盤參考價:一天一值,換標的時抓一次即可(漲跌停快捷與市價閘用估價都靠它)
+  // 平盤參考價:一天一值,換標的時抓一次即可(漲跌停快捷與市價閘用估價都靠它)。
+  // 委託價同時清空——同價位帶的兩檔間切換時,殘值在漲跌停帶內不會被退單,
+  // 沒注意確認框就會以前一檔的價格成交
   useEffect(() => {
     setRefPrice(null);
+    setPrice("");
     if (!selected) return;
     let alive = true;
     api.quote(selected).then((r) => { if (alive) setRefPrice(r.reference_price ?? null); }).catch(() => {});
@@ -49,42 +50,53 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
     if (k === "daytrade_sell") setBuySell("sell");
   };
 
-  // 市價單:價格欄反灰,自動帶「閘用估價」(買=漲停、賣=跌停)— 金額閘與稽核才有依據
+  // 市價單:價格欄反灰,自動帶「閘用估價」(買=漲停、賣=跌停)— 金額閘與稽核才有依據。
+  // refPrice 還沒回來時清空顯示,不留前一檔/手動輸入的殘值
   useEffect(() => {
-    if (!isMarket || refPrice == null) return;
+    if (!isMarket) return;
+    if (refPrice == null) { setPrice(""); return; }
     setPrice((buySell === "buy" ? limitUp(refPrice) : limitDown(refPrice)).toFixed(2));
   }, [isMarket, buySell, refPrice]);
 
   const qty = qtyState.qty;
-  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入);市價時價格由系統帶,不驗使用者輸入
-  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0;
-  const inputOk = (isMarket ? Number(price) > 0 : priceOk) && qty > 0;
+  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入)且要對齊 tick 檔位
+  // (off-tick 會到券商才被退);市價時閘價由 refPrice 推導,缺參考價不放行
+  const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0 && isTickAligned(Number(price));
+  const inputOk = (isMarket ? refPrice != null : priceOk) && qty > 0;
   const isBuy = buySell === "buy";
 
   const submit = () => {
     if (!selected) return;
+    // 市價單的閘價(後端金額閘/稽核依據)送出當下由 refPrice 重新推導,
+    // 不信任可能被點價覆寫或跨標的殘留的 price state
+    let p = Number(price) || 0;
+    if (isMarket) {
+      if (refPrice == null) return;
+      p = isBuy ? limitUp(refPrice) : limitDown(refPrice);
+    }
     setConfirm({
       stock_no: selected, buy_sell: buySell,
-      price: Number(price) || 0, qty,
+      price: p, qty,
       price_type: isMarket ? "market" : "limit",
       time_in_force: tif, trade_kind: tradeKind, source: "panel",
     });
   };
+  const latestConfirm = useRef(confirm);   // 回應歸屬:Esc 後重開的新確認框不可被舊回應關掉
+  latestConfirm.current = confirm;
   const doSend = async () => {
     if (!confirm || sending) return;
+    const myReq = confirm;
     setSending(true);
     try {
-      const r = await api.capitalSubmitStock(confirm);
+      const r = await api.capitalSubmitStock(myReq);
       setMsg(`${r.ok ? "✓" : "✗"} ${r.message}`);
     } catch {
       setMsg("✗ 送單失敗");
     } finally {
       setSending(false);
     }
-    setConfirm(null);
+    if (latestConfirm.current === myReq) setConfirm(null);
   };
-
-  const estAmount = (Number(price) || 0) * qty * 1000;
   const segBtn = (active: boolean) =>
     `flex-1 py-1.5 text-xs rounded border ${active ? "bg-accent text-bg border-accent font-bold" : "border-line text-ink-dim hover:text-ink"}`;
 
@@ -157,20 +169,22 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
         className={`w-full py-2.5 font-bold rounded text-bg disabled:opacity-40 ${isBuy ? "bg-bull" : "bg-bear"}`}>
         {isBuy ? "買進" : "賣出"} 送出
       </button>
-      <div className="text-center text-2xs text-ink-dim mt-1.5">送出前會二次確認</div>
+      <div className="text-center text-2xs text-ink-dim mt-1.5">
+        {isMarket && selected && refPrice == null ? "等待參考價(市價單需閘用估價)…" : "送出前會二次確認"}
+      </div>
       {msg && <div className="text-center text-xs mt-2 text-ink-muted">{msg}</div>}
 
       <PositionCard symbol={selected} pos={pos} />
 
       {confirm && (
-        <OrderConfirmDialog req={confirm} env={env} estAmount={estAmount}
-          onConfirm={doSend} onClose={() => setConfirm(null)} />
+        <OrderConfirmDialog req={confirm} env={env} estAmount={confirm.price * confirm.qty * 1000}
+          busy={sending} onConfirm={doSend} onClose={() => setConfirm(null)} />
       )}
     </>
   );
 }
 
-function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: number; avg_price: number | null; name: string } | null }) {
+function PositionCard({ symbol, pos }: { symbol: string | null; pos: CapitalPosition | null }) {
   const [live, setLive] = useState<number | null>(null);
   useEffect(() => {
     setLive(null);
@@ -178,22 +192,26 @@ function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: numb
     return subscribeTicks((t) => { if (t.symbol === symbol) setLive(t.price); });
   }, [symbol]);
   if (!pos) return <div className="mt-4 text-xs text-ink-dim border-t border-line pt-3">目前標的無部位</div>;
-  const hasAvg = pos.avg_price != null;
-  const gross = grossPnl(pos.qty, pos.avg_price, live);
-  const net = netPnl(pos.qty, pos.avg_price, live, FEE, TAX);
-  const up = gross >= 0;
+  // 與庫存分頁同口徑:券商淨損益基底(含費稅息)+ 即時平移,缺基底退毛損益
+  // ——同一部位在「下單」「庫存」兩分頁不能顯示差數千元的兩種數字
+  const hasBroker = pos.pnl_base != null && pos.pnl_base_price != null;
+  const hasPnl = hasBroker || pos.avg_price != null;
+  const pnl = hasBroker
+    ? brokerPnl(pos.qty, pos.pnl_base!, pos.pnl_base_price!, live)
+    : grossPnl(pos.qty, pos.avg_price, live);
+  const up = pnl >= 0;
   return (
     <div className="mt-4 border border-line-strong rounded p-3 bg-bg-card">
       <div className="label-tiny mb-2">目前標的部位 · 即時</div>
       <div className="flex justify-between items-baseline">
-        <span className="text-sm">{pos.qty} 張 · 均 {hasAvg ? pos.avg_price!.toFixed(2) : "—"}</span>
-        <span className={`text-lg font-bold tabular-nums ${!hasAvg ? "text-ink-dim" : up ? "text-bull" : "text-bear"}`}>
-          {hasAvg ? `${up ? "+" : ""}${gross.toLocaleString()}` : "—"}
+        <span className="text-sm">{pos.qty} 張 · 均 {pos.avg_price != null ? pos.avg_price.toFixed(2) : "—"}</span>
+        <span className={`text-lg font-bold tabular-nums ${!hasPnl ? "text-ink-dim" : up ? "text-bull" : "text-bear"}`}>
+          {hasPnl ? `${up ? "+" : ""}${pnl.toLocaleString()}` : "—"}
         </span>
       </div>
       <div className="flex justify-between text-xs text-ink-dim mt-1 tabular-nums">
         <span>現價 {live != null ? live.toFixed(2) : "—"}</span>
-        <span>淨 {hasAvg ? `${up ? "+" : ""}${net.toLocaleString()}` : "—"}</span>
+        <span>{hasBroker ? "含費稅息" : "毛損益(待損益查詢)"}</span>
       </div>
     </div>
   );

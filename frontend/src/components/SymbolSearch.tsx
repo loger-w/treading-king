@@ -13,13 +13,15 @@ export function SymbolSearch({ onPick, placeholder = "搜尋代號或名稱..." 
 
   useEffect(() => {
     if (!q.trim()) { setResults([]); return; }
+    // clearTimeout 擋不住已發出的請求:晚到的舊回應會把下拉蓋成舊查詢的結果
+    let cancelled = false;
     const t = setTimeout(async () => {
       try {
         const r = await api.symbols(q.trim(), 10);
-        setResults(r.results);
+        if (!cancelled) setResults(r.results);
       } catch { /* ignore */ }
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [q]);
 
   return (

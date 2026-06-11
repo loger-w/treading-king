@@ -36,7 +36,10 @@ export function ConfigIODialog({ onClose }: { onClose: () => void }) {
     try {
       const data = JSON.parse(await file.text());
       await api.config.import(data);
-      setMsg("匯入完成,設定已即時套用。");
+      // 匯入是整包取代,前端各 hook 沒有重載路徑 — 重新載入頁面,
+      // 否則畫面會繼續顯示匯入前的舊書籤/規則/監聽清單
+      setMsg("匯入完成,重新載入頁面…");
+      setTimeout(() => window.location.reload(), 800);
     } catch (e) {
       setMsg(`匯入失敗:${e instanceof Error ? e.message : String(e)}`);
     } finally {

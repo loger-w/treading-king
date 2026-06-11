@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMXFCandles } from "../hooks/useMXFCandles";
 import {
-  scaleX_compressed,
+  buildSpans,
+  scaleXFromSpans,
   scaleY_clamped,
-  sessionBoundaries,
+  boundariesFromSpans,
   computeMA,
   CandlestickSeries,
   LineSeries,
@@ -24,7 +25,7 @@ const PAD_T = 12;
 const PAD_B = 28;
 const MIN_CANDLE_PX = 6;
 
-export function MXFIntradayChart() {
+export function MXFIntradayChart({ active = true }: { active?: boolean }) {
   const [tf, setTf] = useState(5);
   const [showVwap, setShowVwap] = useState(true);
   const [showMa, setShowMa] = useState(true);
@@ -37,7 +38,7 @@ export function MXFIntradayChart() {
   const dragStartRange = useRef<ViewRange | null>(null);
   const prevLenRef = useRef(0);
 
-  const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf);
+  const { symbol, candles, currentSession, loading, error } = useMXFCandles(tf, active);
 
   const { ma5, ma20 } = useMemo(() => {
     if (candles.length === 0) {
@@ -62,6 +63,14 @@ export function MXFIntradayChart() {
       const maxVisible = Math.floor(innerW / MIN_CANDLE_PX);
       const startIdx = Math.max(0, candles.length - maxVisible);
       setViewRange({ startIdx, endIdx: candles.length - 1 });
+      return;
+    }
+    // candles 縮水時(每天 15:00 REST 的 afterhours 換成剛開始的新夜盤)殘留的
+    // viewRange 越界 → slice 空陣列 → y 軸 ±Infinity 整片空白且不自癒,重新右錨夾回
+    if (viewRange.endIdx > candles.length - 1) {
+      const span = viewRange.endIdx - viewRange.startIdx;
+      const endIdx = candles.length - 1;
+      setViewRange({ startIdx: Math.max(0, endIdx - span), endIdx });
     }
     // viewRange not in deps to avoid re-run when zoom/pan updates it
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,14 +173,21 @@ export function MXFIntradayChart() {
     };
   }, [candles, viewRange, ma5, ma20]);
 
-  const baselineOpen = dayOpenBaseline(candles, new Date());
+  // candles 才會改變結果(每 30s/每分鐘),hover/drag 的每個 mousemove 都 re-render,
+  // 不 memo 的話每次都對全量 candles(1m 約 1100 根)做 O(n) Date 解析
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const baselineOpen = useMemo(() => dayOpenBaseline(candles, new Date()), [candles]);
   const latest = candles.length > 0 ? candles[candles.length - 1] : null;
   const change = latest && baselineOpen ? latest.close - baselineOpen : 0;
   const changePct = latest && baselineOpen ? (change / baselineOpen) * 100 : 0;
   const isUp = change > 0;
   const dirCls = isUp ? "text-bull" : change < 0 ? "text-bear" : "text-ink-muted";
 
-  const sx = (iso: string) => PAD_L + scaleX_compressed(iso, visibleSessions, innerW);
+  // spans 預建一次:sx 每根 K 棒/每個 mousemove hit-test 都呼叫,
+  // 不緩存的話每次都重新解析全部 session 的 ISO 日期
+  const spans = useMemo(() => buildSpans(visibleSessions, innerW), [visibleSessions, innerW]);
+  const gapBoundaries = useMemo(() => boundariesFromSpans(spans), [spans]);
+  const sx = (iso: string) => PAD_L + scaleXFromSpans(iso, spans);
   const sy = (v: number) => PAD_T + scaleY_clamped(v, yMinView, yMaxView, innerH);
 
   function handleMouseDown(e: React.MouseEvent<SVGSVGElement>) {
@@ -230,33 +246,46 @@ export function MXFIntradayChart() {
     setIsDragging(false);
   }
 
-  function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
-    e.preventDefault();  // always block page scroll on chart
-    if (!viewRange) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+  // wheel 縮放走原生 non-passive listener:React 17+ 把 wheel 掛成 passive,
+  // synthetic onWheel 裡 preventDefault 無效——頁面跟著捲動、console 噴 intervention 錯誤
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const wheelRef = useRef<(e: WheelEvent) => void>(() => {});
+  wheelRef.current = (e: WheelEvent) => {
+    if (!viewRange || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
     if (svgX < PAD_L || svgX > CHART_W - PAD_R) return;
     const mouseRatio = (svgX - PAD_L) / innerW;
-    const newRange = computeNewViewRange({
+    setViewRange(computeNewViewRange({
       prevRange: viewRange,
       mouseRatio,
       deltaY: e.deltaY,
       candlesLen: candles.length,
       innerW,
       minCandlePx: MIN_CANDLE_PX,
-    });
-    setViewRange(newRange);
-  }
+    }));
+  };
 
   // 顯示 chart 還是 placeholder 由 loading/error/!symbol 決定，但 header + toolbar 永遠 render
-  // 避免切 timeframe 時整個面板閃成「載入中...」
+  // 避免切 timeframe 時整個面板閃成「載入中...」。
+  // error 只在沒有任何資料時整塊替換——hook 失敗時刻意保留舊 candles(不閃白),
+  // 元件不能用 error placeholder 把還能顯示的圖蓋掉 30 秒
   const placeholder = loading
     ? { text: "載入中…", className: "text-ink-muted" }
-    : error
+    : error && candles.length === 0
     ? { text: error, className: "text-bear" }
     : !symbol
     ? { text: "無法取得 MXF 近月合約", className: "text-ink-muted" }
     : null;
+
+  const chartVisible = placeholder == null;
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!chartVisible || !el) return;
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); wheelRef.current(e); };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [chartVisible]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -350,7 +379,10 @@ export function MXFIntradayChart() {
           {placeholder.text}
         </div>
       ) : (
+      <>
+      {error && <div className="text-2xs text-bear">⚠ 更新失敗(顯示前次資料):{error}</div>}
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
         style={{ width: "100%", height: "auto" }}
         className={isDragging ? "cursor-grabbing" : "cursor-crosshair"}
@@ -358,7 +390,6 @@ export function MXFIntradayChart() {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
-        onWheel={handleWheel}
       >
         {/* Y 軸格線 */}
         {[0, 0.25, 0.5, 0.75, 1].map((r) => {
@@ -367,7 +398,7 @@ export function MXFIntradayChart() {
         })}
 
         {/* session gap 虛線 */}
-        {sessionBoundaries(visibleSessions, innerW).map((g, i) => (
+        {gapBoundaries.map((g, i) => (
           <g key={i}>
             <line x1={PAD_L + g.gapStartPx} x2={PAD_L + g.gapStartPx} y1={PAD_T} y2={PAD_T + innerH} stroke="#bbb" strokeDasharray="3 3" />
             <line x1={PAD_L + g.gapEndPx} x2={PAD_L + g.gapEndPx} y1={PAD_T} y2={PAD_T + innerH} stroke="#bbb" strokeDasharray="3 3" />
@@ -378,7 +409,7 @@ export function MXFIntradayChart() {
         {visibleSessions.map((s, i) => {
           const startX = i === 0
             ? sx(visibleCandles[0]?.date ?? s.startIso)
-            : PAD_L + sessionBoundaries(visibleSessions, innerW)[i - 1].gapEndPx;
+            : PAD_L + gapBoundaries[i - 1].gapEndPx;
           if (Number.isNaN(startX)) return null;
           // Taipei-time date + sessionType derived from session start
           const startEpoch = new Date(s.startIso).getTime();
@@ -396,7 +427,7 @@ export function MXFIntradayChart() {
         })}
 
         {/* 主圖 */}
-        <CandlestickSeries candles={visibleCandles} scaleX={sx} scaleY={sy} width={innerW} />
+        <CandlestickSeries candles={visibleCandles} scaleX={sx} scaleY={sy} />
 
         {/* VWAP */}
         {showVwap && <LineSeries candles={visibleCandles} scaleX={sx} scaleY={sy} field="average" stroke="#9aa0a6" dashed />}
@@ -500,6 +531,7 @@ export function MXFIntradayChart() {
           );
         })()}
       </svg>
+      </>
       )}
     </div>
   );

@@ -39,14 +39,24 @@ export function formatTickPrice(price: number): string {
   return rounded.toFixed(decimals);
 }
 
-/** 方向性對齊 tick。整數「分」運算同 backend cdp.py:先 round 殺浮點雜訊再除,
- *  53.9/0.1=538.999… 的 floor 誤捨陷阱才繞得開。 */
+/** 方向性對齊 tick。用 0.1 分(deci-cent)整數運算:ref×1.1/×0.9 合法地帶
+ *  半分尾數(9.05×1.1=9.955),整數「分」會把該被 floor/ceil 的尾數提前
+ *  四捨五入;deci-cent 下這些輸入是精確整數,round 只殺 float 雜訊(~1e-12),
+ *  同時保留整數除法繞開 53.9/0.1=538.999… 的 floor 誤捨陷阱。 */
 export function roundToTick(price: number, dir: "up" | "down"): number {
   const tick = tickSize(price);
-  const cents = Math.round(price * 100);
-  const tickCents = Math.round(tick * 100);
-  const units = dir === "down" ? Math.floor(cents / tickCents) : Math.ceil(cents / tickCents);
-  return Math.round(units * tickCents) / 100;
+  const deci = Math.round(price * 1000);
+  const tickDeci = Math.round(tick * 1000);
+  const units = dir === "down" ? Math.floor(deci / tickDeci) : Math.ceil(deci / tickDeci);
+  return (units * tickDeci) / 1000;
+}
+
+/** 委託價是否落在合法檔位 — off-tick 限價會被券商/交易所退單,前端先擋。
+ *  deci-cent 整數運算殺 float 雜訊。 */
+export function isTickAligned(price: number): boolean {
+  const deci = Math.round(price * 1000);
+  const tickDeci = Math.round(tickSize(price) * 1000);
+  return deci % tickDeci === 0;
 }
 
 /** 台股漲停價 = 參考價 ×1.1 尾數捨去(絕不超過 +10%);tick 以漲停價當下級距為準。 */

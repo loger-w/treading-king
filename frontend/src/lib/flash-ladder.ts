@@ -57,6 +57,17 @@ function stepDown(price: number): number {
   return roundToTick(Math.round((price - t) * 100) / 100, "up");
 }
 
+/** 各價位張數按買賣邊聚合 — 活單與成交紀錄同構,共用一份累加邏輯 */
+function aggregateLotsBySide(lots: MyOrderLot[]): { B: Map<number, number>; S: Map<number, number> } {
+  const B = new Map<number, number>();
+  const S = new Map<number, number>();
+  for (const o of lots) {
+    const m = o.buySell === "B" ? B : S;
+    m.set(o.price, (m.get(o.price) ?? 0) + o.lots);
+  }
+  return { B, S };
+}
+
 export function buildLadder(opts: {
   center: number;
   reference: number | null;
@@ -89,27 +100,17 @@ export function buildLadder(opts: {
 
   const bidMap = new Map(bids.map((b) => [b.price, b.size]));
   const askMap = new Map(asks.map((a) => [a.price, a.size]));
-  const myBuy = new Map<number, number>();
-  const mySell = new Map<number, number>();
-  for (const o of myOrders) {
-    const m = o.buySell === "B" ? myBuy : mySell;
-    m.set(o.price, (m.get(o.price) ?? 0) + o.lots);
-  }
-  const fillBuy = new Map<number, number>();
-  const fillSell = new Map<number, number>();
-  for (const o of opts.myFills ?? []) {
-    const m = o.buySell === "B" ? fillBuy : fillSell;
-    m.set(o.price, (m.get(o.price) ?? 0) + o.lots);
-  }
+  const my = aggregateLotsBySide(myOrders);
+  const fills = aggregateLotsBySide(opts.myFills ?? []);
 
   return prices.map((price) => ({
     price,
     buyVol: bidMap.get(price) ?? null,
     sellVol: askMap.get(price) ?? null,
-    myBuyLots: myBuy.get(price) ?? 0,
-    mySellLots: mySell.get(price) ?? 0,
-    myBuyFills: fillBuy.get(price) ?? 0,
-    mySellFills: fillSell.get(price) ?? 0,
+    myBuyLots: my.B.get(price) ?? 0,
+    mySellLots: my.S.get(price) ?? 0,
+    myBuyFills: fills.B.get(price) ?? 0,
+    mySellFills: fills.S.get(price) ?? 0,
     isCenter: price === c,
     clickable: Math.abs(price - center) / center <= CLICK_BAND + 1e-9,
   }));

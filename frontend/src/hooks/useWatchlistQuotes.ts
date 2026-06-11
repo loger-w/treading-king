@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { subscribeTicks } from "./useSignalsStream";
 import { useSnapshotCache } from "./useSnapshotCache";
 
@@ -20,9 +20,16 @@ export function useWatchlistQuotes(symbols: string[]): Record<string, WatchlistQ
   const snapshot = useSnapshotCache(symbols);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
+  // 後端推的是全部訂閱 symbol 的逐筆 tick(行情尖峰每秒數十次):
+  // 無關 symbol 與同價 tick 都回傳 prev 讓 React bail out,不打 re-render
+  const symbolSet = useMemo(() => new Set(symbols), [symbols]);
+  const symbolSetRef = useRef(symbolSet);
+  symbolSetRef.current = symbolSet;
+
   useEffect(() => {
     const unsub = subscribeTicks((t) => {
-      setLivePrices((prev) => ({ ...prev, [t.symbol]: t.price }));
+      if (!symbolSetRef.current.has(t.symbol)) return;
+      setLivePrices((prev) => (prev[t.symbol] === t.price ? prev : { ...prev, [t.symbol]: t.price }));
     });
     return unsub;
   }, []);

@@ -104,6 +104,21 @@ describe("computeNewViewRange", () => {
     });
     expect(result.startIdx).toBeGreaterThanOrEqual(0);
   });
+
+  test("candlesLen < MIN_VISIBLE 時 endIdx 不可越界(夜盤剛開盤僅 2-3 根)", () => {
+    // MIN_VISIBLE 抬升不可勝過 candlesLen 上限,否則回傳的 ViewRange
+    // 違反 endIdx <= candlesLen-1 的 invariant,下游 slice 全靠巧合夾住
+    const result = computeNewViewRange({
+      prevRange: { startIdx: 0, endIdx: 2 },  // 全部 3 根都在視窗
+      mouseRatio: 0.5,
+      deltaY: -100,  // zoom in
+      candlesLen: 3,
+      innerW: 888,
+      minCandlePx: 6,
+    });
+    expect(result.startIdx).toBe(0);
+    expect(result.endIdx).toBe(2);
+  });
 });
 
 import { pickInterval } from "./mxf-chart";

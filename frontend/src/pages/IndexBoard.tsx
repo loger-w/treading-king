@@ -3,7 +3,7 @@ import { IndexIntradayChart } from "../components/IndexIntradayChart";
 import { IndexOverlayChart } from "../components/IndexOverlayChart";
 import { INDEX_SYMBOLS } from "../lib/index-symbols";
 
-export function IndexBoard() {
+export function IndexBoard({ active = true }: { active?: boolean }) {
   const [overlay, setOverlay] = useLocalToggle("tk:index:overlay", false);
 
   return (
@@ -31,13 +31,13 @@ export function IndexBoard() {
         {overlay ? (
           <section className="rounded-lg border border-line p-4">
             <div className="label mb-3">今日漲跌 % 對比</div>
-            <IndexOverlayChart />
+            <IndexOverlayChart active={active} />
           </section>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {INDEX_SYMBOLS.map((s) => (
               <section key={s.code} className="rounded-lg border border-line p-4">
-                <IndexIntradayChart code={s.code} name={s.name} />
+                <IndexIntradayChart code={s.code} name={s.name} active={active} />
               </section>
             ))}
           </div>

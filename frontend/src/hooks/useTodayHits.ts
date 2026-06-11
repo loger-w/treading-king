@@ -27,7 +27,18 @@ export function useTodayHits() {
           grouped[row.symbol][row.active_signal_id] =
             (grouped[row.symbol][row.active_signal_id] ?? 0) + 1;
         }
-        setCounts(grouped);
+        // 與 fetch 在途時 WS bump 進來的計數 merge(同 key 取大):整包取代會把
+        // 開盤瞬間的命中蓋掉(後端先 broadcast 後寫 log,snapshot 必然漏掉那筆)
+        setCounts((prev) => {
+          const merged: HitCounts = { ...grouped };
+          for (const [sym, rules] of Object.entries(prev)) {
+            merged[sym] = { ...merged[sym] };
+            for (const [rid, n] of Object.entries(rules)) {
+              merged[sym][rid] = Math.max(merged[sym][rid] ?? 0, n);
+            }
+          }
+          return merged;
+        });
       } catch (e) {
         console.warn("useTodayHits baseline failed:", e);
         // fallback: 保持 {} (全 0)

@@ -8,14 +8,12 @@ import { TopToolbar } from "../components/TopToolbar";
 import { TradingPanel } from "../components/TradingPanel";
 import { TriggerList } from "../components/TriggerList";
 import { useActiveSignals } from "../hooks/useActiveSignals";
-import { useIntradayCandles } from "../hooks/useIntradayCandles";
 import { MonitorListProvider, useMonitorList } from "../hooks/useMonitorList";
 import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
 import { useSnapshotCache } from "../hooks/useSnapshotCache";
 import { useSymbolNames } from "../hooks/useSymbolNames";
-import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
 import { buildSymbolNames } from "../lib/symbol-name";
 
@@ -29,15 +27,15 @@ import { buildSymbolNames } from "../lib/symbol-name";
  * 搜尋流程：toolbar 搜尋 → setSelected 預覽（不再直接 add 自選）；
  *           IntradayChart header 提供「+ 加入自選 / 已在自選 ✓」按鈕。
  */
-export function Monitor() {
+export function Monitor({ active = true }: { active?: boolean }) {
   return (
     <MonitorListProvider>
-      <MonitorInner />
+      <MonitorInner active={active} />
     </MonitorListProvider>
   );
 }
 
-function MonitorInner() {
+function MonitorInner({ active }: { active: boolean }) {
   const { items: rules, refresh: refreshRules } = useActiveSignals();
   const { counts, bump } = useTodayHits();
 
@@ -75,13 +73,10 @@ function MonitorInner() {
     })();
   }, []);
 
-  // Intraday chart (selected symbol) — onTick callback 在下面 useSignalsStream 內共用
-  const { candles, prevClose, onTick } = useIntradayCandles(selected);
-
-  // 單一 WS 連線：onSignal 累加命中、onTick 給 chart
+  // 單一 WS 連線：onSignal 累加命中。tick 走 module bus(subscribeTicks),
+  // 分時圖的 candles state 養在 IntradayChart 內,不再經頁根穿針引線
   const { status: wsStatus, recent } = useSignalsStream({
     onSignal: (s) => bump(s.symbol, s.active_signal_id),
-    onTick,
   });
 
   const inAnyBookmark = useMemo(
@@ -89,19 +84,12 @@ function MonitorInner() {
     [bookmarkSymbols, selected]
   );
 
-  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor } = useMonitorList();
+  const { items: monitorItems, add: addToMonitor, remove: removeFromMonitor, error: monitorError } = useMonitorList();
 
   const inMonitor = useMemo(
     () => selected !== null && monitorItems.some((m) => m.symbol === selected),
     [monitorItems, selected]
   );
-  const allWatchSymbols = useMemo(
-    () => Array.from(new Set([...bookmarkSymbols, ...monitorItems.map((m) => m.symbol)])),
-    [bookmarkSymbols, monitorItems]
-  );
-
-  const watchlistQuotes = useWatchlistQuotes(allWatchSymbols);
-
   const triggerSymbols = useMemo(() => {
     const set = new Set<string>();
     for (const h of historicalToday) set.add(h.symbol);
@@ -119,11 +107,12 @@ function MonitorInner() {
   usePreviewSubscribe(selected, bookmarkSymbols);
 
   // 訊號可對非自選股觸發 — 這些 symbol 不在 bookmarkSymbolNames,TriggerList 只剩裸代號。
-  // 補查這些未知 symbol 的名稱(已知的不重打)。
-  const unknownTriggerSymbols = useMemo(
-    () => triggerSymbols.filter((s) => !(s in bookmarkSymbolNames)),
-    [triggerSymbols, bookmarkSymbolNames]
-  );
+  // 補查這些未知 symbol 的名稱(已知的不重打);監聽清單已帶名稱的也不重打——
+  // 訊號只對監聽股觸發,查回來的名稱會被 buildSymbolNames 的監聽來源蓋掉,純浪費
+  const unknownTriggerSymbols = useMemo(() => {
+    const monitorNamed = new Set(monitorItems.filter((m) => m.name != null).map((m) => m.symbol));
+    return triggerSymbols.filter((s) => !(s in bookmarkSymbolNames) && !monitorNamed.has(s));
+  }, [triggerSymbols, bookmarkSymbolNames, monitorItems]);
   const resolvedNames = useSymbolNames(unknownTriggerSymbols);
 
   // chart header / 觸發列表的 symbol → name:書籤/搜尋 + 監聽 + 觸發解析三來源合併。
@@ -133,13 +122,14 @@ function MonitorInner() {
     [resolvedNames, monitorItems, bookmarkSymbolNames]
   );
 
-  function handleSelect(sym: string) {
+  // useCallback:TriggerList 有 memo,不穩定的 onSelect 會打穿它
+  const handleSelect = useCallback((sym: string) => {
     setSelected(sym);
     // 從 history 點時 scroll 回 chart
     if (chartRef.current) {
       chartRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }
+  }, []);
 
   function handleSearchPick(sym: string, name: string | null) {
     // 搜尋現在「先預覽」:只 setSelected,不 add。
@@ -172,6 +162,7 @@ function MonitorInner() {
           onOpenRules={() => setDialogOpen((v) => !v)}
           onPickSymbol={handleSearchPick}
         />
+        {monitorError && <div className="text-center text-xs text-bear pb-1">⚠ {monitorError}</div>}
       </div>
 
       <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -207,10 +198,9 @@ function MonitorInner() {
             {/* COL 2: 書籤 */}
             <section className="flex flex-col min-w-0 min-h-0">
               <BookmarksPanel
-                key={bookmarksRefreshKey}
+                refreshToken={bookmarksRefreshKey}
                 rules={rules}
                 hitCounts={counts}
-                quotes={watchlistQuotes}
                 selectedSymbol={selected}
                 onSelectSymbol={setSelected}
                 onItemsChanged={handleBookmarkItemsChanged}
@@ -234,8 +224,7 @@ function MonitorInner() {
                     <IntradayChart
                       symbol={selected}
                       name={symbolNames[selected] ?? null}
-                      candles={candles}
-                      prevClose={prevClose}
+                      active={active}
                       inAnyBookmark={inAnyBookmark}
                       onOpenBookmarkDialog={handleOpenBookmarkDialog}
                       inMonitor={inMonitor}
@@ -245,7 +234,9 @@ function MonitorInner() {
                   </div>
                 )}
               </div>
-              <QuoteBook symbol={selected} />
+              {/* 頁面隱藏時暫停 1Hz 五檔輪詢(直打富邦);下單面板的輪詢刻意不動,
+                  切頁不可重置使用者下到一半的單 */}
+              <QuoteBook symbol={active ? selected : null} />
             </section>
 
             {/* COL 4: 下單面板(群益) */}
@@ -267,7 +258,8 @@ function MonitorInner() {
           symbol={selected}
           onClose={() => setAddToBookmarksOpen(false)}
           onChanged={async () => {
-            // 重新渲染 BookmarksPanel(讓它重新拉 groups + items)
+            // 通知 BookmarksPanel 重抓 groups + items(refreshToken,不 remount——
+            // remount 會丟失選中書籤/編輯模式並全量重拉)
             setBookmarksRefreshKey((k) => k + 1);
             // refreshMonitor 已不需要 — MonitorListProvider 共用同一份 state,
             // add/remove 操作完成後所有消費者(Monitor、BookmarksPanel、AddToBookmarksDialog)都會看到最新資料

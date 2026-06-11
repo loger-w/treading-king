@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { brokerPnl, grossPnl, netPnl, pickPrice, snapshotPrices } from "./capital-pnl";
+import { brokerPnl, grossPnl, pickPrice, snapshotPrices } from "./capital-pnl";
 
+// netPnl(env 費率估算)已移除:損益口徑統一為券商基底(brokerPnl),
+// 前端不再自行估費稅(空單稅基課錯邊的 bug 隨之消滅)
 describe("capital-pnl", () => {
   it("gross = qty*1000*(price-avg)", () => {
     expect(grossPnl(5, 575, 590)).toBe(75000);
@@ -8,20 +10,11 @@ describe("capital-pnl", () => {
   it("short position gross", () => {
     expect(grossPnl(-2, 100, 95)).toBe(10000);
   });
-  it("net subtracts entry+exit fee and sell tax", () => {
-    // qty5 avg575 cur590 feeRate0.001425 taxRate0.003
-    // gross=75000; entryFee=round(5*1000*575*0.001425)=4097
-    // exitFee=round(5*1000*590*0.001425)=4204; tax=round(5*1000*590*0.003)=8850
-    // net = 75000-4097-4204-8850 = 57849
-    expect(netPnl(5, 575, 590, 0.001425, 0.003)).toBe(57849);
-  });
   it("null price -> 0", () => {
     expect(grossPnl(5, 575, null)).toBe(0);
-    expect(netPnl(5, 575, null, 0.001425, 0.003)).toBe(0);
   });
   it("null avg -> 0(即時庫存報告無均價欄,未知均價不可估損益)", () => {
     expect(grossPnl(5, null, 590)).toBe(0);
-    expect(netPnl(5, null, 590, 0.001425, 0.003)).toBe(0);
   });
 });
 

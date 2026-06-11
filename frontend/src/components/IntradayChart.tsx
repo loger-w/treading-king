@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type CamarillaLevels, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/api";
+import { api, type CamarillaLevels, type CdpLevels, type MaLevels } from "../lib/api";
+import { useIntradayCandles } from "../hooks/useIntradayCandles";
+import { subscribeTicks } from "../hooks/useSignalsStream";
 import { useLocalToggle } from "../hooks/useLocalToggle";
 import { formatTickPrice } from "../lib/tick";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
@@ -11,8 +13,7 @@ import {
 interface Props {
   symbol: string;
   name: string | null;
-  candles: IntradayCandle[];
-  prevClose: number | null;  // 昨日收盤，給漲跌% / Y 軸 ±10% 用
+  active?: boolean;   // 頁面隱藏時暫停 candles 輪詢(回來重抓)
   inAnyBookmark: boolean;
   onOpenBookmarkDialog: () => void;
   inMonitor: boolean;
@@ -21,7 +22,12 @@ interface Props {
 }
 
 
-export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
+export function IntradayChart({ symbol, name, active = true, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
+  // candles state 養在本元件而非頁根:選中股是 tick 最密的一檔,
+  // state 在 Monitor 的話每筆成交都讓整頁四欄(含下單面板)重繪
+  const { candles, prevClose, onTick } = useIntradayCandles(active ? symbol : null);
+  useEffect(() => subscribeTicks((t) => onTick(t.symbol, t.price)), [onTick]);
+
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [showCamarilla, setShowCamarilla] = useLocalToggle("tk:chart:camarilla", false);
@@ -34,40 +40,50 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
   const [ma, setMa] = useState<MaLevels | null>(null);
 
   useEffect(() => {
-    // 切 symbol 時先清舊 CDP — 避免新圖上殘留舊 CDP 線
+    // 切 symbol 時先清舊 CDP — 避免新圖上殘留舊 CDP 線。
+    // A→B 快速切換時 A 的回應可能比 B 慢到達,stale 旗標擋下飛行中的舊回應,
+    // 否則別檔的價位線會畫在當前圖上(同 candles 路徑的 resolveCandleUpdate)
     setCdp(null);
     setCdpError(null);
     if (!showCdp) return;
-    api.cdp(symbol).then(setCdp).catch((e) =>
-      setCdpError(e instanceof Error ? e.message : String(e))
-    );
+    let stale = false;
+    api.cdp(symbol).then((r) => { if (!stale) setCdp(r); }).catch((e) => {
+      if (!stale) setCdpError(e instanceof Error ? e.message : String(e));
+    });
+    return () => { stale = true; };
   }, [symbol, showCdp]);
 
   useEffect(() => {
-    // 切 symbol 時先清舊 Camarilla — 避免新圖上殘留舊線
+    // 切 symbol 時先清舊 Camarilla — 避免新圖上殘留舊線(stale 旗標同 CDP)
     setCamarilla(null);
     setCamarillaError(null);
     if (!showCamarilla) return;
-    api.camarilla(symbol).then(setCamarilla).catch((e) =>
-      setCamarillaError(e instanceof Error ? e.message : String(e))
-    );
+    let stale = false;
+    api.camarilla(symbol).then((r) => { if (!stale) setCamarilla(r); }).catch((e) => {
+      if (!stale) setCamarillaError(e instanceof Error ? e.message : String(e));
+    });
+    return () => { stale = true; };
   }, [symbol, showCamarilla]);
 
   useEffect(() => {
-    // 切 symbol 時先清舊 MA — 避免新圖上殘留舊值
+    // 切 symbol 時先清舊 MA — 避免新圖上殘留舊值(stale 旗標同 CDP)
     setMa(null);
     if (!showMa) return;
-    api.ma(symbol).then(setMa).catch((e) => {
+    let stale = false;
+    api.ma(symbol).then((r) => { if (!stale) setMa(r); }).catch((e) => {
       console.warn("MA fetch failed:", e);
     });
+    return () => { stale = true; };
   }, [symbol, showMa]);
 
+  // flags 物件穩定化:inline literal 會打穿 IntradayChartStatic 的 memo
+  const flags = useMemo(
+    () => ({ vwap: showVwap, cdp: showCdp, camarilla: showCamarilla, volume: showVolume, ma: showMa }),
+    [showVwap, showCdp, showCamarilla, showVolume, showMa],
+  );
   const geometry = useMemo(
-    () => computeIntradayGeometry({
-      candles, prevClose, cdp, camarilla, ma,
-      flags: { vwap: showVwap, cdp: showCdp, camarilla: showCamarilla, volume: showVolume, ma: showMa },
-    }),
-    [candles, cdp, showCdp, camarilla, showCamarilla, ma, showMa, showVwap, prevClose, showVolume],
+    () => computeIntradayGeometry({ candles, prevClose, cdp, camarilla, ma, flags }),
+    [candles, cdp, camarilla, ma, prevClose, flags],
   );
   const { scaleX, scaleY, scaleVolY, minutesByIdx, filteredCandles } = geometry;
 
@@ -100,7 +116,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
       const d = Math.abs(minutesByIdx[i] - mAtCursor);
       if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
-    setHover({ idx: bestIdx });
+    // 同一根 candle 回傳 prev 讓 React bail out — mousemove 每動一下都進來
+    setHover((prev) => (prev?.idx === bestIdx ? prev : { idx: bestIdx }));
   }
 
   function handleMouseLeave() {
@@ -108,9 +125,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
   }
 
   const latest = filteredCandles[filteredCandles.length - 1];
-  const first = filteredCandles[0];
-  // 漲跌基準：昨日收盤；prev_close 沒拿到時 fallback 今日開盤
-  const baseline = prevClose ?? (first ? first.open : 0);
+  // 漲跌基準與圖內填色同源(geometry.baseline = prevClose ?? 首根開盤)
+  const baseline = geometry.baseline;
   const change = latest && baseline ? latest.close - baseline : 0;
   const changePct = latest && baseline ? (change / baseline) * 100 : 0;
   const isUp = change > 0;
@@ -186,12 +202,14 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
               hover crosshair(下方)留在本元件以保持互動狀態 */}
           <IntradayChartStatic
             candles={candles} prevClose={prevClose} cdp={cdp} camarilla={camarilla} ma={ma}
-            flags={{ vwap: showVwap, cdp: showCdp, camarilla: showCamarilla, volume: showVolume, ma: showMa }}
+            flags={flags}
             geometry={geometry}
           />
 
-          {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）*/}
-          {hover && (() => {
+          {/* Hover crosshair — 線跟價位 snap 到走勢線本身（不是 cursor 自由位置）。
+              切股後 candles 變短時殘留的 hover.idx 會越界(svg 卸載不觸發 mouseleave),
+              必須守門否則 render throw 整頁白屏 — 同 MXFIntradayChart 的防護 */}
+          {hover && filteredCandles[hover.idx] && (() => {
             const candle = filteredCandles[hover.idx];
             const m = minutesByIdx[hover.idx];
             const lineX = scaleX(m);

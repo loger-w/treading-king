@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { ModalShell } from "./ModalShell";
 
 /**
  * 「新增書籤」modal — 單一輸入框、確認後 create。
@@ -11,12 +12,6 @@ interface Props {
 export function BookmarkNewDialog({ onClose, onCreate }: Props) {
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   async function submit() {
     const v = name.trim();
@@ -32,15 +27,7 @@ export function BookmarkNewDialog({ onClose, onCreate }: Props) {
   }
 
   return (
-    <>
-      <div onClick={onClose}
-        className="fixed inset-0 z-20 bg-bg-deep/85"
-        style={{ backdropFilter: "blur(2px)" }} />
-
-      <div role="dialog" aria-modal="true"
-        className="fixed top-1/2 left-1/2 z-[21] bg-bg-card border border-line-strong p-6
-                   w-[min(360px,90vw)]"
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="360px">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">新增書籤</h3>
           <button onClick={onClose} className="text-ink-dim hover:text-accent text-lg" aria-label="關閉">×</button>
@@ -70,7 +57,6 @@ export function BookmarkNewDialog({ onClose, onCreate }: Props) {
             {submitting ? "新增中…" : "新增"}
           </button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 }

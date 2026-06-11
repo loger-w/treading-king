@@ -72,17 +72,14 @@ interface ManagedWS {
 
 export function useSignalsStream(opts?: {
   onSignal?: (s: SignalEvent["data"]) => void;
-  onTick?: (symbol: string, price: number) => void;
 }) {
   const [status, setStatus] = useState<WSStatus>("connecting");
   const [recent, setRecent] = useState<SignalEvent["data"][]>([]);
   const currentRef = useRef<ManagedWS | null>(null);
   const attemptRef = useRef(0);
   const onSignalRef = useRef(opts?.onSignal);
-  const onTickRef = useRef(opts?.onTick);
 
   useEffect(() => { onSignalRef.current = opts?.onSignal; }, [opts?.onSignal]);
-  useEffect(() => { onTickRef.current = opts?.onTick; }, [opts?.onTick]);
 
   const connect = useCallback(() => {
     const apiKey = (import.meta.env.VITE_BFF_API_KEY ?? "") as string;
@@ -116,7 +113,7 @@ export function useSignalsStream(opts?: {
             bid: typeof msg.data.bid === "number" ? msg.data.bid : undefined,
             ask: typeof msg.data.ask === "number" ? msg.data.ask : undefined,
           };
-          onTickRef.current?.(tick.symbol, tick.price);
+          // tick 一律走 module bus(subscribeTicks)——onTick 回呼曾與 bus 雙軌並存,已收斂
           tickBus.dispatchEvent(new CustomEvent<TickEvent>("tick", { detail: tick }));
         } else if (msg.event === "mxf_candle") {
           const evt: MXFCandleEvent = { symbol: msg.data.symbol, candle: msg.data.candle };
@@ -131,6 +128,9 @@ export function useSignalsStream(opts?: {
     };
 
     ws.onclose = () => {
+      // 自己已不是現役連線(StrictMode 雙 mount / 重連後)就整段跳過:
+      // 過期 ws 的 close 事件常晚於新連線的 open 到達,setStatus 會蓋掉 open
+      if (currentRef.current !== managed) return;
       setStatus("closed");
       if (!managed.reconnect) return;
       const delay = RECONNECT_DELAYS_MS[Math.min(attemptRef.current, RECONNECT_DELAYS_MS.length - 1)];

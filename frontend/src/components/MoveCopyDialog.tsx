@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type BookmarkGroup } from "../lib/api";
+import { ModalShell } from "./ModalShell";
 
 /**
  * 「移動 / 複製」modal — 編輯模式 toolbar 內呼叫。
@@ -19,12 +20,6 @@ interface Props {
 export function MoveCopyDialog({ op, symbols, fromGroupId, groups, onClose, onConfirm }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   function toggle(gid: string) {
     setSelected((prev) => {
@@ -55,15 +50,7 @@ export function MoveCopyDialog({ op, symbols, fromGroupId, groups, onClose, onCo
   const title = op === "move" ? "移動到..." : "複製到...";
 
   return (
-    <>
-      <div onClick={onClose}
-        className="fixed inset-0 z-20 bg-bg-deep/85"
-        style={{ backdropFilter: "blur(2px)" }} />
-
-      <div role="dialog" aria-modal="true"
-        className="fixed top-1/2 left-1/2 z-[21] bg-bg-card border border-line-strong p-6
-                   w-[min(380px,90vw)]"
-        style={{ transform: "translate(-50%, -50%)" }}>
+    <ModalShell onClose={onClose} width="380px">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif font-bold text-xl tracking-[-0.4px]">{title}</h3>
           <button onClick={onClose} className="text-ink-dim hover:text-accent text-lg" aria-label="關閉">×</button>
@@ -107,7 +94,6 @@ export function MoveCopyDialog({ op, symbols, fromGroupId, groups, onClose, onCo
             {submitting ? "處理中…" : (op === "move" ? "移動" : "複製")}
           </button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 }

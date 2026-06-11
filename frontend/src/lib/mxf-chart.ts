@@ -46,9 +46,11 @@ export function computeNewViewRange(args: ComputeNewViewRangeArgs): ViewRange {
   const visible = prevRange.endIdx - prevRange.startIdx + 1;
   const factor = deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
   let newVisible = Math.round(visible * factor);
-  // Clamp visible to [MIN_VISIBLE, maxByPx, candlesLen]
+  // Clamp visible to [MIN_VISIBLE, maxByPx, candlesLen]。
+  // candlesLen 的上限必須勝過 MIN_VISIBLE 的抬升,否則資料不足 5 根時
+  // 回傳的 endIdx 會越界(違反 ViewRange invariant)
   const maxByPx = Math.floor(innerW / minCandlePx);
-  newVisible = Math.max(MIN_VISIBLE, Math.min(maxByPx, candlesLen, newVisible));
+  newVisible = Math.min(candlesLen, Math.max(MIN_VISIBLE, Math.min(maxByPx, newVisible)));
 
   // Anchor: keep candle under cursor at same pixel
   const anchorIdx = prevRange.startIdx + Math.round(mouseRatio * (visible - 1));

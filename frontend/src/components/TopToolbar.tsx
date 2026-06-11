@@ -49,7 +49,7 @@ export function TopToolbar({ wsStatus, rulesCount, dialogOpen, onOpenRules, onPi
     <div className="bg-transparent">
       <div
         className="mx-auto max-w-[1960px] px-9 pt-[26px] pb-2.5 grid items-center gap-6 max-md:px-6 max-md:grid-cols-1"
-        style={{ gridTemplateColumns: "300px 460px 1fr 300px" }}
+        style={{ gridTemplateColumns: "300px 460px 1fr 380px" }}  /* 與 Monitor 主 grid 同步,col 3 才對齊 */
       >
         <span
           className="inline-flex items-baseline gap-2 text-2xs uppercase tracking-[1.5px] text-ink-dim"

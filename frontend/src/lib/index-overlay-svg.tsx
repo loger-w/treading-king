@@ -5,7 +5,7 @@ import type { IntradayCandle } from "./api";
 import {
   CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, PAD_B, INTRADAY_THEME, type ChartTheme,
 } from "./intraday-chart-svg";
-import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, minuteOfDay } from "./intraday-time";
+import { MARKET_OPEN_MIN, MARKET_CLOSE_MIN, TRADING_MINUTES, X_AXIS_TICKS, minuteOfDay } from "./intraday-time";
 
 export interface OverlaySeries {
   code: string; short: string; color: string;
@@ -28,7 +28,6 @@ export interface OverlayGeometry {
   padL: number; padR: number; padT: number; padB: number;
   fontScale: number;
   lines: OverlayLine[];
-  zeroY: number;
   pctByCodeAtMinute: (code: string, m: number) => number | null;
 }
 
@@ -72,7 +71,7 @@ export function computeOverlayGeometry(a: OverlaySeries, b: OverlaySeries, input
     return best.pct;
   };
 
-  return { yMin, yMax, scaleX, scaleY, padL, padR, padT, padB, fontScale: scale, lines, zeroY: scaleY(0), pctByCodeAtMinute };
+  return { yMin, yMax, scaleX, scaleY, padL, padR, padT, padB, fontScale: scale, lines, pctByCodeAtMinute };
 }
 
 function fmtPct(p: number): string { return `${p >= 0 ? "+" : ""}${p.toFixed(2)}%`; }
@@ -110,10 +109,7 @@ export function IndexOverlayStatic(props: IndexOverlayStaticProps) {
       );
     }),
     // X 軸時間
-    ...[
-      { min: 540, label: "9:00" }, { min: 600, label: "10:00" }, { min: 660, label: "11:00" },
-      { min: 720, label: "12:00" }, { min: 780, label: "13:00" }, { min: 810, label: "13:30" },
-    ].map(({ min, label }) => createElement("text", { key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle", fill: t.inkDim, fontSize: fs(14), fontFamily: t.fontFamily }, label)),
+    ...X_AXIS_TICKS.map(({ min, label }) => createElement("text", { key: min, x: scaleX(min), y: CHART_H - 8, textAnchor: "middle", fill: t.inkDim, fontSize: fs(14), fontFamily: t.fontFamily }, label)),
     // 兩條線 + 線尾 %
     ...lines.map((ln) => ln.poly && createElement(Fragment, { key: ln.code },
       createElement("polyline", { points: ln.poly, fill: "none", stroke: ln.color, strokeWidth: sw(1.6) }),

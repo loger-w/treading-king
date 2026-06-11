@@ -13,7 +13,9 @@ const LEVEL_ZH: Record<string, string> = {
 };
 
 export function formatTouch(t: TouchMeta): string {
-  const role = ROLE_ZH[t.role];
+  // role/level 同採寬鬆策略:context_json 來自本機 JSONL(跨版本),
+  // 未知值退回原字串,不可渲染出「undefined」
+  const role = ROLE_ZH[t.role] ?? t.role;
   const level = LEVEL_ZH[t.level] ?? t.level;
   return `第 ${t.touch_index} 次${role} · ${level}`;
 }

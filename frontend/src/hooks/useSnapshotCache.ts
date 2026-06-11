@@ -34,6 +34,13 @@ export function useSnapshotCache(symbols: string[]): Record<string, SnapshotEntr
   const symbolsKey = symbols.join(",");
 
   useEffect(() => {
+    // 跨 instance dedup 的另一半:別的 instance 正在抓的 symbol,完成時要通知
+    // 自己重讀 cache——否則資料已進 cache 卻要等 20s retryTick 才顯示
+    const waiting = symbols.filter((s) => inFlight.has(s) && !cache.has(s));
+    for (const p of new Set(waiting.map((s) => inFlight.get(s)!))) {
+      p.then(() => setVersion((v) => v + 1));
+    }
+
     const missing = symbols.filter((s) => !cache.has(s) && !inFlight.has(s));
     if (missing.length === 0) return;
 

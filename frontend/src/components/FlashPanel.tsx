@@ -6,6 +6,7 @@ import { buildLadder, splitMyLots } from "../lib/flash-ladder";
 import { ARM_IDLE_MS, initialArm, reduceArm, type ArmState } from "../lib/flash-arm";
 import { initialQtyState, manualQty, pressQuick, QTY_PRESETS, type QtyState } from "../lib/qty-quick";
 import { TRADE_KINDS, TRADE_KIND_LABELS, type TradeKindValue } from "../lib/capital-labels";
+import { ModalShell } from "./ModalShell";
 
 interface Props {
   selected: string | null;
@@ -16,9 +17,10 @@ interface Props {
 }
 
 export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
-  const { bids, asks } = useQuoteBook(selected);
+  // 平盤參考價跟著五檔輪詢走(1Hz 天然帶重試)——一次性 fetch 失敗會讓
+  // 整個 session 的階梯夾界退化成「現價±10%」漂移
+  const { bids, asks, referencePrice: refPrice } = useQuoteBook(selected);
   const [last, setLast] = useState<number | null>(null);
-  const [refPrice, setRefPrice] = useState<number | null>(null);
   const [arm, setArm] = useState<ArmState>(initialArm());
   const [qtyState, setQtyState] = useState<QtyState>(initialQtyState());
   const [tradeKind, setTradeKind] = useState<TradeKindValue>("cash");
@@ -30,20 +32,13 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
   const centerRef = useRef<HTMLDivElement | null>(null);
   const progScroll = useRef(false);
 
-  // 現價:WS tick 即時
+  // 現價:WS tick 即時。hint 同步清——文案不含標的代號,
+  // 殘留的前一檔送單/刪單結果會被誤讀成目前標的的回報
   useEffect(() => {
     setLast(null);
+    setHint(null);
     if (!selected) return;
     return subscribeTicks((t) => { if (t.symbol === selected) setLast(t.price); });
-  }, [selected]);
-
-  // 平盤參考價(一天一值)
-  useEffect(() => {
-    setRefPrice(null);
-    if (!selected) return;
-    let alive = true;
-    api.quote(selected).then((r) => { if (alive) setRefPrice(r.reference_price ?? null); }).catch(() => {});
-    return () => { alive = false; };
   }, [selected]);
 
   // 自動解除:換標的 / 連線斷
@@ -71,12 +66,16 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
   // 程式捲動旗標:scroll 事件在 rAF 前發,onScroll 看旗標跳過、rAF 清旗標
   // (已置中時 scrollIntoView 不發 scroll 事件,所以不能靠 onScroll 清)。
   // 不可改 smooth —— 多幀多次 scroll 事件會在旗標清掉後誤判成手動捲動。
+  // deps 用價位值而非 ladder identity:量值更新也會換陣列,中心沒動就不該捲
+  // (topPrice 蓋住接近漲跌停時上方列數縮減造成的位移)
+  const centerPrice = ladder.find((r) => r.isCenter)?.price;
+  const topPrice = ladder[0]?.price;
   useEffect(() => {
     if (!followCenter || !centerRef.current) return;
     progScroll.current = true;
     centerRef.current.scrollIntoView({ block: "center" });
     requestAnimationFrame(() => { progScroll.current = false; });
-  }, [ladder, followCenter]);
+  }, [centerPrice, topPrice, followCenter]);
 
   const clickPrice = async (price: number, side: "buy" | "sell", clickable: boolean) => {
     touchIdle();
@@ -100,29 +99,33 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
     }
   };
 
-  // 點紅方格 → 刪該價位該方向全部活單(逐筆)
+  // 刪單統一入口 — cancelling 守門(連點/全刪與紅方格互打時,第二輪對同批
+  // seq_no 必被拒,失敗 hint 會蓋掉第一輪的成功訊息)+ allSettled 失敗計數
   const cancelling = useRef(false);
-  const cancelAt = async (price: number, side: "B" | "S") => {
-    touchIdle();
-    // 連點防重複:第二輪對同批 seq_no 必被拒,失敗 hint 會蓋掉第一輪的成功訊息
-    if (cancelling.current) return;
-    const targets = myActionable.filter((o) => o.price === price && o.buy_sell === side);
-    if (targets.length === 0) return;
+  const cancelMany = async (targets: CapitalOrder[], okMsg: (n: number) => string) => {
+    if (cancelling.current || targets.length === 0) return;
     cancelling.current = true;
     try {
       const results = await Promise.allSettled(targets.map((o) => api.capitalCancelOrder({ seq_no: o.seq_no })));
       const fail = results.filter((r) => r.status === "rejected" || !(r as PromiseFulfilledResult<{ ok: boolean }>).value?.ok).length;
-      setHint(fail === 0 ? `已刪 ${price.toFixed(2)} 的 ${targets.length} 筆掛單` : `✗ ${fail}/${targets.length} 筆刪單失敗`);
+      setHint(fail === 0 ? okMsg(targets.length) : `✗ ${fail}/${targets.length} 筆刪單失敗`);
     } finally {
       cancelling.current = false;
     }
   };
 
-  const cancelAll = async () => {
+  // 點紅方格 → 刪該價位該方向全部活單(逐筆)
+  const cancelAt = (price: number, side: "B" | "S") => {
+    touchIdle();
+    return cancelMany(
+      myActionable.filter((o) => o.price === price && o.buy_sell === side),
+      (n) => `已刪 ${price.toFixed(2)} 的 ${n} 筆掛單`,
+    );
+  };
+
+  const cancelAll = () => {
     setConfirmAllCancel(false);
-    const results = await Promise.allSettled(myActionable.map((o) => api.capitalCancelOrder({ seq_no: o.seq_no })));
-    const fail = results.filter((r) => r.status === "rejected" || !(r as PromiseFulfilledResult<{ ok: boolean }>).value?.ok).length;
-    setHint(fail === 0 ? `已送出全部刪單(${results.length} 筆)` : `✗ ${fail}/${results.length} 筆刪單失敗`);
+    return cancelMany(myActionable, (n) => `已送出全部刪單(${n} 筆)`);
   };
 
   if (!selected) return <div className="text-xs text-ink-dim py-4 text-center">先從自選/五檔選一檔標的</div>;
@@ -232,19 +235,14 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
 
       {/* 全刪確認(唯一保留彈窗的閃電操作) */}
       {confirmAllCancel && (
-        <>
-          <div onClick={() => setConfirmAllCancel(false)} className="fixed inset-0 z-20 bg-bg-deep/85" />
-          <div role="dialog" aria-modal="true"
-            className={`fixed top-1/2 left-1/2 z-[21] bg-bg-card border p-5 w-[min(300px,90vw)] ${prod ? "border-bull" : "border-line-strong"}`}
-            style={{ transform: "translate(-50%, -50%)" }}>
-            <h3 className="font-serif font-bold text-lg mb-2">刪除全部掛單?</h3>
-            <p className="text-xs text-ink-dim mb-4">{selected} 共 {myActionable.length} 筆活單將逐筆送出刪單。</p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmAllCancel(false)} className="px-3 py-1.5 text-sm border border-line-strong text-ink-muted">取消</button>
-              <button onClick={cancelAll} className="px-3 py-1.5 text-sm text-bg font-medium bg-bull">全部刪單</button>
-            </div>
+        <ModalShell onClose={() => setConfirmAllCancel(false)} width="300px" env={env} className="p-5">
+          <h3 className="font-serif font-bold text-lg mb-2">刪除全部掛單?</h3>
+          <p className="text-xs text-ink-dim mb-4">{selected} 共 {myActionable.length} 筆活單將逐筆送出刪單。</p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setConfirmAllCancel(false)} className="px-3 py-1.5 text-sm border border-line-strong text-ink-muted">取消</button>
+            <button onClick={cancelAll} className="px-3 py-1.5 text-sm text-bg font-medium bg-bull">全部刪單</button>
           </div>
-        </>
+        </ModalShell>
       )}
     </div>
   );

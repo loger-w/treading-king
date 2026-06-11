@@ -29,16 +29,18 @@ export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChang
   const [recentlyAdded, setRecentlyAdded] = useState<Set<string>>(new Set());
   const [moveOp, setMoveOp] = useState<"move" | "copy" | null>(null);
 
-  // 搜尋(debounce 200ms)
+  // 搜尋(debounce 200ms)。cancelled 擋已發出的舊請求:
+  // 晚到的舊回應不可蓋掉新結果、也不可在清空輸入後把結果回填
   useEffect(() => {
     if (!addOpen || !query.trim()) { setResults([]); return; }
+    let cancelled = false;
     const t = setTimeout(async () => {
       try {
         const r = await api.symbols(query.trim(), 10);
-        setResults(r.results);
+        if (!cancelled) setResults(r.results);
       } catch { /* ignore */ }
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [query, addOpen]);
 
   const existingSymbols = useMemo(() => new Set(items.map((it) => it.symbol)), [items]);
@@ -73,14 +75,15 @@ export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChang
   async function removeSelected() {
     if (selected.size === 0) return;
     if (!confirm(`從「${group.name}」移除 ${selected.size} 檔?`)) return;
-    try {
-      // 用 move 端點實作「批次移除」會 ws unsubscribe 對的 owner — 但這裡是純刪
-      await Promise.all([...selected].map((s) => api.bookmarks.removeItem(group.id, s)));
-      setSelected(new Set());
-      await onChanged();
-    } catch (e) {
-      alert(`移除失敗:${(e as Error).message}`);
-    }
+    // 用 move 端點實作「批次移除」會 ws unsubscribe 對的 owner — 但這裡是純刪。
+    // allSettled + 必 refresh:部分失敗時已刪成功的也要從畫面消失,
+    // 失敗的留著勾選讓使用者重試
+    const targets = [...selected];
+    const results = await Promise.allSettled(targets.map((s) => api.bookmarks.removeItem(group.id, s)));
+    const failed = targets.filter((_, i) => results[i].status === "rejected");
+    setSelected(new Set(failed));
+    await onChanged();
+    if (failed.length > 0) alert(`移除失敗 ${failed.length} 檔:${failed.join(", ")}`);
   }
 
   function openMove(op: "move" | "copy") {
