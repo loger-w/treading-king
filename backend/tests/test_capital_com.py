@@ -58,16 +58,16 @@ def test_setup_retains_reply_event_refs(monkeypatch):
     import sys
     import types
 
-    sentinel_conn = types.SimpleNamespace(tag="advise-connection")
-    captured = {}
+    captured = []   # (source, sink, conn) — setup 現在 advise 兩條:reply + order(庫存事件)
 
     client = types.ModuleType("comtypes.client")
     client.GetModule = lambda *a, **k: None
     client.CreateObject = lambda coclass, interface=None: types.SimpleNamespace(coclass=coclass)
 
     def fake_get_events(source, sink):
-        captured["sink"] = sink
-        return sentinel_conn
+        conn = types.SimpleNamespace(tag=f"advise-{len(captured)}")
+        captured.append((source, sink, conn))
+        return conn
 
     client.GetEvents = fake_get_events
 
@@ -88,6 +88,32 @@ def test_setup_retains_reply_event_refs(monkeypatch):
     com = SkcomCapitalCom()
     com.setup()
 
-    assert com._reply_conn is sentinel_conn          # GetEvents 回傳的 advise 連線要存住
-    assert com._reply_sink is captured["sink"]        # 傳給 GetEvents 的 sink 就是被存住那個
-    assert com._reply_sink is not None
+    by_sink = {id(sink): (source, sink, conn) for source, sink, conn in captured}
+    assert len(captured) == 2                         # reply + order 兩條 advise
+    # reply 那條:sink 與 conn 都要存到 self
+    _, reply_sink, reply_conn = by_sink[id(com._reply_sink)]
+    assert com._reply_conn is reply_conn
+    assert reply_sink is not None
+    # order(庫存事件)那條同理 — 丟掉會被 GC → Unadvise,OnRealBalanceReport 永遠收不到
+    _, order_sink, order_conn = by_sink[id(com._order_sink)]
+    assert com._order_conn is order_conn
+    assert order_sink is not None
+
+
+def test_order_events_sink_forwards_balance_and_swallows_exception():
+    from services.capital_com import _OrderEvents
+
+    got = []
+    sink = _OrderEvents(on_balance=got.append)
+    sink.OnRealBalanceReport("TS,1234567,2330,...")
+    assert got == ["TS,1234567,2330,..."]
+
+    def boom(_):
+        raise RuntimeError("handler boom")
+    sink2 = _OrderEvents(on_balance=boom)
+    sink2.OnRealBalanceReport("x")   # event-loop must not see the exception
+
+
+def test_order_events_sink_none_handler_is_noop():
+    from services.capital_com import _OrderEvents
+    _OrderEvents(on_balance=None).OnRealBalanceReport("x")

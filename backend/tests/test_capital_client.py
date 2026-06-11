@@ -8,11 +8,15 @@ class FakeCom:
     def __init__(self):
         self.sent = []
 
-    def setup(self, on_reply=None): ...
+    def setup(self, on_reply=None, on_balance=None): ...
     def set_authority(self, flag): return 0
     def login(self, u, p): return 0
     def init_order(self): return 0
     def read_cert(self, u): return 0
+
+    def get_real_balance(self, user_id, full_account):
+        self.sent.append(("get_real_balance", full_account))
+        return 0
 
     def send_stock_order(self, user_id, fields):
         self.sent.append(fields)
@@ -41,7 +45,7 @@ class RecordingCom(FakeCom):
         super().__init__()
         self.calls = []
 
-    def setup(self, on_reply=None): self.calls.append("setup")
+    def setup(self, on_reply=None, on_balance=None): self.calls.append("setup")
     def set_authority(self, flag): self.calls.append("set_authority"); return 0
     def login(self, u, p): self.calls.append("login"); return 0
     def init_order(self): self.calls.append("init_order"); return 0

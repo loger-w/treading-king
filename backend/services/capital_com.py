@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class CapitalCom(Protocol):
-    def setup(self, on_reply: "Callable[[str], None] | None" = None) -> None: ...
+    def setup(self, on_reply: "Callable[[str], None] | None" = None,
+              on_balance: "Callable[[str], None] | None" = None) -> None: ...
     def set_authority(self, flag: int) -> int: ...        # 0=正式 2=測試
     def login(self, user_id: str, password: str) -> int: ...
     def init_order(self) -> int: ...
@@ -23,6 +24,7 @@ class CapitalCom(Protocol):
     def cancel_order(self, user_id: str, full_account: str, seq_no: str) -> tuple[str, int]: ...
     def correct_price(self, user_id: str, full_account: str, seq_no: str, price: float) -> tuple[str, int]: ...
     def decrease_qty(self, user_id: str, full_account: str, seq_no: str, qty: int) -> tuple[str, int]: ...
+    def get_real_balance(self, user_id: str, full_account: str) -> int: ...  # 結果走 OnRealBalanceReport 事件
     def return_code_message(self, code: int) -> str: ...
     def pump(self) -> None: ...
 
@@ -47,12 +49,15 @@ class SkcomCapitalCom:
         self._dll_cookie = None      # os.add_dll_directory handle,存著避免被 GC 後移除路徑
         self._reply_sink = None
         self._reply_conn = None      # GetEvents advise 連線,存著避免被 GC → Unadvise
+        self._order_sink = None      # OrderLib 事件(即時庫存),同樣要存住防 GC Unadvise
+        self._order_conn = None
         self._sk = None
         self._center = None
         self._order = None
         self._reply = None
 
-    def setup(self, on_reply: "Callable[[str], None] | None" = None) -> None:
+    def setup(self, on_reply: "Callable[[str], None] | None" = None,
+              on_balance: "Callable[[str], None] | None" = None) -> None:
         import comtypes.client
         add_dir, module_arg = _resolve_skcom_load(self._dll_dir)
         if add_dir:
@@ -71,6 +76,8 @@ class SkcomCapitalCom:
         # SK_WARNING_REGISTER_REPLYLIB_ONREPLYMESSAGE_FIRST。
         self._reply_sink = _ReplyEvents(on_reply)
         self._reply_conn = comtypes.client.GetEvents(self._reply, self._reply_sink)
+        self._order_sink = _OrderEvents(on_balance)
+        self._order_conn = comtypes.client.GetEvents(self._order, self._order_sink)
 
     def set_authority(self, flag: int) -> int:
         return self._center.SKCenterLib_SetAuthority(flag)
@@ -110,6 +117,10 @@ class SkcomCapitalCom:
         message, code = self._order.DecreaseOrderBySeqNo(user_id, 0, full_account, seq_no, qty)
         return message, code
 
+    def get_real_balance(self, user_id: str, full_account: str) -> int:
+        # 非同步查詢:nCode 同步回,結果走 OnRealBalanceReport 事件
+        return self._order.GetRealBalanceReport(user_id, full_account)
+
     def return_code_message(self, code: int) -> str:
         return self._center.SKCenterLib_GetReturnCodeMessage(code)
 
@@ -137,5 +148,19 @@ class _ReplyEvents:
         if self._on_reply:
             try:
                 self._on_reply(bstrData)
+            except Exception:
+                pass
+
+
+class _OrderEvents:
+    """SKOrderLib 事件 sink。目前只接即時庫存;回呼例外不可炸掉 COM 事件迴圈。"""
+
+    def __init__(self, on_balance: "Callable[[str], None] | None" = None) -> None:
+        self._on_balance = on_balance
+
+    def OnRealBalanceReport(self, bstrData):
+        if self._on_balance:
+            try:
+                self._on_balance(bstrData)
             except Exception:
                 pass
