@@ -242,3 +242,24 @@ def test_set_positions_replaces_not_merges():
     s.set_positions([Position(stock_no="2330", qty=5, avg_price=575.0)])
     s.set_positions([Position(stock_no="2317", qty=1, avg_price=100.0)])
     assert [p.stock_no for p in s.positions()] == ["2317"]
+
+
+def test_apply_avg_prices_fills_existing_only():
+    from services.capital_models import Position
+    s = CapitalStore()
+    s.set_positions([Position(stock_no="3357", qty=3, kind="margin")])
+    s.apply_avg_prices({"3357": 150.55, "9999": 1.0})   # 查無股號忽略(部位以即時庫存為權威)
+    assert s.position_for("3357").avg_price == 150.55
+    assert len(s.positions()) == 1
+
+
+def test_set_positions_carries_avg_same_kind_only():
+    """損益查詢回來前,新一輪庫存覆寫不可閃掉已知均價;但種類變了成本基礎不同,不沿用。"""
+    from services.capital_models import Position
+    s = CapitalStore()
+    s.set_positions([Position(stock_no="3357", qty=3, kind="margin")])
+    s.apply_avg_prices({"3357": 150.55})
+    s.set_positions([Position(stock_no="3357", qty=4, kind="margin")])
+    assert s.position_for("3357").avg_price == 150.55
+    s.set_positions([Position(stock_no="3357", qty=4, kind="cash")])
+    assert s.position_for("3357").avg_price is None
