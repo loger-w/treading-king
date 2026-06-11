@@ -17,8 +17,10 @@ export function useIntradayCandles(symbol: string | null) {
       const r = await api.candlesIntraday(s);
       const next = resolveCandleUpdate(s, symbolRef.current, r.data);
       if (next) setCandles(next);
-      // prevClose 同樣只在非過期回應時更新(過期回應整筆丟棄)
-      if (s === symbolRef.current) setPrevClose(r.prev_close);
+      // prevClose 同樣只在非過期回應時更新(過期回應整筆丟棄)。
+      // null 也擋:富邦降級回應會帶 prev_close=null(useSnapshotCache 有同款防護),
+      // 蓋掉已知昨收會讓基準線/漲跌%/紅綠填色整個換成「今開」口徑 30 秒以上
+      if (s === symbolRef.current && r.prev_close !== null) setPrevClose(r.prev_close);
     } catch (e) {
       // 失敗不清掉已顯示的圖(免得變回載入中);下一輪輪詢會再試
       console.warn("useIntradayCandles fetch failed:", e);

@@ -10,7 +10,7 @@ export interface ChartSession {
   endIso: string;
 }
 
-interface Span {
+export interface Span {
   start: number;  // epoch ms
   end: number;
   pxStart: number;
@@ -19,7 +19,9 @@ interface Span {
 
 const GAP_RATIO = 0.01;  // 每個 gap 佔總寬 1%(雙線視覺夠用)
 
-function buildSpans(sessions: ChartSession[], width: number): Span[] {
+/** Span 預建版供呼叫端 useMemo 緩存:scaleX 會被每根 K 棒/每個 mousemove
+ *  呼叫一次,每次都重新解析 session ISO 日期是 O(candles×sessions) 的純浪費。 */
+export function buildSpans(sessions: ChartSession[], width: number): Span[] {
   if (sessions.length === 0) return [];
   const durations = sessions.map((s) => new Date(s.endIso).getTime() - new Date(s.startIso).getTime());
   const totalSessionDuration = durations.reduce((a, b) => a + b, 0);
@@ -41,8 +43,7 @@ function buildSpans(sessions: ChartSession[], width: number): Span[] {
   return spans;
 }
 
-export function scaleX_compressed(iso: string, sessions: ChartSession[], width: number): number {
-  const spans = buildSpans(sessions, width);
+export function scaleXFromSpans(iso: string, spans: Span[]): number {
   const t = new Date(iso).getTime();
   for (const span of spans) {
     if (t >= span.start && t <= span.end) {
@@ -53,13 +54,20 @@ export function scaleX_compressed(iso: string, sessions: ChartSession[], width: 
   return NaN;
 }
 
+export function scaleX_compressed(iso: string, sessions: ChartSession[], width: number): number {
+  return scaleXFromSpans(iso, buildSpans(sessions, width));
+}
+
 /** 算出每個 session 邊界的 px 位置(gap 在哪) — 給虛線分隔用 */
-export function sessionBoundaries(sessions: ChartSession[], width: number): { gapStartPx: number; gapEndPx: number }[] {
-  const spans = buildSpans(sessions, width);
+export function boundariesFromSpans(spans: Span[]): { gapStartPx: number; gapEndPx: number }[] {
   return spans.slice(0, -1).map((span, i) => ({
     gapStartPx: span.pxEnd,
     gapEndPx: spans[i + 1].pxStart,
   }));
+}
+
+export function sessionBoundaries(sessions: ChartSession[], width: number): { gapStartPx: number; gapEndPx: number }[] {
+  return boundariesFromSpans(buildSpans(sessions, width));
 }
 
 export function scaleY_clamped(value: number, yMin: number, yMax: number, height: number): number {

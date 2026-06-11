@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import { type ActiveSignal, type SignalLogRow, type SignalEvent, type TouchMeta } from "../lib/api";
 import { formatTouch, extractTouch } from "../lib/signal-format";
 
@@ -37,46 +38,51 @@ function formatTime(iso: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export function TriggerList({
+// memo + useMemo:選中股每筆 tick 都會 re-render 父層,期間本元件 props 參考
+// 全部不變——最多 550 列的重算(每列 new Date)與 reconcile 不該每 tick 跑一次
+export const TriggerList = memo(function TriggerList({
   historical, recent, rules, symbolNames, prevCloseMap, selectedSymbol, onSelect,
 }: Props) {
-  const ruleNameById = Object.fromEntries(rules.map((r) => [r.id, r.name]));
+  const combined = useMemo(() => {
+    const ruleNameById = Object.fromEntries(rules.map((r) => [r.id, r.name]));
 
-  const recentRows: UnifiedRow[] = recent.map((e) => ({
-    key: `recent-${e.active_signal_id}-${e.triggered_at}-${e.symbol}`,
-    time: formatTime(e.triggered_at),
-    symbol: e.symbol,
-    name: symbolNames[e.symbol] ?? null,
-    ruleName: e.active_signal_name ?? ruleNameById[e.active_signal_id] ?? "(unknown)",
-    price: e.trigger_price,
-    isoTime: e.triggered_at,
-    isFresh: true,
-    cdpTouch: e.cdp_touch,
-    maTouch: e.ma_touch,
-  }));
+    const recentRows: UnifiedRow[] = recent.map((e) => ({
+      key: `recent-${e.active_signal_id}-${e.triggered_at}-${e.symbol}`,
+      time: formatTime(e.triggered_at),
+      symbol: e.symbol,
+      name: symbolNames[e.symbol] ?? null,
+      ruleName: e.active_signal_name ?? ruleNameById[e.active_signal_id] ?? "(unknown)",
+      price: e.trigger_price,
+      isoTime: e.triggered_at,
+      isFresh: true,
+      cdpTouch: e.cdp_touch,
+      maTouch: e.ma_touch,
+    }));
 
-  const historicalRows: UnifiedRow[] = historical.map((h) => ({
-    key: `hist-${h.id}`,
-    time: formatTime(h.triggered_at),
-    symbol: h.symbol,
-    name: symbolNames[h.symbol] ?? null,
-    ruleName: ruleNameById[h.active_signal_id ?? ""] ?? "(unknown)",
-    price: h.trigger_price ?? 0,
-    isoTime: h.triggered_at,
-    isFresh: false,
-    cdpTouch: extractTouch(h.context_json, "cdp_touch"),
-    maTouch: extractTouch(h.context_json, "ma_touch"),
-  }));
+    const historicalRows: UnifiedRow[] = historical.map((h) => ({
+      key: `hist-${h.id}`,
+      time: formatTime(h.triggered_at),
+      symbol: h.symbol,
+      name: symbolNames[h.symbol] ?? null,
+      ruleName: ruleNameById[h.active_signal_id ?? ""] ?? "(unknown)",
+      price: h.trigger_price ?? 0,
+      isoTime: h.triggered_at,
+      isFresh: false,
+      cdpTouch: extractTouch(h.context_json, "cdp_touch"),
+      maTouch: extractTouch(h.context_json, "ma_touch"),
+    }));
 
-  const seen = new Set<string>();
-  const combined: UnifiedRow[] = [];
-  for (const r of [...recentRows, ...historicalRows]) {
-    const k = `${r.symbol}|${r.ruleName}|${r.isoTime}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    combined.push(r);
-  }
-  combined.sort((a, b) => b.isoTime.localeCompare(a.isoTime));
+    const seen = new Set<string>();
+    const out: UnifiedRow[] = [];
+    for (const r of [...recentRows, ...historicalRows]) {
+      const k = `${r.symbol}|${r.ruleName}|${r.isoTime}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    out.sort((a, b) => b.isoTime.localeCompare(a.isoTime));
+    return out;
+  }, [historical, recent, rules, symbolNames]);
 
   if (combined.length === 0) {
     return (
@@ -154,4 +160,4 @@ export function TriggerList({
       })}
     </ul>
   );
-}
+});

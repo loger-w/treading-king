@@ -8,7 +8,6 @@ import { TopToolbar } from "../components/TopToolbar";
 import { TradingPanel } from "../components/TradingPanel";
 import { TriggerList } from "../components/TriggerList";
 import { useActiveSignals } from "../hooks/useActiveSignals";
-import { useIntradayCandles } from "../hooks/useIntradayCandles";
 import { MonitorListProvider, useMonitorList } from "../hooks/useMonitorList";
 import { usePreviewSubscribe } from "../hooks/usePreviewSubscribe";
 import { useSignalsStream } from "../hooks/useSignalsStream";
@@ -74,13 +73,10 @@ function MonitorInner() {
     })();
   }, []);
 
-  // Intraday chart (selected symbol) — onTick callback 在下面 useSignalsStream 內共用
-  const { candles, prevClose, onTick } = useIntradayCandles(selected);
-
-  // 單一 WS 連線：onSignal 累加命中、onTick 給 chart
+  // 單一 WS 連線：onSignal 累加命中。tick 走 module bus(subscribeTicks),
+  // 分時圖的 candles state 養在 IntradayChart 內,不再經頁根穿針引線
   const { status: wsStatus, recent } = useSignalsStream({
     onSignal: (s) => bump(s.symbol, s.active_signal_id),
-    onTick,
   });
 
   const inAnyBookmark = useMemo(
@@ -125,13 +121,14 @@ function MonitorInner() {
     [resolvedNames, monitorItems, bookmarkSymbolNames]
   );
 
-  function handleSelect(sym: string) {
+  // useCallback:TriggerList 有 memo,不穩定的 onSelect 會打穿它
+  const handleSelect = useCallback((sym: string) => {
     setSelected(sym);
     // 從 history 點時 scroll 回 chart
     if (chartRef.current) {
       chartRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }
+  }, []);
 
   function handleSearchPick(sym: string, name: string | null) {
     // 搜尋現在「先預覽」:只 setSelected,不 add。
@@ -225,8 +222,6 @@ function MonitorInner() {
                     <IntradayChart
                       symbol={selected}
                       name={symbolNames[selected] ?? null}
-                      candles={candles}
-                      prevClose={prevClose}
                       inAnyBookmark={inAnyBookmark}
                       onOpenBookmarkDialog={handleOpenBookmarkDialog}
                       inMonitor={inMonitor}

@@ -1,7 +1,7 @@
 // 股票分時圖的共用畫圖層 — 網頁(IntradayChart)與 Discord bot 共用同一份 JSX。
 // 顏色一律 inline hex(取自 tailwind.config.js 的 Editorial Dark);
 // 不可用 Tailwind class 或 var(--color-…) —— resvg(bot 端)不解析。
-import { createElement, Fragment } from "react";
+import { createElement, Fragment, memo } from "react";
 import type { IntradayCandle, CdpLevels, CamarillaLevels, MaLevels } from "./api";
 import { formatTickPrice, roundToNearestTick } from "./tick";
 import { resolveCollisions, type LabelInput } from "./chart-labels";
@@ -251,7 +251,11 @@ export interface IntradayChartStaticProps extends IntradayChartInput {
 
 // presentational 元件 — 所有靜態圖層,不含 hover crosshair、外層 <svg>、toggle 按鈕。
 // 網頁與 bot 共用同一份 JSX;bot 端 resvg 只認 inline hex,不解析 Tailwind / CSS var。
-export function IntradayChartStatic(props: IntradayChartStaticProps) {
+// memo:hover crosshair 的每個 mousemove 都會 re-render 父層,沒 memo 的話
+// 數百個 SVG 節點(~270 根量能 bar + polyline + labels)每次都重建再 diff
+export const IntradayChartStatic = memo(IntradayChartStaticImpl);
+
+function IntradayChartStaticImpl(props: IntradayChartStaticProps) {
   const t = props.theme ?? INTRADAY_THEME;
   const { flags, cdp, camarilla, ma } = props;
   const {

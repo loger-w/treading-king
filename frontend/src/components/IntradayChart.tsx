@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type CamarillaLevels, type CdpLevels, type IntradayCandle, type MaLevels } from "../lib/api";
+import { api, type CamarillaLevels, type CdpLevels, type MaLevels } from "../lib/api";
+import { useIntradayCandles } from "../hooks/useIntradayCandles";
+import { subscribeTicks } from "../hooks/useSignalsStream";
 import { useLocalToggle } from "../hooks/useLocalToggle";
 import { formatTickPrice } from "../lib/tick";
 import { MARKET_OPEN_MIN, TRADING_MINUTES } from "../lib/intraday-time";
@@ -11,8 +13,6 @@ import {
 interface Props {
   symbol: string;
   name: string | null;
-  candles: IntradayCandle[];
-  prevClose: number | null;  // 昨日收盤，給漲跌% / Y 軸 ±10% 用
   inAnyBookmark: boolean;
   onOpenBookmarkDialog: () => void;
   inMonitor: boolean;
@@ -21,7 +21,12 @@ interface Props {
 }
 
 
-export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
+export function IntradayChart({ symbol, name, inAnyBookmark, onOpenBookmarkDialog, inMonitor, onAddToMonitor, onRemoveFromMonitor }: Props) {
+  // candles state 養在本元件而非頁根:選中股是 tick 最密的一檔,
+  // state 在 Monitor 的話每筆成交都讓整頁四欄(含下單面板)重繪
+  const { candles, prevClose, onTick } = useIntradayCandles(symbol);
+  useEffect(() => subscribeTicks((t) => onTick(t.symbol, t.price)), [onTick]);
+
   const [showVwap, setShowVwap] = useState(true);
   const [showCdp, setShowCdp] = useLocalToggle("tk:chart:cdp", false);
   const [showCamarilla, setShowCamarilla] = useLocalToggle("tk:chart:camarilla", false);
@@ -70,12 +75,14 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
     return () => { stale = true; };
   }, [symbol, showMa]);
 
+  // flags 物件穩定化:inline literal 會打穿 IntradayChartStatic 的 memo
+  const flags = useMemo(
+    () => ({ vwap: showVwap, cdp: showCdp, camarilla: showCamarilla, volume: showVolume, ma: showMa }),
+    [showVwap, showCdp, showCamarilla, showVolume, showMa],
+  );
   const geometry = useMemo(
-    () => computeIntradayGeometry({
-      candles, prevClose, cdp, camarilla, ma,
-      flags: { vwap: showVwap, cdp: showCdp, camarilla: showCamarilla, volume: showVolume, ma: showMa },
-    }),
-    [candles, cdp, showCdp, camarilla, showCamarilla, ma, showMa, showVwap, prevClose, showVolume],
+    () => computeIntradayGeometry({ candles, prevClose, cdp, camarilla, ma, flags }),
+    [candles, cdp, camarilla, ma, prevClose, flags],
   );
   const { scaleX, scaleY, scaleVolY, minutesByIdx, filteredCandles } = geometry;
 
@@ -108,7 +115,8 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
       const d = Math.abs(minutesByIdx[i] - mAtCursor);
       if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
-    setHover({ idx: bestIdx });
+    // 同一根 candle 回傳 prev 讓 React bail out — mousemove 每動一下都進來
+    setHover((prev) => (prev?.idx === bestIdx ? prev : { idx: bestIdx }));
   }
 
   function handleMouseLeave() {
@@ -194,7 +202,7 @@ export function IntradayChart({ symbol, name, candles, prevClose, inAnyBookmark,
               hover crosshair(下方)留在本元件以保持互動狀態 */}
           <IntradayChartStatic
             candles={candles} prevClose={prevClose} cdp={cdp} camarilla={camarilla} ma={ma}
-            flags={{ vwap: showVwap, cdp: showCdp, camarilla: showCamarilla, volume: showVolume, ma: showMa }}
+            flags={flags}
             geometry={geometry}
           />
 
