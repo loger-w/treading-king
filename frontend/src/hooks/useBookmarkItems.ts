@@ -56,14 +56,22 @@ export function useAllBookmarkItems(groups: BookmarkGroup[]) {
   const [byGroup, setByGroup] = useState<Map<string, BookmarkItem[]>>(new Map());
   const [loading, setLoading] = useState(false);
   const seqRef = useRef(0);   // 同 useBookmarkItems:只採最新一次請求
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
 
+  // refresh 依 group id 集合而非 groups 陣列 identity:useBookmarks.refresh
+  // 每次都 setGroups 新陣列,直接依賴會讓每次 mutation 全量重抓兩次
+  // (顯式 refreshAll 一次 + identity 變化觸發 effect 又一次);
+  // items 變動的同步點是呼叫端的顯式 refreshAll
+  const groupIdsKey = groups.map((g) => g.id).join(",");
   const refresh = useCallback(async () => {
+    const gs = groupsRef.current;
     const mySeq = ++seqRef.current;
-    if (groups.length === 0) { setByGroup(new Map()); return; }
+    if (gs.length === 0) { setByGroup(new Map()); return; }
     setLoading(true);
     try {
       const results = await Promise.all(
-        groups.map((g) =>
+        gs.map((g) =>
           api.bookmarks.items(g.id)
             .then((r): [string, BookmarkItem[]] => [g.id, r.items])
             .catch((): [string, BookmarkItem[]] => [g.id, []]),
@@ -76,7 +84,8 @@ export function useAllBookmarkItems(groups: BookmarkGroup[]) {
     } finally {
       if (mySeq === seqRef.current) setLoading(false);
     }
-  }, [groups]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupIdsKey]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

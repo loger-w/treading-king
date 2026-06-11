@@ -78,6 +78,15 @@ export function BookmarksPanel({
     onItemsChanged(symbols, names);
   }, [bySymbolFirst, onItemsChanged]);
 
+  // 在管理 dialog 刪掉目前選中的書籤後,選擇會懸空:畫面停在已刪 group 的
+  // stale items、× 按鈕還會對已刪 group 打 404 — groups 更新後檢查並退回「全部」
+  useEffect(() => {
+    if (selectedGroupId === ALL_VIEW || selectedGroupId === MONITOR_VIEW) return;
+    if (groups.length > 0 && !groups.some((g) => g.id === selectedGroupId)) {
+      setSelectedGroupId(ALL_VIEW);
+    }
+  }, [groups, selectedGroupId]);
+
   // 選定書籤 — 如果切到非「全部」、退出 editMode
   function pickGroup(gid: string) {
     setSelectedGroupId(gid);

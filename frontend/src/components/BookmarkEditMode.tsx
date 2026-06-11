@@ -75,14 +75,15 @@ export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChang
   async function removeSelected() {
     if (selected.size === 0) return;
     if (!confirm(`從「${group.name}」移除 ${selected.size} 檔?`)) return;
-    try {
-      // 用 move 端點實作「批次移除」會 ws unsubscribe 對的 owner — 但這裡是純刪
-      await Promise.all([...selected].map((s) => api.bookmarks.removeItem(group.id, s)));
-      setSelected(new Set());
-      await onChanged();
-    } catch (e) {
-      alert(`移除失敗:${(e as Error).message}`);
-    }
+    // 用 move 端點實作「批次移除」會 ws unsubscribe 對的 owner — 但這裡是純刪。
+    // allSettled + 必 refresh:部分失敗時已刪成功的也要從畫面消失,
+    // 失敗的留著勾選讓使用者重試
+    const targets = [...selected];
+    const results = await Promise.allSettled(targets.map((s) => api.bookmarks.removeItem(group.id, s)));
+    const failed = targets.filter((_, i) => results[i].status === "rejected");
+    setSelected(new Set(failed));
+    await onChanged();
+    if (failed.length > 0) alert(`移除失敗 ${failed.length} 檔:${failed.join(", ")}`);
   }
 
   function openMove(op: "move" | "copy") {

@@ -33,15 +33,18 @@ export function SignalRulesDialog({ open, rules, onClose, onChanged }: Props) {
   const [editing, setEditing] = useState<ActiveSignal | null>(null);
   const [creating, setCreating] = useState(false);
 
-  // Esc 關閉
+  // Esc 關閉。內嵌 editor 開著時不關外層——editor 是最上層 modal(z-50),
+  // 關掉底層會讓 editor 懸空浮在沒有規則列表的畫面上
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (creating || editing) return;
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, creating, editing]);
 
   async function toggleEnabled(r: ActiveSignal) {
     await api.activeSignals.update(r.id, {

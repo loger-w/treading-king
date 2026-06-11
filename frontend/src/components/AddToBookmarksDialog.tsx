@@ -21,6 +21,7 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
   const [initial, setInitial] = useState<Set<string>>(new Set());  // 進入時已勾
   const [selected, setSelected] = useState<Set<string>>(new Set());  // 目前勾選
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newName, setNewName] = useState("");
 
@@ -30,7 +31,9 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Load groups + 每個 group 看 symbol 是否在內
+  // Load groups + 每個 group 看 symbol 是否在內。
+  // list() 失敗必須有 catch:否則是 unhandled rejection + 安靜顯示「空書籤」,
+  // 使用者會誤以為自己沒有任何書籤;items() 失敗會讓已收藏顯示未勾,擋儲存
   useEffect(() => {
     (async () => {
       try {
@@ -40,16 +43,24 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
         setGroups([...systemGroups, ...userGroups]);
 
         const containing = new Set<string>();
+        let itemsFailed = false;
         await Promise.all(userGroups.map(async (g) => {
           try {
             const items = await api.bookmarks.items(g.id);
             if (items.items.some((it) => it.symbol === symbol)) {
               containing.add(g.id);
             }
-          } catch {}
+          } catch (e) {
+            itemsFailed = true;
+            console.warn("AddToBookmarksDialog items load failed:", g.id, e);
+          }
         }));
+        if (itemsFailed) { setLoadError(true); return; }
         setInitial(containing);
         setSelected(new Set(containing));
+      } catch (e) {
+        console.warn("AddToBookmarksDialog load failed:", e);
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -128,6 +139,8 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
 
         {loading ? (
           <div className="text-sm text-ink-dim font-serif italic py-4 text-center">載入中…</div>
+        ) : loadError ? (
+          <div className="text-sm text-bear py-4 text-center">書籤載入失敗 — 勾選狀態不可靠,請關閉重試。</div>
         ) : (
           <>
             <ul>
@@ -198,7 +211,7 @@ export function AddToBookmarksDialog({ symbol, onClose, onChanged }: Props) {
             className="px-4 py-2 text-sm border border-line-strong text-ink-muted hover:border-ink-muted hover:text-ink">
             取消
           </button>
-          <button onClick={submit} disabled={loading || submitting}
+          <button onClick={submit} disabled={loading || submitting || loadError}
             className="px-4 py-2 text-sm bg-accent text-bg font-medium disabled:opacity-40">
             {submitting ? "儲存中…" : "儲存"}
           </button>
