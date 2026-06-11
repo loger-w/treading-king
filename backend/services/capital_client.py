@@ -110,10 +110,11 @@ class CapitalClient:
             self._broadcast({"event": "capital_position", "data": {"avg_count": len(rows)}})
 
     def _on_balance_complete(self, positions) -> None:
-        self.store.set_positions(dedupe_positions(positions))
+        deduped = dedupe_positions(positions)
+        self.store.set_positions(deduped)
         self._balance_last_ts = time.monotonic()
         if self._broadcast:
-            self._broadcast({"event": "capital_position", "data": {"count": len(positions)}})
+            self._broadcast({"event": "capital_position", "data": {"count": len(deduped)}})
         # 庫存查詢剛完結(同 COM 執行緒)→ 串行接著查均價,避開 1019 查詢處理中
         self._profit.reset()
         rc = self._com.get_profit_loss_gw(self._user_id, self._full_account)
@@ -167,29 +168,46 @@ class CapitalClient:
             logger.error("Capital init failed: %s", self._last_error)
             return False
 
+    def _pump_once(self) -> None:
+        """幫浦圈一輪(COM 執行緒)。例外吞掉+log:poll 的 flush 鏈會打 COM 查詢
+        (斷線丟 COMError),單輪失敗不可殺執行緒 —— 執行緒死=寫入 future 永不
+        resolve、status 卻還是 ok 的靜默失敗,真錢面板不可接受。"""
+        try:
+            self._com.pump()
+            self._balance.poll()           # 沒等到結束標記的 flush 保險
+            self._profit.poll()            # 損益沒等到 ## 的 flush 保險
+            self._maybe_query_balance()    # 成交後 debounce / 60s 定時重查
+        except Exception:  # noqa: BLE001
+            logger.exception("COM 幫浦圈例外(本輪略過)")
+            time.sleep(1.0)                # 持續性故障時防 log 洪水
+
     def _run(self) -> None:
         import pythoncom
         pythoncom.CoInitialize()
         if not self._init_com():
             return
 
-        while True:
-            self._com.pump()
-            self._balance.poll()           # 沒等到結束標記的 flush 保險
-            self._profit.poll()            # 損益沒等到 ## 的 flush 保險
-            self._maybe_query_balance()    # 成交後 debounce / 60s 定時重查
-            try:
-                cmd = self._cmd_q.get(timeout=0.05)
-            except queue.Empty:
-                continue
-            if cmd is None:
-                break
-            fn, fut = cmd
-            try:
-                result = fn()
-                self._loop.call_soon_threadsafe(fut.set_result, result)
-            except Exception as e:  # noqa: BLE001
-                self._loop.call_soon_threadsafe(fut.set_exception, e)
+        try:
+            while True:
+                self._pump_once()
+                try:
+                    cmd = self._cmd_q.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if cmd is None:
+                    break
+                fn, fut = cmd
+                try:
+                    result = fn()
+                    self._loop.call_soon_threadsafe(fut.set_result, result)
+                except Exception as e:  # noqa: BLE001
+                    self._loop.call_soon_threadsafe(fut.set_exception, e)
+        finally:
+            # 執行緒亡故必須降 status:否則寫入請求進佇列後 future 永不 resolve,UI 還顯示健康
+            self._status = "error"
+            if not self._last_error:
+                self._last_error = "COM 執行緒已終止"
+            logger.error("capital-com 執行緒結束(status→error)")
 
     def _write_gate(self, seq_no: str, base: GateResult) -> GateResult:
         """基本閘(總開關等)先過,再擋已知非證券市場的單。v1 寫入鏈只支援證券:

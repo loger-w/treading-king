@@ -50,7 +50,10 @@ def parse_balance_line(raw: str) -> Position | None:
         if stock_no:
             logger.warning("balance line 未知庫存種類 %r: %r", parts[_IDX_KIND], raw)
         return None
-    lots = shares // 1000
+    # 用 abs 取幅度再按 kind 定號:若融券列回的是負股數,floor division 會把
+    # -1500//1000 算成 -2(幅度多算一張)、再取負變 +2(方向也錯)。
+    # 融券真實符號待首次有券空部位時 probe 校準;此寫法兩種符號都正確。
+    lots = abs(shares) // 1000
     if lots == 0:               # 零股不足 1 張:清單以張為單位,暫不顯示
         return None
     if kind == "short":
@@ -65,8 +68,9 @@ def dedupe_positions(positions: list[Position]) -> list[Position]:
     for p in positions:
         q = seen.get(p.stock_no)
         if q is not None:
-            logger.warning("同檔多種庫存列 %s: %s %d張 / %s %d張 — 保留張數大者",
-                           p.stock_no, q.kind, q.qty, p.kind, p.qty)
+            # debug 級:資+集保並存是穩定狀態,每 60s 查詢都會走到這裡,warning 會洗版
+            logger.debug("同檔多種庫存列 %s: %s %d張 / %s %d張 — 保留張數大者",
+                         p.stock_no, q.kind, q.qty, p.kind, p.qty)
             if abs(p.qty) <= abs(q.qty):
                 continue
         seen[p.stock_no] = p

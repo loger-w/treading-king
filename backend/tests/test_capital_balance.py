@@ -42,6 +42,15 @@ def test_parse_short_position_negative_qty():
     assert p.kind == "short"
 
 
+def test_parse_short_negative_shares_defensive():
+    """融券列真實符號未實測:若 [14] 回的是負股數,floor division 會把幅度多算一張
+    再負負得正 — 防禦寫法兩種符號都要對。"""
+    raw = RAW_L_SHORT.replace(",2000,0,130.25,", ",-2000,0,130.25,")
+    p = parse_balance_line(raw)
+    assert p is not None
+    assert p.qty == -2 and p.kind == "short"
+
+
 def test_daytrade_flat_skipped():
     # 當沖軋平(即時庫存 0)不佔一列
     assert parse_balance_line(RAW_T_FLAT) is None

@@ -95,6 +95,32 @@ def test_balance_flush_chains_profit_query_then_avg_applied(tmp_path):
     assert client.store.position_for("3357").avg_price == 150.55
 
 
+def test_pump_once_swallows_exceptions(tmp_path, monkeypatch):
+    """幫浦圈單輪例外(COM 斷線等)不可外洩 — 執行緒死=寫入 future 永不 resolve
+    而 status 還是 ok 的靜默失敗。"""
+    import services.capital_client as mod
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)   # 防 log 洪水的節流不拖慢測試
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+
+    def boom():
+        raise RuntimeError("COM 斷線")
+    com.pump = boom
+    client._pump_once()   # 不得 raise
+
+
+def test_run_thread_exit_drops_status(tmp_path):
+    """_run 結束(任何原因)必須把 status 降為 error:
+    否則之後的寫入請求進佇列後永遠沒人消化,UI 卻顯示健康。"""
+    com = RecordingCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._loop = asyncio.new_event_loop()
+    client._cmd_q.put(None)    # 模擬終止訊號:init 成功後第一輪就 break
+    client._run()
+    assert client.status == "error"
+    assert client.last_error
+
+
 def test_fill_reply_marks_balance_dirty(tmp_path):
     """成交回報(D)後要排程一次庫存重查(debounce 由 _run 圈消化)。"""
     com = FakeCom()
