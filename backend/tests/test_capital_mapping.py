@@ -37,3 +37,11 @@ def test_sell_market_fok_short_maps():
 def test_margin_maps_to_one():
     f = to_stockorder_fields(_req(trade_kind=TradeKind.MARGIN), full_account="x")
     assert f["sFlag"] == 1               # 融資=1
+
+
+def test_daytrade_sell_maps_to_three():
+    f = to_stockorder_fields(
+        _req(buy_sell=BuySell.SELL, trade_kind=TradeKind.DAYTRADE_SELL),
+        full_account="x",
+    )
+    assert f["sFlag"] == 3               # 無券=3(官方範例 0/1/2/3=現股/融資/融券/無券)

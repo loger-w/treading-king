@@ -11,7 +11,7 @@ from services.capital_models import (
 _BUYSELL = {BuySell.BUY: 0, BuySell.SELL: 1}
 _SPECIAL = {PriceType.MARKET: 1, PriceType.LIMIT: 2}
 _TIF = {TimeInForce.ROD: 0, TimeInForce.IOC: 1, TimeInForce.FOK: 2}
-_FLAG = {TradeKind.CASH: 0, TradeKind.MARGIN: 1, TradeKind.SHORT: 2}
+_FLAG = {TradeKind.CASH: 0, TradeKind.MARGIN: 1, TradeKind.SHORT: 2, TradeKind.DAYTRADE_SELL: 3}
 
 
 def to_stockorder_fields(req: StockOrderRequest, full_account: str) -> dict:

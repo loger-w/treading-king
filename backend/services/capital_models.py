@@ -32,6 +32,7 @@ class TradeKind(str, Enum):
     CASH = "cash"      # 現股
     MARGIN = "margin"  # 融資
     SHORT = "short"    # 融券
+    DAYTRADE_SELL = "daytrade_sell"  # 無券賣出(現股當沖先賣;回補=現股買進自動沖銷)
 
 
 class StockOrderRequest(BaseModel):
