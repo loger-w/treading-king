@@ -44,6 +44,7 @@ class _Agg:
     order_qty: int = 0            # 原始單位(股/口)
     filled_qty: int = 0
     fill_value: float = 0.0       # Σ(成交價×量),算均價用
+    date: str | None = None       # 委託建立日 YYYYMMDD
     time: str | None = None
     pre_order: bool = False
     error_msg: str | None = None
@@ -83,7 +84,7 @@ class CapitalStore:
                 self._order_seq.append(rec.seq_no)
 
             # 共通欄位:有值就更新
-            for f in ("stock_no", "market", "buy_sell", "flag_label", "book_no"):
+            for f in ("stock_no", "market", "buy_sell", "flag_label", "book_no", "date"):
                 v = getattr(rec, f)
                 if v:
                     setattr(a, f, v)
@@ -147,17 +148,17 @@ class CapitalStore:
             status_raw=a.status_raw, status_label=a.status_label,
             price=a.price, avg_fill_price=round(avg, 4) if avg is not None else None,
             order_qty=a.order_qty // div, filled_qty=a.filled_qty // div, unit=unit,
-            time=a.time, pre_order=a.pre_order, error_msg=a.error_msg,
+            date=a.date, time=a.time, pre_order=a.pre_order, error_msg=a.error_msg,
             actionable=_RANK.get(a.status_label or "", 0) in (1, 2),
             raw=a.raw,
         )
 
     def orders(self) -> list[OrderRecord]:
-        """最後事件時間倒序(有新回報的單浮頂,盤中操作結果不用往下捲找);同秒以到達序新者在前。"""
+        """日期+時間倒序(昨日預約單不浮頂、有新回報的單浮頂);同秒以到達序新者在前。"""
         with self._lock:
             arrival = {s: i for i, s in enumerate(self._order_seq)}
             aggs = sorted(self._orders.values(),
-                          key=lambda a: (a.time or "", arrival[a.seq_no]), reverse=True)
+                          key=lambda a: (a.date or "", a.time or "", arrival[a.seq_no]), reverse=True)
             return [self._to_record(a) for a in aggs]
 
     def remaining_shares(self, seq_no: str) -> int | None:

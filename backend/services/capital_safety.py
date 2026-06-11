@@ -2,7 +2,7 @@
 from __future__ import annotations
 import math
 from dataclasses import dataclass
-from services.capital_models import StockOrderRequest
+from services.capital_models import BuySell, StockOrderRequest, TradeKind
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,9 @@ def check_stock_order(req: StockOrderRequest, cfg: SafetyConfig) -> GateResult:
     blocked = _master(cfg) or _bad_price(req.price)
     if blocked:
         return blocked
+    # 無券=現股當沖先賣;「無券+買進」不是合法組合(回補=現股買進,交易所自動沖銷)
+    if req.trade_kind == TradeKind.DAYTRADE_SELL and req.buy_sell == BuySell.BUY:
+        return GateResult(False, "無券賣出僅能賣出;回補請用現股買進")
     if req.qty <= 0:
         return GateResult(False, "數量必須大於 0")
     if cfg.max_qty and req.qty > cfg.max_qty:

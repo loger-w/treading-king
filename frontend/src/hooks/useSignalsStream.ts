@@ -123,6 +123,9 @@ export function useSignalsStream(opts?: {
           mxfCandleBus.dispatchEvent(new CustomEvent<MXFCandleEvent>("mxf_candle", { detail: evt }));
         } else if (msg.event === "capital_order") {
           capitalOrderBus.dispatchEvent(new Event("capital_order"));
+        } else if (msg.event === "capital_position") {
+          // 庫存查詢完成 → 同一個 bus 讓委託/部位 hook 重抓(語意=群益狀態變了)
+          capitalOrderBus.dispatchEvent(new Event("capital_order"));
         }
       } catch { /* ignore */ }
     };

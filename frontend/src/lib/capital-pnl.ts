@@ -16,3 +16,24 @@ export function netPnl(
   const tax = Math.round(shares * currentPrice * taxRate);
   return grossPnl(qty, avgPrice, currentPrice) - entryFee - exitFee - tax;
 }
+
+/** 快照價每輪全量重建(不吃前值 — 簽名就杜絕「已有值就不蓋」的凍結 bug)。
+ *  tick 價另存一層,顯示時經 pickPrice 合併。 */
+export function snapshotPrices(rows: Array<{ symbol: string; last_price: number | null }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.last_price != null) out[r.symbol] = r.last_price;
+  return out;
+}
+
+export const TICK_FRESH_MS = 60_000;
+
+/** 顯示價:新鮮 tick 優先,逾期退快照 — 標的被移出訂閱後,陳舊 tick 不得
+ *  永久遮住每 30s 刷新的快照價(否則就是換個來源的凍結 bug)。無快照才用陳舊 tick。 */
+export function pickPrice(
+  tick: { price: number; ts: number } | undefined,
+  snap: number | undefined,
+  now: number,
+): number | null {
+  if (tick && now - tick.ts < TICK_FRESH_MS) return tick.price;
+  return snap ?? tick?.price ?? null;
+}

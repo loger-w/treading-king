@@ -249,7 +249,7 @@ function MonitorInner() {
             </section>
 
             {/* COL 4: 下單面板(群益) */}
-            <TradingPanel selected={selected} />
+            <TradingPanel selected={selected} onPick={setSelected} />
 
           </div>
         </div>

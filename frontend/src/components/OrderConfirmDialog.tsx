@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import type { CapitalStockOrderReq } from "../lib/api";
+import { TRADE_KIND_LABELS } from "../lib/capital-labels";
 
 interface Props {
   req: CapitalStockOrderReq;
@@ -32,7 +33,9 @@ export function OrderConfirmDialog({ req, env, estAmount, onConfirm, onClose }: 
         <div className="space-y-1.5 text-sm tabular-nums">
           <Row k="標的" v={req.stock_no} />
           <Row k="買賣別" v={<span className={isBuy ? "text-bull" : "text-bear"}>{isBuy ? "買進" : "賣出"}</span>} />
-          <Row k="委託價" v={req.price_type === "market" ? "市價" : req.price.toFixed(2)} />
+          <Row k="交易種類" v={TRADE_KIND_LABELS[req.trade_kind ?? "cash"]} />
+          <Row k="條件" v={`${req.time_in_force ?? "ROD"}${req.price_type === "market" ? " · 市價" : ""}`} />
+          <Row k="委託價" v={req.price_type === "market" ? `市價(閘用估價 ${req.price.toFixed(2)})` : req.price.toFixed(2)} />
           <Row k="數量" v={`${req.qty} 張`} />
           <Row k="預估金額" v={`NT$ ${estAmount.toLocaleString()}`} />
         </div>

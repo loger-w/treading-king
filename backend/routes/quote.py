@@ -44,6 +44,7 @@ async def get_quote(symbol: str) -> dict:
             "is_limit_up_ask":   result.get("isLimitUpAsk", False),
             "is_limit_down_bid": result.get("isLimitDownBid", False),
             "is_limit_down_ask": result.get("isLimitDownAsk", False),
+            "reference_price": result.get("referencePrice"),
         }
     except Exception as e:
         logger.warning("intraday_quote(%s) failed: %s", symbol, e)

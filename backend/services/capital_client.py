@@ -8,13 +8,16 @@ import asyncio
 import logging
 import queue
 import threading
+import time
 from pathlib import Path
 
+from services.capital_balance import BalanceCollector
+from services.capital_close import build_close_order
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
 from services.capital_models import (
     StockOrderRequest, OrderResult, SEC_MARKETS,
-    CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
+    CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest, PositionCloseRequest,
 )
 from services.capital_safety import (
     SafetyConfig, GateResult,
@@ -52,6 +55,9 @@ class CapitalClient:
         self._last_error: str | None = None
         self.store = CapitalStore()      # 委託/部位快取:回報事件寫入、REST 讀
         self._broadcast = None           # Callable[[dict], None] | None;由 app 注入推 WS
+        self._balance = BalanceCollector(on_complete=self._on_balance_complete)
+        self._balance_due: float | None = None   # monotonic;成交後 debounce 重查
+        self._balance_last_ts: float = 0.0        # 定時重查用(0=啟動後第一圈就查)
 
     @property
     def status(self) -> str:
@@ -75,6 +81,8 @@ class CapitalClient:
             # 刪/改/減目前傳 KeyNo;首測預約單若回「查無委託」,改試這個尾欄值。
             logger.warning("Capital reply: KeyNo=%s 尾欄序號=%s 不同(預約單?)", rec.seq_no, rec.alt_seq_no)
         self.store.apply_reply(rec)
+        if rec.status_raw == "D":      # 成交 → 排程庫存重查(debounce:連續成交只查尾端一次)
+            self._mark_balance_dirty()
         if self._broadcast and rec.seq_no:
             self._broadcast({"event": "capital_order", "data": {
                 "seq_no": rec.seq_no, "stock_no": rec.stock_no,
@@ -86,10 +94,40 @@ class CapitalClient:
         self._thread = threading.Thread(target=self._run, daemon=True, name="capital-com")
         self._thread.start()
 
+    def _handle_balance(self, raw: str) -> None:
+        """OnRealBalanceReport 事件(COM 執行緒)。"""
+        self._balance.feed(raw)
+
+    def _on_balance_complete(self, positions) -> None:
+        self.store.set_positions(positions)
+        self._balance_last_ts = time.monotonic()
+        if self._broadcast:
+            self._broadcast({"event": "capital_position", "data": {"count": len(positions)}})
+
+    def _mark_balance_dirty(self, delay_s: float = 2.0) -> None:
+        """成交回報後排程重查(debounce:連續成交只查尾端一次)。"""
+        self._balance_due = time.monotonic() + delay_s
+
+    def _maybe_query_balance(self) -> None:
+        """_run 幫浦圈呼叫(COM 執行緒):due 到了或距上次查詢逾 60s → 發查詢。"""
+        if self._status != "ok":
+            return
+        now = time.monotonic()
+        due = self._balance_due is not None and now >= self._balance_due
+        stale = now - self._balance_last_ts >= 60.0
+        if not due and not stale:
+            return
+        self._balance_due = None
+        self._balance_last_ts = now                 # 先記,失敗也不連發
+        self._balance.reset()
+        rc = self._com.get_real_balance(self._user_id, self._full_account)
+        if rc != 0:
+            logger.warning("GetRealBalanceReport rc=%s: %s", rc, self._com.return_code_message(rc))
+
     def _init_com(self) -> bool:
         """登入 + 憑證 + 連回報主機。成功回 True、status=ok;失敗回 False、status=error。"""
         try:
-            self._com.setup(self._handle_reply)
+            self._com.setup(self._handle_reply, self._handle_balance)
             self._com.set_authority(2 if self._env == "test" else 0)
             code = self._com.login(self._user_id, self._password)
             if code != 0:
@@ -121,6 +159,8 @@ class CapitalClient:
 
         while True:
             self._com.pump()
+            self._balance.poll()           # 沒等到結束標記的 flush 保險
+            self._maybe_query_balance()    # 成交後 debounce / 60s 定時重查
             try:
                 cmd = self._cmd_q.get(timeout=0.05)
             except queue.Empty:
@@ -183,14 +223,28 @@ class CapitalClient:
         self._audit_after_send(req, result, action)
         return result
 
-    async def submit_stock_order(self, req: StockOrderRequest) -> OrderResult:
+    async def submit_stock_order(self, req: StockOrderRequest, *, action: str = "order") -> OrderResult:
         def _do() -> tuple[str, int]:
             fields = to_stockorder_fields(req, self._full_account)
             return self._com.send_stock_order(self._user_id, fields)
 
         return await self._execute_write(
-            action="order", req=req,
+            action=action, req=req,
             gate=check_stock_order(req, self._safety), com_call=_do)
+
+    async def close_position(self, req: PositionCloseRequest) -> OrderResult:
+        pos = self.store.position_for(req.stock_no)
+        if pos is None or pos.qty == 0:
+            reason = f"{req.stock_no} 無部位可平"
+            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=reason, action="close")
+            return OrderResult(ok=False, code=-1, message=reason)
+        try:
+            # v1 部位來源=現股報表 → pos_kind 恆 "cash"。信用部位資料接上後,改從部位資料帶種類。
+            order = build_close_order(pos, req, pos_kind="cash")
+        except ValueError as e:
+            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=str(e), action="close")
+            return OrderResult(ok=False, code=-1, message=str(e))
+        return await self.submit_stock_order(order, action="close")
 
     async def cancel_stock_order(self, req: CancelOrderRequest) -> OrderResult:
         def _do() -> tuple[str, int]:

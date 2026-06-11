@@ -1,5 +1,6 @@
 from __future__ import annotations
 from enum import Enum
+from typing import Literal
 from pydantic import BaseModel
 
 # 群益市場別:證券類(整股 TS/TA/TP、零股 TL/TC)。期貨/期權 TF/TO/OF/OO/OS 不在此集。
@@ -32,6 +33,7 @@ class TradeKind(str, Enum):
     CASH = "cash"      # 現股
     MARGIN = "margin"  # 融資
     SHORT = "short"    # 融券
+    DAYTRADE_SELL = "daytrade_sell"  # 無券賣出(現股當沖先賣;回補=現股買進自動沖銷)
 
 
 class StockOrderRequest(BaseModel):
@@ -42,6 +44,7 @@ class StockOrderRequest(BaseModel):
     price_type: PriceType = PriceType.LIMIT
     time_in_force: TimeInForce = TimeInForce.ROD
     trade_kind: TradeKind = TradeKind.CASH
+    source: Literal["panel", "flash"] = "panel"  # 稽核分流:單從哪個介面送出
 
 
 class OrderResult(BaseModel):
@@ -67,6 +70,7 @@ class OrderRecord(BaseModel):
     order_qty: int = 0                # 顯示單位(張/股/口)
     filled_qty: int = 0
     unit: str = "張"
+    date: str | None = None           # 委託建立日 YYYYMMDD(排序/前端跨日顯示用)
     time: str | None = None           # 最新事件 HH:MM:SS
     pre_order: bool = False
     error_msg: str | None = None
@@ -100,3 +104,11 @@ class CorrectPriceRequest(BaseModel):
 class DecreaseQtyRequest(BaseModel):
     seq_no: str
     qty: int  # 張(與 SendStockOrder.nQty 同慣例;首次實測對群益 App 驗)
+
+
+class PositionCloseRequest(BaseModel):
+    stock_no: str
+    qty: int | None = None                    # None=全部
+    price_type: PriceType = PriceType.MARKET
+    price: float | None = None                # market=閘用估價(前端帶);limit=委託價
+    source: Literal["panel", "flash"] = "panel"

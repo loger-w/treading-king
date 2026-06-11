@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type CapitalOrderResult } from "../lib/api";
-import { buildOrderRow, type CapitalOrder, type OrderRowVM } from "../lib/capital-orders";
+import { buildOrderRow, localYmd, type CapitalOrder, type OrderRowVM } from "../lib/capital-orders";
 
 /** 委託清單(聚合列)+ 活單刪/改。結果靠 OnNewData 回報刷新,不樂觀更新。 */
 export function OrdersList({ orders, env }: { orders: CapitalOrder[]; env: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   if (orders.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">今日尚無委託</div>;
+  const todayYmd = localYmd(new Date());
   return (
     <div className="space-y-0">
       {orders.map((o) => (
-        <OrderRow key={o.seq_no} row={buildOrderRow(o)} env={env} onResult={setMsg} />
+        <OrderRow key={o.seq_no} row={buildOrderRow(o, todayYmd)} env={env} onResult={setMsg} />
       ))}
       {msg && <div className="text-center text-xs mt-2 text-ink-muted">{msg}</div>}
     </div>
