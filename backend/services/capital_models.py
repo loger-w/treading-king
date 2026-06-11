@@ -82,8 +82,11 @@ class Position(BaseModel):
     stock_no: str
     name: str = ""
     qty: int                        # 張(融券放空為負)
-    avg_price: float | None = None  # OnRealBalanceReport 無均價欄;待接損益試算 GetProfitLossGWReport
+    avg_price: float | None = None  # 損益試算[10]平均買進成本(OnRealBalanceReport 無此欄)
     kind: str = "cash"              # cash(T集保)/margin(C融資)/short(L融券) — 平倉反向映射用
+    pnl_base: float | None = None        # 損益試算[9]含費稅息淨損益(報告市價時點)— 前端平移基底
+    pnl_base_price: float | None = None  # 損益試算[5]報告市價(平移基準)
+    pnl_cost: float | None = None        # 損益試算[12]成交價金(% 分母,同報告[21]口徑)
 
     def unrealized_gross(self, current_price: float | None) -> float:
         if current_price is None or self.avg_price is None:

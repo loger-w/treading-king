@@ -25,6 +25,13 @@ export function snapshotPrices(rows: Array<{ symbol: string; last_price: number 
   return out;
 }
 
+/** 券商淨損益基底+即時平移:基底=損益試算報告[9](含費稅息,與群益 App 同源、報告市價時點),
+ *  現價跳動時平移純價差。賣出費稅隨價變動的微差刻意忽略(實測對 App 差個位數元)。 */
+export function brokerPnl(qty: number, pnlBase: number, basePrice: number, cur: number | null): number {
+  if (cur == null) return pnlBase;
+  return pnlBase + qty * 1000 * (cur - basePrice);
+}
+
 export const TICK_FRESH_MS = 60_000;
 
 /** 顯示價:新鮮 tick 優先,逾期退快照 — 標的被移出訂閱後,陳舊 tick 不得

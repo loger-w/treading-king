@@ -244,22 +244,35 @@ def test_set_positions_replaces_not_merges():
     assert [p.stock_no for p in s.positions()] == ["2317"]
 
 
-def test_apply_avg_prices_fills_existing_only():
+def test_apply_profit_rows_fills_existing_only():
+    from services.capital_balance import ProfitRow
     from services.capital_models import Position
     s = CapitalStore()
     s.set_positions([Position(stock_no="3357", qty=3, kind="margin")])
-    s.apply_avg_prices({"3357": 150.55, "9999": 1.0})   # 查無股號忽略(部位以即時庫存為權威)
-    assert s.position_for("3357").avg_price == 150.55
+    s.apply_profit_rows([
+        ProfitRow("3357", 311.75, -74636.0, 288.0, 935000.0),
+        ProfitRow("9999", 1.0, None, None, None),    # 查無股號忽略(部位以即時庫存為權威)
+    ])
+    p = s.position_for("3357")
+    assert p.avg_price == 311.75
+    assert p.pnl_base == -74636.0
+    assert p.pnl_base_price == 288.0
+    assert p.pnl_cost == 935000.0
     assert len(s.positions()) == 1
 
 
-def test_set_positions_carries_avg_same_kind_only():
-    """損益查詢回來前,新一輪庫存覆寫不可閃掉已知均價;但種類變了成本基礎不同,不沿用。"""
+def test_set_positions_carries_profit_same_kind_only():
+    """損益查詢回來前,新一輪庫存覆寫不可閃掉已知均價/損益基底;種類變了成本基礎不同,不沿用。"""
+    from services.capital_balance import ProfitRow
     from services.capital_models import Position
     s = CapitalStore()
     s.set_positions([Position(stock_no="3357", qty=3, kind="margin")])
-    s.apply_avg_prices({"3357": 150.55})
+    s.apply_profit_rows([ProfitRow("3357", 311.75, -74636.0, 288.0, 935000.0)])
     s.set_positions([Position(stock_no="3357", qty=4, kind="margin")])
-    assert s.position_for("3357").avg_price == 150.55
+    p = s.position_for("3357")
+    assert p.avg_price == 311.75
+    assert p.pnl_base == -74636.0 and p.pnl_base_price == 288.0 and p.pnl_cost == 935000.0
     s.set_positions([Position(stock_no="3357", qty=4, kind="cash")])
-    assert s.position_for("3357").avg_price is None
+    p = s.position_for("3357")
+    assert p.avg_price is None
+    assert p.pnl_base is None and p.pnl_base_price is None and p.pnl_cost is None

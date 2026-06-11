@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CapitalPosition } from "../lib/api";
 import { subscribeTicks } from "../hooks/useSignalsStream";
-import { grossPnl, pickPrice, snapshotPrices } from "../lib/capital-pnl";
+import { brokerPnl, grossPnl, pickPrice, snapshotPrices } from "../lib/capital-pnl";
 import { limitDown, limitUp } from "../lib/tick";
 
 /** 庫存總覽:每列 代號/張數/均價/現價/未實現損益;點列帶標的回下單匣;「平」=反向市價單(確認後送)。
@@ -45,24 +45,31 @@ export function PositionsList({ positions, env, onPick }: {
 
   // 快照 30s 重載觸發 re-render,新鮮度判斷至少每輪重算一次
   const priceOf = (s: string) => pickPrice(tick[s], snap[s], Date.now());
-  // 均價未知(報告無均價欄)的列不入總損益;全未知 → 顯示「—」而非誤導的 +0
-  const anyAvg = positions.some((p) => p.avg_price != null);
-  const total = positions.reduce((sum, p) => sum + grossPnl(p.qty, p.avg_price, priceOf(p.stock_no)), 0);
+  // 損益口徑:券商淨損益基底(含費稅息,與App同源)+ 即時價差平移;報告缺列時退毛損益備援
+  const rowPnl = (p: CapitalPosition) =>
+    p.pnl_base != null && p.pnl_base_price != null
+      ? brokerPnl(p.qty, p.pnl_base, p.pnl_base_price, priceOf(p.stock_no))
+      : grossPnl(p.qty, p.avg_price, priceOf(p.stock_no));
+  // 損益資訊全未知 → 顯示「—」而非誤導的 +0
+  const anyPnl = positions.some((p) => p.pnl_base != null || p.avg_price != null);
+  const total = positions.reduce((sum, p) => sum + rowPnl(p), 0);
   const totalUp = total >= 0;
 
   return (
     <div>
       <div className="flex justify-between items-baseline border-b border-line-strong pb-2 mb-1">
-        <span className="label-tiny">總未實現損益</span>
-        <span className={`text-lg font-bold tabular-nums ${!anyAvg ? "text-ink-dim" : totalUp ? "text-bull" : "text-bear"}`}>
-          {anyAvg ? `${totalUp ? "+" : ""}${total.toLocaleString()}` : "—"}
+        <span className="label-tiny">總未實現損益(含費稅息)</span>
+        <span className={`text-lg font-bold tabular-nums ${!anyPnl ? "text-ink-dim" : totalUp ? "text-bull" : "text-bear"}`}>
+          {anyPnl ? `${totalUp ? "+" : ""}${total.toLocaleString()}` : "—"}
         </span>
       </div>
       {positions.map((p) => {
         const cur = priceOf(p.stock_no);
-        const pnl = grossPnl(p.qty, p.avg_price, cur);
+        const pnl = rowPnl(p);
         const up = pnl >= 0;
-        const pct = cur != null && p.avg_price != null && p.avg_price > 0 ? ((cur - p.avg_price) / p.avg_price) * 100 * Math.sign(p.qty) : null;
+        // % 分母=成交價金(同報告[21]報酬率口徑);無基底時退價差%
+        const pct = p.pnl_cost != null && p.pnl_cost > 0 ? (pnl / p.pnl_cost) * 100
+          : cur != null && p.avg_price != null && p.avg_price > 0 ? ((cur - p.avg_price) / p.avg_price) * 100 * Math.sign(p.qty) : null;
         return (
           <div key={p.stock_no} className="border-b border-line py-2 text-sm cursor-pointer hover:bg-bg-card"
             onClick={() => onPick(p.stock_no)}>
@@ -74,12 +81,12 @@ export function PositionsList({ positions, env, onPick }: {
             </div>
             <div className="flex justify-between text-xs tabular-nums mt-0.5">
               <span className="text-ink-dim">現價 {cur != null ? cur.toFixed(2) : "—"}</span>
-              {p.avg_price != null ? (
+              {p.pnl_base != null || p.avg_price != null ? (
                 <span className={up ? "text-bull" : "text-bear"}>
                   {up ? "+" : ""}{pnl.toLocaleString()}{pct != null ? `(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)` : ""}
                 </span>
               ) : (
-                <span className="text-ink-dim">損益 —(均價待損益 API)</span>
+                <span className="text-ink-dim">損益 —(待損益查詢)</span>
               )}
             </div>
           </div>

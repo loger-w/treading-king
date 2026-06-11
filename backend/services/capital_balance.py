@@ -16,7 +16,7 @@ Position.avg_price 一律 None,均價待接損益試算 GetProfitLossGWReport。
 from __future__ import annotations
 import logging
 import time
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from services.capital_models import Position
 
@@ -74,13 +74,32 @@ def dedupe_positions(positions: list[Position]) -> list[Position]:
 
 
 _PNL_IDX_STOCK_NO = 1
+_PNL_IDX_PRICE = 5       # 報告市價(前端「券商基底+即時平移」的平移基準)
+_PNL_IDX_PNL = 9         # 損益(含費稅息,與群益 App 同源)
 _PNL_IDX_AVG = 10        # 平均買進(券賣)成本(4-2-p 未實現-彙總)
+_PNL_IDX_COST = 12       # 成交價金(報酬率分母 — 實測同報告[21]口徑)
 _PNL_MIN_FIELDS = 11
 
 
-def parse_profit_line(raw: str) -> tuple[str, float] | None:
-    """OnProfitLossGWReport(未實現-彙總)一筆 → (股號, 均價);
-    查詢結果列(000開頭)/結束標記/欄位不足/數字壞/均價≤0 → None(缺均價不出垃圾)。"""
+class ProfitRow(NamedTuple):
+    stock_no: str
+    avg_price: float
+    pnl: float | None        # 含費稅息淨損益(報告市價時點)
+    price: float | None      # 報告市價
+    cost: float | None       # 成交價金(% 分母)
+
+
+def _opt_float(parts: list[str], i: int) -> float | None:
+    try:
+        return float(parts[i])
+    except (ValueError, IndexError):
+        return None
+
+
+def parse_profit_line(raw: str) -> ProfitRow | None:
+    """OnProfitLossGWReport(未實現-彙總)一筆 → ProfitRow;
+    查詢結果列(000開頭)/結束標記/總計列(股號空)/欄位不足/均價壞 → None。
+    損益三欄各自可缺(均價是主要產出,不因附屬欄壞掉丟整筆)。"""
     if not raw or raw.startswith("#"):
         return None
     parts = raw.split(",")
@@ -94,7 +113,12 @@ def parse_profit_line(raw: str) -> tuple[str, float] | None:
         return None
     if not stock_no or avg <= 0:
         return None
-    return (stock_no, avg)
+    return ProfitRow(
+        stock_no=stock_no, avg_price=avg,
+        pnl=_opt_float(parts, _PNL_IDX_PNL),
+        price=_opt_float(parts, _PNL_IDX_PRICE),
+        cost=_opt_float(parts, _PNL_IDX_COST),
+    )
 
 
 class BalanceCollector:

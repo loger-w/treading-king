@@ -69,6 +69,19 @@ API 補上均價,**前端零改動**(avg_price 有值後,既有顯示鏈自動�
   client 鏈(balance flush → 觸發損益查詢 → profit flush → store 均價)
 - 前端 vitest 全套維持綠(零改動驗證)
 
+## 補充:損益口徑決策(2026-06-11 實測後,user 拍板)
+
+首版「前端純價差毛損益」與群益 App 對不上(App=含手續費/證交稅/融資利息的淨損益,
+3357 實例:App −73,141/−7.66% vs 毛損益 −68,250/−7.30%)。改採**券商淨損益基底+即時平移**:
+
+- 解析擴充:`ProfitRow(stock_no, avg_price, pnl=[9], price=[5], cost=[12])`;
+  `Position` 加 `pnl_base`/`pnl_base_price`/`pnl_cost`
+- 前端 `brokerPnl(qty, pnlBase, basePrice, cur) = pnlBase + qty×1000×(cur−basePrice)`
+  — 金額貼 App(實測差 5 元,為賣出費稅隨價變動的微差,刻意忽略);現價跳動即時反映
+- `%` 分母=成交價金 `[12]`(同報告 `[21]`報酬率口徑,實測驗證);App 的 % 口徑
+  另含其費率折數,無法外部 100% 復刻,接受小差異
+- 報告缺列時退毛損益備援;總損益標籤標注「含費稅息」
+
 ## 驗收
 
 1. 後端啟動後 ≤90s,`/api/capital/positions` 各檔 `avg_price` 非 null(有成本資料者)

@@ -104,8 +104,8 @@ class CapitalClient:
         self._profit.feed(raw)
 
     def _on_profit_complete(self, rows) -> None:
-        """rows = [(stock_no, avg)] — 回填均價後再推部位事件讓前端 refetch。"""
-        self.store.apply_avg_prices(dict(rows))
+        """rows = [ProfitRow] — 回填均價+損益基底後再推部位事件讓前端 refetch。"""
+        self.store.apply_profit_rows(rows)
         if self._broadcast:
             self._broadcast({"event": "capital_position", "data": {"avg_count": len(rows)}})
 

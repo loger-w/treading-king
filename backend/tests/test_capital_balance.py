@@ -1,7 +1,7 @@
 """OnRealBalanceReport 解析。樣本 = 2026-06-11 正式環境真實回報(ID/帳號去敏),
 欄位定義 = 官方 4-2-c(策略王COM元件使用說明_V2.13.58.docx),兩者已互相驗證。"""
 from services.capital_balance import (
-    BalanceCollector, dedupe_positions, parse_balance_line, parse_profit_line,
+    BalanceCollector, ProfitRow, dedupe_positions, parse_balance_line, parse_profit_line,
 )
 from services.capital_models import Position
 
@@ -107,8 +107,15 @@ RAW_PNL_STATUS = "000,"
 
 
 def test_parse_profit_line():
-    assert parse_profit_line(RAW_PNL_ROW) == ("2493", 178.05)
-    assert parse_profit_line(RAW_PNL_MARGIN) == ("3357", 311.75)
+    # 均價之外還要 [9]損益(含費稅息)/[5]報告市價/[12]成交價金 —— 前端「券商基底+即時平移」口徑用
+    assert parse_profit_line(RAW_PNL_ROW) == ProfitRow("2493", 178.05, 1368.0, 180.0, 178000.0)
+    assert parse_profit_line(RAW_PNL_MARGIN) == ProfitRow("3357", 311.75, -74636.0, 288.0, 935000.0)
+
+
+def test_parse_profit_line_pnl_fields_optional():
+    # 損益欄壞掉只丟那幾欄,均價仍要保住(均價是主要產出)
+    bad = RAW_PNL_ROW.replace(",1368.00,", ",x,")
+    assert parse_profit_line(bad) == ProfitRow("2493", 178.05, None, 180.0, 178000.0)
 
 
 def test_parse_profit_skips_status_total_end_and_junk():
@@ -128,4 +135,4 @@ def test_collector_with_profit_parser():
     c.feed(RAW_PNL_ROW)
     c.feed(RAW_PNL_TOTAL)
     c.feed("##")
-    assert got == [[("2493", 178.05)]]
+    assert got == [[ProfitRow("2493", 178.05, 1368.0, 180.0, 178000.0)]]

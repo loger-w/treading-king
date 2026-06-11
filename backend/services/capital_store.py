@@ -190,18 +190,25 @@ class CapitalStore:
             old = self._positions
             for p in positions:
                 prev = old.get(p.stock_no)
-                # 損益查詢回來前沿用既有均價(同種類才沿用 — 資/券成本基礎不同)
+                # 損益查詢回來前沿用既有均價/損益基底(同種類才沿用 — 資/券成本基礎不同)
                 if p.avg_price is None and prev is not None and prev.kind == p.kind:
                     p.avg_price = prev.avg_price
+                    p.pnl_base = prev.pnl_base
+                    p.pnl_base_price = prev.pnl_base_price
+                    p.pnl_cost = prev.pnl_cost
             self._positions = {p.stock_no: p for p in positions}
 
-    def apply_avg_prices(self, avg: dict[str, float]) -> None:
-        """損益試算回填均價;查無股號忽略(部位清單以即時庫存為權威)。"""
+    def apply_profit_rows(self, rows) -> None:
+        """損益試算回填(均價+含費稅息損益基底);查無股號忽略(部位清單以即時庫存為權威)。
+        rows: list[capital_balance.ProfitRow]。"""
         with self._lock:
-            for stock_no, price in avg.items():
-                p = self._positions.get(stock_no)
+            for r in rows:
+                p = self._positions.get(r.stock_no)
                 if p is not None:
-                    p.avg_price = price
+                    p.avg_price = r.avg_price
+                    p.pnl_base = r.pnl
+                    p.pnl_base_price = r.price
+                    p.pnl_cost = r.cost
 
     def positions(self) -> list[Position]:
         with self._lock:

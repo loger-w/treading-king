@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { grossPnl, netPnl, pickPrice, snapshotPrices } from "./capital-pnl";
+import { brokerPnl, grossPnl, netPnl, pickPrice, snapshotPrices } from "./capital-pnl";
 
 describe("capital-pnl", () => {
   it("gross = qty*1000*(price-avg)", () => {
@@ -32,6 +32,17 @@ describe("snapshotPrices 快照價全量重建", () => {
     expect(r1).toEqual({ "2330": 100 });
     const r2 = snapshotPrices([{ symbol: "2330", last_price: 101.5 }]);
     expect(r2).toEqual({ "2330": 101.5 });
+  });
+});
+
+describe("brokerPnl 券商淨損益基底+即時平移", () => {
+  it("現價偏離報告市價時平移價差(2026-06-11 實例:報告288時-74636,現價288.5≈App的-73141)", () => {
+    expect(brokerPnl(3, -74636, 288, 288.5)).toBe(-73136);
+    expect(brokerPnl(3, -74636, 288, 287)).toBe(-77636);
+  });
+
+  it("缺現價回基底原值(報告時點的含費稅息損益)", () => {
+    expect(brokerPnl(3, -74636, 288, null)).toBe(-74636);
   });
 });
 
