@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type CapitalOrder } from "../lib/api";
 import { useQuoteBook } from "../hooks/useQuoteBook";
 import { subscribeTicks } from "../hooks/useSignalsStream";
-import { buildLadder, type MyOrderLot } from "../lib/flash-ladder";
+import { buildLadder, splitMyLots } from "../lib/flash-ladder";
 import { ARM_IDLE_MS, initialArm, reduceArm, type ArmState } from "../lib/flash-arm";
 import { initialQtyState, manualQty, pressQuick, QTY_PRESETS, type QtyState } from "../lib/qty-quick";
 import { TRADE_KINDS, TRADE_KIND_LABELS, type TradeKindValue } from "../lib/capital-labels";
@@ -28,6 +28,7 @@ export function FlashPanel({ selected, ready, env, orders, posQty }: Props) {
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastClick = useRef<{ key: string; ts: number } | null>(null);
   const centerRef = useRef<HTMLDivElement | null>(null);
+  const progScroll = useRef(false);
 
   // 現價:WS tick 即時
   useEffect(() => {
@@ -56,27 +57,25 @@ export function FlashPanel({ selected, ready, env, orders, posQty }: Props) {
   };
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
-  // 我的活單(該標的)→ 我N徽章 + 全刪來源
-  const myActionable = useMemo(
-    () => orders.filter((o) => o.actionable && o.stock_no === selected),
-    [orders, selected],
-  );
-  const myLots: MyOrderLot[] = useMemo(
-    () => myActionable
-      .filter((o) => o.price != null && (o.buy_sell === "B" || o.buy_sell === "S"))
-      .map((o) => ({ price: o.price as number, buySell: o.buy_sell as "B" | "S", lots: Math.max(o.order_qty - o.filled_qty, 0) })),
-    [myActionable],
-  );
+  // 該檔今日全部單(含已完成 — 黃括號要整日留存);活單另濾給刪單用
+  const myStockOrders = useMemo(() => orders.filter((o) => o.stock_no === selected), [orders, selected]);
+  const myActionable = useMemo(() => myStockOrders.filter((o) => o.actionable), [myStockOrders]);
+  const myLots = useMemo(() => splitMyLots(myStockOrders), [myStockOrders]);
 
   const center = last ?? refPrice;
   const ladder = useMemo(
-    () => (center != null ? buildLadder({ center, reference: refPrice, bids, asks, myOrders: myLots }) : []),
+    () => (center != null ? buildLadder({ center, reference: refPrice, bids, asks, myOrders: myLots.active, myFills: myLots.fills }) : []),
     [center, refPrice, bids, asks, myLots],
   );
 
-  // 現價列自動置中
+  // 程式捲動旗標:scroll 事件在 rAF 前發,onScroll 看旗標跳過、rAF 清旗標
+  // (已置中時 scrollIntoView 不發 scroll 事件,所以不能靠 onScroll 清)。
+  // 不可改 smooth —— 多幀多次 scroll 事件會在旗標清掉後誤判成手動捲動。
   useEffect(() => {
-    if (followCenter) centerRef.current?.scrollIntoView({ block: "center" });
+    if (!followCenter || !centerRef.current) return;
+    progScroll.current = true;
+    centerRef.current.scrollIntoView({ block: "center" });
+    requestAnimationFrame(() => { progScroll.current = false; });
   }, [ladder, followCenter]);
 
   const clickPrice = async (price: number, side: "buy" | "sell", clickable: boolean) => {
@@ -140,37 +139,55 @@ export function FlashPanel({ selected, ready, env, orders, posQty }: Props) {
         {arm.armed ? (prod ? "⚠ 已武裝(正式環境)— 點價直接送單" : "已武裝 — 點價直接送單") : "未武裝 — 點價不送單"}
       </button>
 
-      {/* 階梯 */}
-      <div className="flex-1 min-h-0 overflow-y-auto border border-line rounded bg-bg-card"
-        onScroll={() => setFollowCenter(false)}>
-        <div className="grid grid-cols-[1fr_72px_1fr] text-2xs text-ink-dim sticky top-0 bg-bg-deep border-b border-line z-[1]">
-          <span className="text-right pr-2 py-1">委買</span><span className="text-center py-1">價格</span><span className="pl-2 py-1">委賣</span>
-        </div>
+      {/* 表頭移出捲動容器 + 跟隨置中常駐鈕(表頭正下方) */}
+      <div className="grid grid-cols-[1fr_72px_1fr] text-2xs text-ink-dim bg-bg-deep border border-b-0 border-line rounded-t flex-shrink-0">
+        <span className="text-right pr-2 py-1">委買</span><span className="text-center py-1">價格</span><span className="pl-2 py-1">委賣</span>
+      </div>
+      <button onClick={() => setFollowCenter(true)}
+        className={`text-2xs py-1 border-x border-line flex-shrink-0 ${followCenter ? "text-accent bg-accent/10" : "text-ink-dim bg-bg-deep"}`}>
+        ◎ 跟隨置中:{followCenter ? "開" : "關(點我回中)"}
+      </button>
+      {/* 階梯:量區=加掛(連點繼續加)、紅方格=刪該價該向活單、黃括號=今日成交紀錄 */}
+      <div className="flex-1 min-h-0 overflow-y-auto border border-line rounded-b bg-bg-card"
+        onScroll={() => { if (progScroll.current) return; setFollowCenter(false); }}>
         {ladder.map((row) => (
           <div key={row.price} ref={row.isCenter ? centerRef : undefined}
             className={`grid grid-cols-[1fr_72px_1fr] h-[26px] text-xs border-b border-line/40 ${row.isCenter ? "bg-accent/10" : ""}`}>
-            <button disabled={!row.clickable || tradeKind === "daytrade_sell"}
-              onClick={() => row.myBuyLots > 0 ? cancelAt(row.price, "B") : clickPrice(row.price, "buy", row.clickable)}
-              className={`flex items-center justify-end pr-2 tabular-nums ${row.clickable && tradeKind !== "daytrade_sell" ? "text-bull hover:bg-bull/10 cursor-pointer" : "text-ink-dim/40"}`}>
-              {row.myBuyLots > 0 && <span className="text-2xs bg-accent text-bg rounded px-1 mr-1 font-bold">我{row.myBuyLots}</span>}
-              {row.buyVol ?? ""}
-            </button>
+            <div className="flex items-stretch">
+              {/* 方格刪單不設 disabled:刪單是降風險操作,灰區/無券鎖買都不該擋 */}
+              {row.myBuyLots > 0 && (
+                <button onClick={() => cancelAt(row.price, "B")}
+                  className="my-0.5 ml-0.5 px-1 min-w-[22px] text-2xs font-bold rounded border border-accent bg-accent/25 text-accent">
+                  {row.myBuyLots}
+                </button>
+              )}
+              <button disabled={!row.clickable || tradeKind === "daytrade_sell"}
+                onClick={() => clickPrice(row.price, "buy", row.clickable)}
+                className={`flex-1 flex items-center justify-end gap-1 pr-2 tabular-nums ${row.clickable && tradeKind !== "daytrade_sell" ? "text-bull hover:bg-bull/10 cursor-pointer" : "text-ink-dim/40"}`}>
+                {row.myBuyFills > 0 && <span className="text-2xs text-ma5">({row.myBuyFills})</span>}
+                {row.buyVol ?? ""}
+              </button>
+            </div>
             <span className={`flex items-center justify-center tabular-nums border-x border-line ${row.isCenter ? "text-accent font-bold" : "text-ink-muted"}`}>
               {row.price.toFixed(2)}{row.isCenter ? " ◄" : ""}
             </span>
-            <button disabled={!row.clickable}
-              onClick={() => row.mySellLots > 0 ? cancelAt(row.price, "S") : clickPrice(row.price, "sell", row.clickable)}
-              className={`flex items-center justify-start pl-2 tabular-nums ${row.clickable ? "text-bear hover:bg-bear/10 cursor-pointer" : "text-ink-dim/40"}`}>
-              {row.sellVol ?? ""}
-              {row.mySellLots > 0 && <span className="text-2xs bg-accent text-bg rounded px-1 ml-1 font-bold">我{row.mySellLots}</span>}
-            </button>
+            <div className="flex items-stretch">
+              <button disabled={!row.clickable}
+                onClick={() => clickPrice(row.price, "sell", row.clickable)}
+                className={`flex-1 flex items-center justify-start gap-1 pl-2 tabular-nums ${row.clickable ? "text-bear hover:bg-bear/10 cursor-pointer" : "text-ink-dim/40"}`}>
+                {row.sellVol ?? ""}
+                {row.mySellFills > 0 && <span className="text-2xs text-ma5">({row.mySellFills})</span>}
+              </button>
+              {row.mySellLots > 0 && (
+                <button onClick={() => cancelAt(row.price, "S")}
+                  className="my-0.5 mr-0.5 px-1 min-w-[22px] text-2xs font-bold rounded border border-accent bg-accent/25 text-accent">
+                  {row.mySellLots}
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
-      {!followCenter && (
-        <button onClick={() => setFollowCenter(true)}
-          className="text-2xs text-accent py-1 border border-t-0 border-line rounded-b bg-bg-deep flex-shrink-0">◎ 回到現價</button>
-      )}
 
       {/* 張數快捷 + stepper */}
       <div className="flex gap-1 mt-2 items-center flex-shrink-0">
