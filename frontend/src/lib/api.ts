@@ -371,8 +371,8 @@ export interface CapitalCloseReq {
 // ---------------------------------------------------------------------------
 
 export const api = {
-  quote: (symbol: string) =>
-    fetchJSON<QuoteResponse>(`/api/quote/${encodeURIComponent(symbol)}`),
+  quote: (symbol: string, signal?: AbortSignal) =>
+    fetchJSON<QuoteResponse>(`/api/quote/${encodeURIComponent(symbol)}`, { signal }),
 
   preview: (symbol: string | null) =>
     fetchJSON<{ ok: boolean; current: string | null }>("/api/preview", {

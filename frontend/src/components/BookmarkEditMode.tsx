@@ -29,16 +29,18 @@ export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChang
   const [recentlyAdded, setRecentlyAdded] = useState<Set<string>>(new Set());
   const [moveOp, setMoveOp] = useState<"move" | "copy" | null>(null);
 
-  // 搜尋(debounce 200ms)
+  // 搜尋(debounce 200ms)。cancelled 擋已發出的舊請求:
+  // 晚到的舊回應不可蓋掉新結果、也不可在清空輸入後把結果回填
   useEffect(() => {
     if (!addOpen || !query.trim()) { setResults([]); return; }
+    let cancelled = false;
     const t = setTimeout(async () => {
       try {
         const r = await api.symbols(query.trim(), 10);
-        setResults(r.results);
+        if (!cancelled) setResults(r.results);
       } catch { /* ignore */ }
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [query, addOpen]);
 
   const existingSymbols = useMemo(() => new Set(items.map((it) => it.symbol)), [items]);

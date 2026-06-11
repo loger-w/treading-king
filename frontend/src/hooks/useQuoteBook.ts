@@ -45,13 +45,17 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
     setIsLimitUp(false); setIsLimitDown(false);
     setError(null);
 
+    // 上一請求還在飛就跳過本 tick:改成「每 tick 先 abort」的話,
+    // 延遲一旦超過 poll 間隔,每個回應都會在抵達前被下一個 tick 取消,
+    // 五檔永遠停在舊資料且 error 維持 null
+    let inFlight = false;
     async function fetchOnce() {
-      if (document.hidden) return;
-      abortRef.current?.abort();
+      if (document.hidden || inFlight) return;
       const ctrl = new AbortController();
       abortRef.current = ctrl;
+      inFlight = true;
       try {
-        const r: QuoteResponse = await api.quote(symbol!);
+        const r: QuoteResponse = await api.quote(symbol!, ctrl.signal);
         if (ctrl.signal.aborted) return;
         setBids(r.bids ?? []);
         setAsks(r.asks ?? []);
@@ -61,6 +65,8 @@ export function useQuoteBook(symbol: string | null): QuoteBookData {
       } catch (e) {
         if (ctrl.signal.aborted) return;
         setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        inFlight = false;
       }
     }
 

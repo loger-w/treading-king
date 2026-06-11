@@ -22,10 +22,15 @@ export function useMXFCandles(timeframe: number) {
   });
   const symbolRef = useRef<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 切 timeframe 後晚到的舊週期回應整筆丟棄,否則 1m 的 ~1100 根會掛在
+  // 標示 15m 的 UI 下,還會讓 viewRange 以錯誤長度初始化
+  const tfRef = useRef(timeframe);
+  tfRef.current = timeframe;
 
   const fetchCandles = useCallback(async (sym: string | null) => {
     try {
       const r = await api.mxfCandles(timeframe, sym ?? undefined);
+      if (tfRef.current !== timeframe) return;
       symbolRef.current = r.symbol;
       setState((prev) => ({
         ...prev,
@@ -36,6 +41,7 @@ export function useMXFCandles(timeframe: number) {
         error: null,
       }));
     } catch (e) {
+      if (tfRef.current !== timeframe) return;
       setState((prev) => ({
         ...prev,
         loading: false,

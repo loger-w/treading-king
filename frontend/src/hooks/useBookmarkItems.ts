@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type BookmarkGroup, type BookmarkItem } from "../lib/api";
 
 /**
@@ -9,21 +9,27 @@ import { api, type BookmarkGroup, type BookmarkItem } from "../lib/api";
 export function useBookmarkItems(groupId: string | null) {
   const [items, setItems] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(false);
+  // 只採最新一次請求:快速切換 group 時,慢的舊回應不可把 A 的 items 掛在 B 名下
+  const seqRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const mySeq = ++seqRef.current;
     if (!groupId) { setItems([]); return; }
     setLoading(true);
     try {
       const r = await api.bookmarks.items(groupId);
-      setItems(r.items);
+      if (mySeq === seqRef.current) setItems(r.items);
     } catch (e) {
       console.warn("useBookmarkItems refresh failed:", e);
+      // 失敗不殘留前一個 group 的列表
+      if (mySeq === seqRef.current) setItems([]);
     } finally {
-      setLoading(false);
+      if (mySeq === seqRef.current) setLoading(false);
     }
   }, [groupId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // 切換 group 先清空,舊 group 的列表不掛在新 group 標題下
+  useEffect(() => { setItems([]); refresh(); }, [refresh]);
 
   const addItems = useCallback(async (symbols: string[]) => {
     if (!groupId) return;
@@ -49,8 +55,10 @@ export function useBookmarkItems(groupId: string | null) {
 export function useAllBookmarkItems(groups: BookmarkGroup[]) {
   const [byGroup, setByGroup] = useState<Map<string, BookmarkItem[]>>(new Map());
   const [loading, setLoading] = useState(false);
+  const seqRef = useRef(0);   // 同 useBookmarkItems:只採最新一次請求
 
   const refresh = useCallback(async () => {
+    const mySeq = ++seqRef.current;
     if (groups.length === 0) { setByGroup(new Map()); return; }
     setLoading(true);
     try {
@@ -61,11 +69,12 @@ export function useAllBookmarkItems(groups: BookmarkGroup[]) {
             .catch((): [string, BookmarkItem[]] => [g.id, []]),
         ),
       );
+      if (mySeq !== seqRef.current) return;
       const m = new Map<string, BookmarkItem[]>();
       for (const [gid, items] of results) m.set(gid, items);
       setByGroup(m);
     } finally {
-      setLoading(false);
+      if (mySeq === seqRef.current) setLoading(false);
     }
   }, [groups]);
 
