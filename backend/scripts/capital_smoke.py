@@ -48,6 +48,12 @@ async def main(send_test: bool, balance: bool) -> int:
             orig_handle(raw)
         client._handle_balance = tap
 
+        orig_profit = client._handle_profit
+        def tap_profit(raw: str) -> None:
+            print(f"PNL| {raw!r}")
+            orig_profit(raw)
+        client._handle_profit = tap_profit
+
     client.start(asyncio.get_running_loop())
     # 等登入序列(輪詢 status,最多 ~20 秒)
     for _ in range(200):
@@ -67,12 +73,13 @@ async def main(send_test: bool, balance: bool) -> int:
         print(f"送單結果: ok={res.ok} code={res.code} msg={res.message}")
 
     if balance:
-        # 戳查詢排程,等 OnRealBalanceReport 事件(啟動後第一圈本來就會查,這裡只是保險)
+        # 戳查詢排程,等 庫存 → 損益 兩段串行查詢的事件(啟動後第一圈本來就會查,這裡只是保險)
         client._mark_balance_dirty(delay_s=0.0)
-        await asyncio.sleep(8)
+        await asyncio.sleep(12)
         positions = client.store.positions()
         for p in positions:
-            print(f"持倉: {p.stock_no} {p.qty} 張 均 {p.avg_price}")
+            avg = f"{p.avg_price:.2f}" if p.avg_price is not None else "—"
+            print(f"持倉: {p.stock_no} {p.qty} 張 ({p.kind}) 均 {avg}")
         if not positions:
             print("(清單空 — 若群益 App 有持倉,看 log 的 balance line 警告,校準 capital_balance.py 假設表)")
     return 0
