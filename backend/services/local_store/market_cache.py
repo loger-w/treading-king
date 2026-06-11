@@ -74,14 +74,18 @@ class MarketCache:
         for r in rows:
             sym = r["symbol"]
             cur = self._daily_ohlc.get(sym)
-            if cur is None or r["date"] >= cur["date"]:
-                self._daily_ohlc[sym] = {
-                    "date": r["date"],
-                    "high": r["high"],
-                    "low": r["low"],
-                    "close": r["close"],
-                }
-                changed = True
+            if cur is not None and r["date"] < cur["date"]:
+                continue
+            new_rec = {
+                "date": r["date"],
+                "high": r["high"],
+                "low": r["low"],
+                "close": r["close"],
+            }
+            if new_rec == cur:
+                continue  # 內容沒變不重寫檔 — backfill 每天重抓同一批昨日 OHLC 是常態
+            self._daily_ohlc[sym] = new_rec
+            changed = True
         if changed:
             atomic_write_json(self._daily_ohlc_path, self._daily_ohlc)
 

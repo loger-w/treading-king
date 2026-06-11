@@ -9,12 +9,10 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import date, timedelta
 from typing import TypedDict
 
-from services.cdp import round_to_tick_tw
+from services.cdp import ensure_daily_ohlc, round_to_tick_tw
 from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
@@ -56,25 +54,20 @@ def compute_camarilla(h: float, l: float, c: float) -> dict[str, float]:
 class CamarillaService:
     """In-memory cache + 從 daily_ohlc 抓昨日 OHLC 算 8 線。
 
-    跟 CdpService 同設計:每天首次呼叫 trigger backfill_from_fubon 一次。
+    daily-OHLC 的取得走跟 CdpService 共用的 ensure_daily_ohlc —
+    同 symbol 每天只打一次富邦 historical API（CDP / Camarilla 不重複消耗額度）。
     """
 
     def __init__(self) -> None:
         self._cache: dict[str, CamarillaLevels] = {}
-        # _lock kept for future use; current upsert+cache writes are idempotent
-        # so concurrent get() calls converge correctly without acquiring
-        self._lock = asyncio.Lock()
-        self._last_backfill_attempt: dict[str, date] = {}
 
     async def get(self, symbol: str) -> CamarillaLevels | None:
-        today = date.today()
-        if self._last_backfill_attempt.get(symbol) != today:
-            self._last_backfill_attempt[symbol] = today
-            await self.backfill_from_fubon(symbol)
+        """先確保 daily_ohlc 有今天該有的昨日資料，再從 store 重算。
 
-        if symbol not in self._cache:
-            await self.refresh(symbol)
-
+        富邦暫不可用時 fallback 讀既有 daily_ohlc（可能 stale 但有總比沒有好）。
+        """
+        await ensure_daily_ohlc(symbol)
+        await self.refresh(symbol)
         return self._cache.get(symbol)
 
     async def refresh(self, symbol: str) -> None:
@@ -97,64 +90,11 @@ class CamarillaService:
         except (ValueError, TypeError) as e:
             logger.warning("camarilla.refresh %s: bad data %s — %s", symbol, row, e)
 
-    def discard(self, symbol: str) -> None:
-        self._cache.pop(symbol, None)
-
-    def has(self, symbol: str) -> bool:
-        return symbol in self._cache
-
     async def backfill_from_fubon(self, symbol: str) -> bool:
-        """打富邦 historical.candles 拉昨日 OHLC → upsert local daily_ohlc → refresh cache。
-
-        共用既有 historical rate limiter(60 req/min)。
-        """
-        from services.fubon_client import FubonStatus, get_fubon
-        from services.rate_limiter import get_historical_rate_limiter
-
-        fubon = get_fubon()
-        if fubon.status != FubonStatus.OK or fubon.sdk is None:
-            logger.warning("camarilla.backfill: fubon not OK")
-            return False
-
-        today = date.today()
-        last_week = today - timedelta(days=10)
-
-        try:
-            await asyncio.to_thread(get_historical_rate_limiter().acquire)
-            r = await asyncio.to_thread(
-                fubon.sdk.marketdata.rest_client.stock.historical.candles,
-                symbol=symbol,
-                from_=last_week.isoformat(),
-                to=today.isoformat(),
-            )
-        except Exception as e:
-            logger.warning("camarilla.backfill %s: fubon error %s", symbol, e)
-            return False
-
-        rows = (r or {}).get("data") or []
-        if not rows:
-            logger.info("camarilla.backfill %s: no historical data", symbol)
-            return False
-
-        upserts = []
-        for row in rows:
-            d = row.get("date")
-            if not d or d == today.isoformat():
-                continue
-            upserts.append({
-                "symbol": symbol, "date": d,
-                "high": row.get("high"),
-                "low": row.get("low"), "close": row.get("close"),
-            })
-
-        if not upserts:
-            logger.info("camarilla.backfill %s: only today data (no past)", symbol)
-            return False
-
-        get_local_store().market.upsert_daily_ohlc(upserts)
+        """外部呼叫端（route fallback）的 backfill 入口 — 委派給共用 ensure_daily_ohlc。"""
+        ok = await ensure_daily_ohlc(symbol)
         await self.refresh(symbol)
-        logger.info("camarilla.backfill %s: %d days OHLC stored", symbol, len(upserts))
-        return True
+        return ok
 
 
 _service: CamarillaService | None = None
