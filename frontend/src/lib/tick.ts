@@ -38,3 +38,23 @@ export function formatTickPrice(price: number): string {
   const decimals = tick >= 1 ? 0 : tick >= 0.1 ? 1 : 2;
   return rounded.toFixed(decimals);
 }
+
+/** 方向性對齊 tick。整數「分」運算同 backend cdp.py:先 round 殺浮點雜訊再除,
+ *  53.9/0.1=538.999… 的 floor 誤捨陷阱才繞得開。 */
+export function roundToTick(price: number, dir: "up" | "down"): number {
+  const tick = tickSize(price);
+  const cents = Math.round(price * 100);
+  const tickCents = Math.round(tick * 100);
+  const units = dir === "down" ? Math.floor(cents / tickCents) : Math.ceil(cents / tickCents);
+  return Math.round(units * tickCents) / 100;
+}
+
+/** 台股漲停價 = 參考價 ×1.1 尾數捨去(絕不超過 +10%);tick 以漲停價當下級距為準。 */
+export function limitUp(reference: number): number {
+  return roundToTick(reference * 1.1, "down");
+}
+
+/** 台股跌停價 = 參考價 ×0.9 尾數進位(絕不超過 -10%)。 */
+export function limitDown(reference: number): number {
+  return roundToTick(reference * 0.9, "up");
+}
