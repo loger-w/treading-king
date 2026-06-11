@@ -26,6 +26,17 @@ def test_result_order_is_audited(tmp_path):
     assert line["result"]["seq_no"] == "A001"
 
 
+def test_source_field_lands_in_audit(tmp_path):
+    # 稽核要能分清單從哪個介面送出(下單匣 vs 閃電)
+    path = tmp_path / "audit.jsonl"
+    req = StockOrderRequest(stock_no="2330", buy_sell=BuySell.BUY, price=100.0, qty=1,
+                            source="flash")
+    capital_audit.write(path, env="test", req=req,
+                        result=OrderResult(ok=True, code=0, message="ok"), action="order")
+    entry = json.loads(path.read_text(encoding="utf-8").strip())
+    assert entry["req"]["source"] == "flash"
+
+
 def test_appends_not_overwrites(tmp_path):
     path = tmp_path / "audit.jsonl"
     capital_audit.write(path, env="test", req=_req(), blocked="a")

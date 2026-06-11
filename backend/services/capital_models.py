@@ -1,5 +1,6 @@
 from __future__ import annotations
 from enum import Enum
+from typing import Literal
 from pydantic import BaseModel
 
 # 群益市場別:證券類(整股 TS/TA/TP、零股 TL/TC)。期貨/期權 TF/TO/OF/OO/OS 不在此集。
@@ -43,6 +44,7 @@ class StockOrderRequest(BaseModel):
     price_type: PriceType = PriceType.LIMIT
     time_in_force: TimeInForce = TimeInForce.ROD
     trade_kind: TradeKind = TradeKind.CASH
+    source: Literal["panel", "flash"] = "panel"  # 稽核分流:單從哪個介面送出
 
 
 class OrderResult(BaseModel):
