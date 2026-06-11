@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildOrderRow, type CapitalOrder } from "./capital-orders";
+import { buildOrderRow, localYmd, type CapitalOrder } from "./capital-orders";
 
 const base: CapitalOrder = {
   seq_no: "2313091595225", stock_no: "3357", name: "臺慶科", market: "TS",
   buy_sell: "B", flag_label: "現股", book_no: null,
   status_raw: "C", status_label: "已刪單",
   price: 293, avg_fill_price: null, order_qty: 1, filled_qty: 0, unit: "張",
-  time: "14:59:48", pre_order: true, error_msg: null, actionable: false, raw: "",
+  date: "20260610", time: "14:59:48", pre_order: true, error_msg: null, actionable: false, raw: "",
 };
 
 describe("buildOrderRow", () => {
@@ -54,5 +54,21 @@ describe("buildOrderRow", () => {
     const r = buildOrderRow({ ...base, status_label: "失敗", error_msg: "超過漲跌停" });
     expect(r.statusClass).toBe("text-bear");
     expect(r.errorMsg).toBe("超過漲跌停");
+  });
+});
+
+describe("跨日顯示", () => {
+  it("非今日的單時間前帶日期;今日單不帶(昨日預約單混在今日清單的辨識)", () => {
+    expect(buildOrderRow({ ...base, date: "20260610" }, "20260611").timeText).toBe("06/10 14:59:48");
+    expect(buildOrderRow({ ...base, date: "20260611" }, "20260611").timeText).toBe("14:59:48");
+  });
+
+  it("todayYmd 未傳(舊呼叫)或 date 缺值 → 行為不變", () => {
+    expect(buildOrderRow(base).timeText).toBe("14:59:48");
+    expect(buildOrderRow({ ...base, date: null }, "20260611").timeText).toBe("14:59:48");
+  });
+
+  it("localYmd 本地時區 YYYYMMDD", () => {
+    expect(localYmd(new Date(2026, 5, 11))).toBe("20260611");  // 月是 0-based
   });
 });

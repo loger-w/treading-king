@@ -5,7 +5,7 @@ export interface CapitalOrder {
   status_raw: string | null; status_label: string | null;
   price: number | null; avg_fill_price: number | null;
   order_qty: number; filled_qty: number; unit: string;
-  time: string | null; pre_order: boolean; error_msg: string | null;
+  date: string | null; time: string | null; pre_order: boolean; error_msg: string | null;
   actionable: boolean;   // 後端 _RANK 算好下發;前端不自己抄狀態表(label 改字不會讓鈕無聲消失)
   raw: string;
 }
@@ -30,11 +30,12 @@ export interface OrderRowVM {
 
 const FAILED = new Set(["失敗", "逾時", "退單"]);   // 純顯示:紅字樣式
 
-export function buildOrderRow(o: CapitalOrder): OrderRowVM {
+export function buildOrderRow(o: CapitalOrder, todayYmd?: string): OrderRowVM {
   const title = o.name ? `${o.stock_no ?? ""} ${o.name}`.trim() : (o.stock_no ?? "—");
   const isBuy = o.buy_sell === "B";
   const isSell = o.buy_sell === "S";
   const status = o.status_label ?? "—";
+  const crossDay = o.date && todayYmd && o.date !== todayYmd;
   return {
     seqNo: o.seq_no,
     title,
@@ -46,10 +47,15 @@ export function buildOrderRow(o: CapitalOrder): OrderRowVM {
     priceText: o.price != null ? o.price.toFixed(2) : "—",
     qtyText: `${o.filled_qty}/${o.order_qty} ${o.unit}`,
     avgText: o.avg_fill_price != null && o.filled_qty > 0 ? `均 ${o.avg_fill_price.toFixed(2)}` : null,
-    timeText: o.time,
+    timeText: o.time && crossDay ? `${o.date!.slice(4, 6)}/${o.date!.slice(6, 8)} ${o.time}` : o.time,
     preOrder: o.pre_order,
     errorMsg: o.error_msg,
     unit: o.unit,
     actionable: o.actionable,
   };
+}
+
+/** 本地時區 YYYYMMDD(回報日期同為台股交易日曆,直接比對)。 */
+export function localYmd(d: Date): string {
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
