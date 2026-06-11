@@ -4,7 +4,7 @@ import { useBookmarks } from "../hooks/useBookmarks";
 import { useAllBookmarkItems, useBookmarkItems } from "../hooks/useBookmarkItems";
 import { useMonitorList } from "../hooks/useMonitorList";
 import { type HitCounts } from "../hooks/useTodayHits";
-import { type WatchlistQuote } from "../hooks/useWatchlistQuotes";
+import { useWatchlistQuotes, type WatchlistQuote } from "../hooks/useWatchlistQuotes";
 import { BookmarkNewDialog } from "./BookmarkNewDialog";
 import { BookmarkManageDialog } from "./BookmarkManageDialog";
 import { BookmarkEditMode } from "./BookmarkEditMode";
@@ -24,7 +24,6 @@ const MONITOR_VIEW = "__monitor__";
 interface Props {
   rules: ActiveSignal[];
   hitCounts: HitCounts;
-  quotes: Record<string, WatchlistQuote>;
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onItemsChanged: (allSymbols: string[], names: Record<string, string | null>) => void;  // 給 Monitor 同步 watchlistSymbols + symbolNames
@@ -44,7 +43,7 @@ function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {
 }
 
 export function BookmarksPanel({
-  rules, hitCounts, quotes, selectedSymbol, onSelectSymbol, onItemsChanged,
+  rules, hitCounts, selectedSymbol, onSelectSymbol, onItemsChanged,
 }: Props) {
   const { groups, refresh: refreshGroups, create, remove: removeGroup, rename } = useBookmarks();
   const { items: monitorItems, remove: removeFromMonitor } = useMonitorList();
@@ -60,6 +59,14 @@ export function BookmarksPanel({
 
   // 拿「全部」items
   const { byGroup, bySymbolFirst, refresh: refreshAll } = useAllBookmarkItems(groups);
+
+  // 即時報價在本面板訂(唯一消費者):每個 tick 的 setState 半徑侷限在書籤欄,
+  // 不再打到頁根讓四欄(含下單面板)全量重繪
+  const allWatchSymbols = useMemo(
+    () => Array.from(new Set([...bySymbolFirst.keys(), ...monitorItems.map((m) => m.symbol)])),
+    [bySymbolFirst, monitorItems],
+  );
+  const quotes = useWatchlistQuotes(allWatchSymbols);
 
   // 通知 Monitor: 所有書籤的 symbols(union) + name map — 用於 useWatchlistQuotes 訂閱
   useEffect(() => {
@@ -84,6 +91,13 @@ export function BookmarksPanel({
   // 合併 refresh helper(items 改動後叫他)
   async function refreshAfterMutation() {
     await Promise.all([refreshGroups(), refreshSingle(), refreshAll()]);
+  }
+
+  // 單列 × 移除也要走同一條 refresh 路:只 refreshSingle 的話 sidebar 計數、
+  // 「全部」view 與報價訂閱 union(onItemsChanged)全部不會同步
+  async function removeItemEverywhere(symbol: string) {
+    await removeItem(symbol);   // 內部已 refreshSingle
+    await Promise.all([refreshGroups(), refreshAll()]);
   }
 
   return (
@@ -183,7 +197,7 @@ export function BookmarksPanel({
               hitCounts={hitCounts}
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
-              onRemove={removeItem}
+              onRemove={removeItemEverywhere}
               canEdit={!!canEdit}
               onStartEdit={() => setEditMode(true)}
               isEmpty={singleItems.length === 0}

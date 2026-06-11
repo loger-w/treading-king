@@ -173,7 +173,9 @@ export function ActiveSignalEditor({ initial, onClose, onSaved }: Props) {
           && !filter.ma_proximity) {
         setError("至少要有一條條件"); return;
       }
-      filterToSave = filter;
+      // filter state 從 initial.filter_json 帶進來時可能殘留 strategy 鍵;
+      // 後端 strategy 優先於自訂條件,不清掉的話這條規則會繼續照舊策略觸發
+      filterToSave = { ...filter, strategy: null };
     }
     setSaving(true);
     setError(null);

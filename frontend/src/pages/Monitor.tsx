@@ -15,7 +15,6 @@ import { useSignalsStream } from "../hooks/useSignalsStream";
 import { useTodayHits } from "../hooks/useTodayHits";
 import { useSnapshotCache } from "../hooks/useSnapshotCache";
 import { useSymbolNames } from "../hooks/useSymbolNames";
-import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { api, type SignalLogRow } from "../lib/api";
 import { buildSymbolNames } from "../lib/symbol-name";
 
@@ -95,13 +94,6 @@ function MonitorInner() {
     () => selected !== null && monitorItems.some((m) => m.symbol === selected),
     [monitorItems, selected]
   );
-  const allWatchSymbols = useMemo(
-    () => Array.from(new Set([...bookmarkSymbols, ...monitorItems.map((m) => m.symbol)])),
-    [bookmarkSymbols, monitorItems]
-  );
-
-  const watchlistQuotes = useWatchlistQuotes(allWatchSymbols);
-
   const triggerSymbols = useMemo(() => {
     const set = new Set<string>();
     for (const h of historicalToday) set.add(h.symbol);
@@ -210,7 +202,6 @@ function MonitorInner() {
                 key={bookmarksRefreshKey}
                 rules={rules}
                 hitCounts={counts}
-                quotes={watchlistQuotes}
                 selectedSymbol={selected}
                 onSelectSymbol={setSelected}
                 onItemsChanged={handleBookmarkItemsChanged}
