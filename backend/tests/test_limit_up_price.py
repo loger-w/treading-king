@@ -26,3 +26,12 @@ def test_high_price_5_dollar_tick():
 def test_sub_10_one_cent_tick():
     # 5.0 × 1.1 = 5.5;< 10 級距 tick 0.01 → 5.5
     assert limit_up_price(5.0) == 5.5
+
+
+def test_half_cent_tail_must_floor_not_preround():
+    # ref×1.1 合法地帶 0.1 分(deci-cent)尾數:9.05×1.1=9.955。
+    # 先 round 到整數分會把該被捨去的半分提前進位 → 9.96(+10.06%,超法定)。
+    # 鎖漲停 latch 用此值比對成交價,算錯則該價位的漲停打開策略永不觸發。
+    assert limit_up_price(9.05) == 9.95
+    assert limit_up_price(5.55) == 6.10
+    assert limit_up_price(10.45) == 11.45

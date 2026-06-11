@@ -60,17 +60,20 @@ def round_to_tick_tw(price: float, direction: Literal["up", "down", "nearest"]) 
 def limit_up_price(prev_close: float) -> float:
     """台股漲停價 = 昨收 × 1.1,尾數不足一個 tick 捨去(不超過 +10%)。
 
-    tick 以漲停價當下價位的級距為準。用整數「分」運算避免 float floor 在 tick
-    邊界出錯(round_to_tick_tw 的 "down" 對 53.9/0.1=538.999… 會誤捨成 53.8)。
+    tick 以漲停價當下價位的級距為準。用整數「0.1 分」運算避免 float floor 在
+    tick 邊界出錯(round_to_tick_tw 的 "down" 對 53.9/0.1=538.999… 會誤捨成 53.8)。
     無漲跌停限制的標的(部分 ETF / 新股首 5 日)價格不會剛好盯在此值,
     策略 1 的鎖死 latch 自然不會誤觸。
     """
     raw = prev_close * 1.1
     tick = tick_size(raw)
-    raw_cents = round(raw * 100)          # 先 round 殺浮點雜訊
-    tick_cents = round(tick * 100)
-    floored_cents = (raw_cents // tick_cents) * tick_cents
-    return round(floored_cents / 100.0, 2)
+    # 0.1 分(deci-cent)整數運算:昨收×1.1 合法地帶半分尾數(9.05×1.1=9.955),
+    # 整數「分」會把該被捨去的半分提前四捨五入成 9.96(超出法定 +10%);
+    # deci-cent 下輸入是精確整數,round 只殺 float 雜訊
+    raw_deci = round(raw * 1000)
+    tick_deci = round(tick * 1000)
+    floored_deci = (raw_deci // tick_deci) * tick_deci
+    return round(floored_deci / 1000.0, 2)
 
 
 class CdpLevels(TypedDict):
