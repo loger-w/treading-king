@@ -356,6 +356,11 @@ export interface CapitalStockOrderReq {
 export interface CapitalOrderResult {
   ok: boolean; code: number; message: string; seq_no: string | null;
 }
+export interface CapitalCloseReq {
+  stock_no: string; qty?: number;
+  price_type?: "limit" | "market"; price: number;  // market 時=閘用估價
+  source?: "panel" | "flash";
+}
 
 // ---------------------------------------------------------------------------
 // API surface
@@ -543,6 +548,11 @@ export const api = {
     }),
   capitalDecreaseQty: (req: { seq_no: string; qty: number }) =>
     fetchJSON<CapitalOrderResult>("/api/capital/order/decrease", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  capitalClosePosition: (req: CapitalCloseReq) =>
+    fetchJSON<CapitalOrderResult>("/api/capital/position/close", {
       method: "POST",
       body: JSON.stringify(req),
     }),
