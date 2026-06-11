@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useCapitalStatus, useCapitalOrders, useCapitalPositions } from "../hooks/useCapital";
 import { OrderTicket } from "./OrderTicket";
+import { FlashPanel } from "./FlashPanel";
 import { OrdersList } from "./OrdersList";
 
 const ENV = (import.meta.env.VITE_CAPITAL_ENV ?? "test") as string;
@@ -9,7 +10,7 @@ export function TradingPanel({ selected }: { selected: string | null }) {
   const { status, lastError } = useCapitalStatus();
   const orders = useCapitalOrders();
   const positions = useCapitalPositions();
-  const [tab, setTab] = useState<"order" | "list">("order");
+  const [tab, setTab] = useState<"order" | "flash" | "list">("order");
 
   const ready = status === "ok";
   const pos = positions.find((p) => p.stock_no === selected) ?? null;
@@ -30,11 +31,15 @@ export function TradingPanel({ selected }: { selected: string | null }) {
       {/* tabs */}
       <div className="flex border-b border-line-strong mb-3 flex-shrink-0 text-sm">
         <button onClick={() => setTab("order")} className={`flex-1 py-2 ${tab === "order" ? "text-ink border-b-2 border-accent" : "text-ink-dim"}`}>下單</button>
+        <button onClick={() => setTab("flash")} className={`flex-1 py-2 ${tab === "flash" ? "text-accent border-b-2 border-accent" : "text-ink-dim"}`}>⚡閃電</button>
         <button onClick={() => setTab("list")} className={`flex-1 py-2 ${tab === "list" ? "text-ink border-b-2 border-accent" : "text-ink-dim"}`}>委託 {orders.length > 0 && <span className="text-accent">{orders.length}</span>}</button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto pr-1 scroll-editorial">
+      {/* flash 分頁=條件渲染:切走 unmount → 武裝 state 自然消失(spec「切分頁解除」);
+          階梯自帶捲動容器,不能被外層 overflow 搶 */}
+      <div className={`flex-1 min-h-0 ${tab === "flash" ? "" : "overflow-y-auto pr-1 scroll-editorial"}`}>
         {tab === "order" && <OrderTicket selected={selected} ready={ready} env={ENV} pos={pos} />}
+        {tab === "flash" && <FlashPanel selected={selected} ready={ready} env={ENV} orders={orders} posQty={pos?.qty ?? null} />}
         {tab === "list" && <OrdersList orders={orders} env={ENV} />}
       </div>
     </section>
