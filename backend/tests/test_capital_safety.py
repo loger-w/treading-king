@@ -1,4 +1,4 @@
-from services.capital_models import StockOrderRequest, BuySell
+from services.capital_models import StockOrderRequest, BuySell, TradeKind
 from services.capital_safety import SafetyConfig, check_stock_order
 from services.capital_safety import check_cancel, check_correct_price, check_decrease
 
@@ -38,6 +38,21 @@ def test_valid_order_allowed():
     r = check_stock_order(_req(qty=1), _cfg())
     assert r.allowed is True
     assert r.reason is None
+
+
+def test_daytrade_sell_with_buy_rejected():
+    # 無券=現股當沖先賣;「無券+買進」不是合法組合(回補=現股買進)
+    req = StockOrderRequest(stock_no="2330", buy_sell=BuySell.BUY, price=100.0, qty=1,
+                            trade_kind=TradeKind.DAYTRADE_SELL)
+    r = check_stock_order(req, _cfg())
+    assert r.allowed is False
+    assert "無券" in r.reason
+
+
+def test_daytrade_sell_with_sell_allowed():
+    req = StockOrderRequest(stock_no="2330", buy_sell=BuySell.SELL, price=100.0, qty=1,
+                            trade_kind=TradeKind.DAYTRADE_SELL)
+    assert check_stock_order(req, _cfg()).allowed is True
 
 
 def _gate_cfg(enabled=True, max_amount=100000.0):
