@@ -16,3 +16,11 @@ export function netPnl(
   const tax = Math.round(shares * currentPrice * taxRate);
   return grossPnl(qty, avgPrice, currentPrice) - entryFee - exitFee - tax;
 }
+
+/** 快照價每輪全量重建(不吃前值 — 簽名就杜絕「已有值就不蓋」的凍結 bug)。
+ *  tick 價另存一層,顯示時 tick 優先。 */
+export function snapshotPrices(rows: Array<{ symbol: string; last_price: number | null }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.last_price != null) out[r.symbol] = r.last_price;
+  return out;
+}

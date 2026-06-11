@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CapitalPosition } from "../lib/api";
 import { subscribeTicks } from "../hooks/useSignalsStream";
-import { grossPnl } from "../lib/capital-pnl";
+import { grossPnl, snapshotPrices } from "../lib/capital-pnl";
 import { limitDown, limitUp } from "../lib/tick";
 
 /** 庫存總覽:每列 代號/張數/均價/現價/未實現損益;點列帶標的回下單匣;「平」=反向市價單(確認後送)。
@@ -9,7 +9,8 @@ import { limitDown, limitUp } from "../lib/tick";
 export function PositionsList({ positions, env, onPick }: {
   positions: CapitalPosition[]; env: string; onPick: (symbol: string) => void;
 }) {
-  const [live, setLive] = useState<Record<string, number>>({});
+  const [tick, setTick] = useState<Record<string, number>>({});   // WS 即時價(有訂閱的標的)
+  const [snap, setSnap] = useState<Record<string, number>>({});   // 30s 快照價(每輪全量覆寫)
   const [closing, setClosing] = useState<CapitalPosition | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -20,11 +21,11 @@ export function PositionsList({ positions, env, onPick }: {
     if (symbols.length === 0) return;
     const set = new Set(symbols);
     return subscribeTicks((t) => {
-      if (set.has(t.symbol)) setLive((m) => (m[t.symbol] === t.price ? m : { ...m, [t.symbol]: t.price }));
+      if (set.has(t.symbol)) setTick((m) => (m[t.symbol] === t.price ? m : { ...m, [t.symbol]: t.price }));
     });
   }, [symbols]);
 
-  // snapshot 批次補(沒訂 tick 的標的也要有現價)+ 30s 刷新;tick 已有的價不被快照蓋掉
+  // snapshot 批次補(沒訂 tick 的標的也要有現價)+ 30s 刷新;顯示時 tick 優先
   useEffect(() => {
     if (symbols.length === 0) return;
     let alive = true;
@@ -32,11 +33,7 @@ export function PositionsList({ positions, env, onPick }: {
       try {
         const r = await api.quotesSnapshot(symbols);
         if (!alive) return;
-        setLive((m) => {
-          const next = { ...m };
-          for (const row of r.quotes) if (row.last_price != null) next[row.symbol] = next[row.symbol] ?? row.last_price;
-          return next;
-        });
+        setSnap(snapshotPrices(r.quotes));
       } catch { /* keep */ }
     };
     load();
@@ -46,7 +43,8 @@ export function PositionsList({ positions, env, onPick }: {
 
   if (positions.length === 0) return <div className="text-xs text-ink-dim py-4 text-center">目前無庫存部位</div>;
 
-  const total = positions.reduce((sum, p) => sum + grossPnl(p.qty, p.avg_price, live[p.stock_no] ?? null), 0);
+  const priceOf = (s: string) => tick[s] ?? snap[s] ?? null;
+  const total = positions.reduce((sum, p) => sum + grossPnl(p.qty, p.avg_price, priceOf(p.stock_no)), 0);
   const totalUp = total >= 0;
 
   return (
@@ -58,7 +56,7 @@ export function PositionsList({ positions, env, onPick }: {
         </span>
       </div>
       {positions.map((p) => {
-        const cur = live[p.stock_no] ?? null;
+        const cur = priceOf(p.stock_no);
         const pnl = grossPnl(p.qty, p.avg_price, cur);
         const up = pnl >= 0;
         const pct = cur != null && p.avg_price > 0 ? ((cur - p.avg_price) / p.avg_price) * 100 * Math.sign(p.qty) : null;
@@ -82,7 +80,7 @@ export function PositionsList({ positions, env, onPick }: {
       })}
       {msg && <div className="text-center text-xs mt-2 text-ink-muted">{msg}</div>}
       {closing && (
-        <ClosePositionDialog pos={closing} env={env} cur={live[closing.stock_no] ?? null}
+        <ClosePositionDialog pos={closing} env={env} cur={priceOf(closing.stock_no)}
           onDone={(m) => { setMsg(m); setClosing(null); }} onClose={() => setClosing(null)} />
       )}
     </div>
