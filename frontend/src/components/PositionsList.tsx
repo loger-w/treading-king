@@ -14,7 +14,10 @@ export function PositionsList({ positions, env, onPick }: {
   const [closing, setClosing] = useState<CapitalPosition | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const symbols = useMemo(() => positions.map((p) => p.stock_no), [positions]);
+  // 以代號串為 dep:useCapitalPositions 每 15s 輪詢都換 positions 的 array identity,
+  // 直接依賴它會讓下面兩個 effect 每 15s teardown/重建(30s 快照 interval 永遠活不到觸發)
+  const symbolsKey = positions.map((p) => p.stock_no).join(",");
+  const symbols = useMemo(() => (symbolsKey ? symbolsKey.split(",") : []), [symbolsKey]);
 
   // WS tick 即時價
   useEffect(() => {
@@ -105,17 +108,30 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
   pos: CapitalPosition; env: string; cur: number | null; onDone: (msg: string) => void; onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [refPrice, setRefPrice] = useState<number | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // 漲跌停的法定基準是平盤參考價,開窗時抓一次(同 OrderTicket 模式)
+  useEffect(() => {
+    let alive = true;
+    api.quote(pos.stock_no).then((r) => { if (alive) setRefPrice(r.reference_price ?? null); }).catch(() => {});
+    return () => { alive = false; };
+  }, [pos.stock_no]);
+
   const isLong = pos.qty > 0;
   const prod = env === "prod";
   // 市價平倉的「閘用估價」:賣出用跌停、買回用漲停(最保守的金額上限);
-  // 基準=現價,缺現價退均價;兩者皆無(行情斷+均價未知)→ 無法估算,擋送出
-  const base = cur ?? pos.avg_price;
+  // 基準優先用平盤參考價(limitUp/Down 的語意本來就是它)。quote 失敗才退
+  // 現價/均價,且取保守邊(買回取大、賣出取小)——長抱空單斷線時若用均價,
+  // 閘用價可比實際回補成本低 30% 以上,金額閘形同失效。兩者皆無 → 擋送出
+  const fallback = cur != null && pos.avg_price != null
+    ? (isLong ? Math.min(cur, pos.avg_price) : Math.max(cur, pos.avg_price))
+    : cur ?? pos.avg_price;
+  const base = refPrice ?? fallback;
   const gatePrice = base != null ? (isLong ? limitDown(base) : limitUp(base)) : null;
 
   const send = async () => {
@@ -149,6 +165,7 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
             <span className={isLong ? "text-bear" : "text-bull"}>{isLong ? "賣出" : "買進"} {Math.abs(pos.qty)} 張 · 市價</span></div>
         </div>
         {gatePrice == null && <p className="text-2xs text-bear mt-2">無現價且均價未知,無法估算金額閘用價 — 等行情恢復再平。</p>}
+        {gatePrice != null && refPrice == null && <p className="text-2xs text-ink-dim mt-2">參考價未取得,閘用估價以現價/均價保守推算。</p>}
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="px-3 py-1.5 text-sm border border-line-strong text-ink-muted hover:text-ink">取消</button>
           <button onClick={send} disabled={busy || gatePrice == null}

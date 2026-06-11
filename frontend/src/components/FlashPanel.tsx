@@ -16,9 +16,10 @@ interface Props {
 }
 
 export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
-  const { bids, asks } = useQuoteBook(selected);
+  // 平盤參考價跟著五檔輪詢走(1Hz 天然帶重試)——一次性 fetch 失敗會讓
+  // 整個 session 的階梯夾界退化成「現價±10%」漂移
+  const { bids, asks, referencePrice: refPrice } = useQuoteBook(selected);
   const [last, setLast] = useState<number | null>(null);
-  const [refPrice, setRefPrice] = useState<number | null>(null);
   const [arm, setArm] = useState<ArmState>(initialArm());
   const [qtyState, setQtyState] = useState<QtyState>(initialQtyState());
   const [tradeKind, setTradeKind] = useState<TradeKindValue>("cash");
@@ -35,15 +36,6 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
     setLast(null);
     if (!selected) return;
     return subscribeTicks((t) => { if (t.symbol === selected) setLast(t.price); });
-  }, [selected]);
-
-  // 平盤參考價(一天一值)
-  useEffect(() => {
-    setRefPrice(null);
-    if (!selected) return;
-    let alive = true;
-    api.quote(selected).then((r) => { if (alive) setRefPrice(r.reference_price ?? null); }).catch(() => {});
-    return () => { alive = false; };
   }, [selected]);
 
   // 自動解除:換標的 / 連線斷
