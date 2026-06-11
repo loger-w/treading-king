@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type CapitalStockOrderReq } from "../lib/api";
 import { subscribeOrderTicket, subscribeTicks } from "../hooks/useSignalsStream";
 import { grossPnl, netPnl } from "../lib/capital-pnl";
@@ -29,10 +29,11 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
-  // 五檔點價 → 帶入委託價(沿用既有 bus)
+  // 五檔點價 → 帶入委託價(沿用既有 bus)。市價模式 price 是閘用估價,點價不可覆寫
   useEffect(() => subscribeOrderTicket((h) => {
+    if (isMarket) return;
     if (!selected || h.symbol === selected || h.symbol == null) setPrice(h.price.toFixed(2));
-  }), [selected]);
+  }), [selected, isMarket]);
 
   // 平盤參考價:一天一值,換標的時抓一次即可(漲跌停快捷與市價閘用估價都靠它)
   useEffect(() => {
@@ -49,42 +50,52 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
     if (k === "daytrade_sell") setBuySell("sell");
   };
 
-  // 市價單:價格欄反灰,自動帶「閘用估價」(買=漲停、賣=跌停)— 金額閘與稽核才有依據
+  // 市價單:價格欄反灰,自動帶「閘用估價」(買=漲停、賣=跌停)— 金額閘與稽核才有依據。
+  // refPrice 還沒回來時清空顯示,不留前一檔/手動輸入的殘值
   useEffect(() => {
-    if (!isMarket || refPrice == null) return;
+    if (!isMarket) return;
+    if (refPrice == null) { setPrice(""); return; }
     setPrice((buySell === "buy" ? limitUp(refPrice) : limitDown(refPrice)).toFixed(2));
   }, [isMarket, buySell, refPrice]);
 
   const qty = qtyState.qty;
-  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入);市價時價格由系統帶,不驗使用者輸入
+  // 價格限 2 位小數(>2 位會被後端 %.2f 無聲四捨五入);市價時閘價由 refPrice 推導,缺參考價不放行
   const priceOk = /^\d+(\.\d{1,2})?$/.test(price.trim()) && Number(price) > 0;
-  const inputOk = (isMarket ? Number(price) > 0 : priceOk) && qty > 0;
+  const inputOk = (isMarket ? refPrice != null : priceOk) && qty > 0;
   const isBuy = buySell === "buy";
 
   const submit = () => {
     if (!selected) return;
+    // 市價單的閘價(後端金額閘/稽核依據)送出當下由 refPrice 重新推導,
+    // 不信任可能被點價覆寫或跨標的殘留的 price state
+    let p = Number(price) || 0;
+    if (isMarket) {
+      if (refPrice == null) return;
+      p = isBuy ? limitUp(refPrice) : limitDown(refPrice);
+    }
     setConfirm({
       stock_no: selected, buy_sell: buySell,
-      price: Number(price) || 0, qty,
+      price: p, qty,
       price_type: isMarket ? "market" : "limit",
       time_in_force: tif, trade_kind: tradeKind, source: "panel",
     });
   };
+  const latestConfirm = useRef(confirm);   // 回應歸屬:Esc 後重開的新確認框不可被舊回應關掉
+  latestConfirm.current = confirm;
   const doSend = async () => {
     if (!confirm || sending) return;
+    const myReq = confirm;
     setSending(true);
     try {
-      const r = await api.capitalSubmitStock(confirm);
+      const r = await api.capitalSubmitStock(myReq);
       setMsg(`${r.ok ? "✓" : "✗"} ${r.message}`);
     } catch {
       setMsg("✗ 送單失敗");
     } finally {
       setSending(false);
     }
-    setConfirm(null);
+    if (latestConfirm.current === myReq) setConfirm(null);
   };
-
-  const estAmount = (Number(price) || 0) * qty * 1000;
   const segBtn = (active: boolean) =>
     `flex-1 py-1.5 text-xs rounded border ${active ? "bg-accent text-bg border-accent font-bold" : "border-line text-ink-dim hover:text-ink"}`;
 
@@ -157,14 +168,16 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
         className={`w-full py-2.5 font-bold rounded text-bg disabled:opacity-40 ${isBuy ? "bg-bull" : "bg-bear"}`}>
         {isBuy ? "買進" : "賣出"} 送出
       </button>
-      <div className="text-center text-2xs text-ink-dim mt-1.5">送出前會二次確認</div>
+      <div className="text-center text-2xs text-ink-dim mt-1.5">
+        {isMarket && selected && refPrice == null ? "等待參考價(市價單需閘用估價)…" : "送出前會二次確認"}
+      </div>
       {msg && <div className="text-center text-xs mt-2 text-ink-muted">{msg}</div>}
 
       <PositionCard symbol={selected} pos={pos} />
 
       {confirm && (
-        <OrderConfirmDialog req={confirm} env={env} estAmount={estAmount}
-          onConfirm={doSend} onClose={() => setConfirm(null)} />
+        <OrderConfirmDialog req={confirm} env={env} estAmount={confirm.price * confirm.qty * 1000}
+          busy={sending} onConfirm={doSend} onClose={() => setConfirm(null)} />
       )}
     </>
   );

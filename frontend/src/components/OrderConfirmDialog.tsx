@@ -6,11 +6,12 @@ interface Props {
   req: CapitalStockOrderReq;
   env: string;                 // "test" | "prod"
   estAmount: number;
+  busy?: boolean;              // 送出中:鎖確認鈕並明示,防再點被無聲吞掉
   onConfirm: () => void;
   onClose: () => void;
 }
 
-export function OrderConfirmDialog({ req, env, estAmount, onConfirm, onClose }: Props) {
+export function OrderConfirmDialog({ req, env, estAmount, busy, onConfirm, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -41,9 +42,9 @@ export function OrderConfirmDialog({ req, env, estAmount, onConfirm, onClose }: 
         </div>
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-line-strong text-ink-muted hover:text-ink">取消</button>
-          <button onClick={onConfirm}
-            className={`px-4 py-2 text-sm text-bg font-medium ${isBuy ? "bg-bull" : "bg-bear"}`}>
-            確認{isBuy ? "買進" : "賣出"}
+          <button onClick={onConfirm} disabled={busy}
+            className={`px-4 py-2 text-sm text-bg font-medium disabled:opacity-50 ${isBuy ? "bg-bull" : "bg-bear"}`}>
+            {busy ? "送出中…" : `確認${isBuy ? "買進" : "賣出"}`}
           </button>
         </div>
       </div>
