@@ -32,6 +32,12 @@ def test_parse_preorder_new():
     assert r.alt_seq_no != r.seq_no
 
 
+def test_parse_date_field():
+    """idx23=委託建立日 — 排序鍵用,昨日預約單才不會壓在今日單上面。"""
+    r = parse_onnewdata(RAW_N_PREORDER)
+    assert r.date == "20260610"
+
+
 def test_parse_cancel():
     r = parse_onnewdata(RAW_C_PREORDER)
     assert r.status_raw == "C"

@@ -42,6 +42,7 @@ class ReplyRecord(BaseModel):
     price: float | None = None
     qty: int = 0                     # 證券=股、期權=口;語意依 Type(N委託量/D成交量/U減量數/C剩量)
     after_qty: int | None = None     # idx22(證券)改量後量
+    date: str | None = None          # idx23 YYYYMMDD(委託建立日;C/D 事件實測仍為原單日期)
     time: str | None = None          # idx24 HH:MM:SS
     pre_order: bool = False          # idx31 == "B"(預約單)
     error_msg: str | None = None     # idx44(OrderErr=Y 時)
@@ -103,6 +104,7 @@ def parse_onnewdata(bstr_data: str) -> ReplyRecord:
         price=price,
         qty=_to_int(_at(arr, 20)) or 0,
         after_qty=_to_int(_at(arr, 22)),
+        date=_at(arr, 23),
         time=_at(arr, 24),
         pre_order=_at(arr, 31) == "B",
         error_msg=_at(arr, 44),

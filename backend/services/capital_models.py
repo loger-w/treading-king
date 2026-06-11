@@ -70,6 +70,7 @@ class OrderRecord(BaseModel):
     order_qty: int = 0                # 顯示單位(張/股/口)
     filled_qty: int = 0
     unit: str = "張"
+    date: str | None = None           # 委託建立日 YYYYMMDD(排序/前端跨日顯示用)
     time: str | None = None           # 最新事件 HH:MM:SS
     pre_order: bool = False
     error_msg: str | None = None

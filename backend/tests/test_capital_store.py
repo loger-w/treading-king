@@ -8,13 +8,13 @@ SEQ_B = "2313092917885"
 
 
 def _evt(seq=SEQ_A, market="TS", typ="N", err="N", bs="B00R2", stock="4989",
-         price="83.7000", qty="1000", after="", time="10:05:22", pre="A"):
+         price="83.7000", qty="1000", after="", time="10:05:22", pre="A", date="20260610"):
     arr = [""] * 47
     arr[0], arr[1], arr[2], arr[3] = seq, market, typ, err
     arr[4], arr[5], arr[6], arr[7], arr[8] = "9999", "0000000", bs, "TW", stock
     arr[10], arr[11] = "X01AA", price
     arr[20], arr[22] = qty, after
-    arr[23], arr[24] = "20260610", time
+    arr[23], arr[24] = date, time
     arr[31] = pre
     return parse_onnewdata(",".join(arr))
 
@@ -50,6 +50,15 @@ def test_cancel_keeps_filled_and_order_qty():
     o = s.orders()[0]
     assert o.status_label == "已刪單"
     assert o.order_qty == 4 and o.filled_qty == 1
+
+
+def test_orders_sorted_by_date_then_time():
+    """昨日收盤後掛的預約單(時間 14:59)不得壓在今日早盤單(09:05)上面。"""
+    s = CapitalStore()
+    s.apply_reply(_evt(seq=SEQ_A, date="20260610", time="14:59:48", pre="B"))
+    s.apply_reply(_evt(seq=SEQ_B, date="20260611", time="09:05:01"))
+    assert [o.seq_no for o in s.orders()] == [SEQ_B, SEQ_A]
+    assert s.orders()[1].date == "20260610"
 
 
 def test_preorder_status_and_flag():
