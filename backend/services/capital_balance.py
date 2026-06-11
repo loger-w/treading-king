@@ -73,14 +73,41 @@ def dedupe_positions(positions: list[Position]) -> list[Position]:
     return list(seen.values())
 
 
+_PNL_IDX_STOCK_NO = 1
+_PNL_IDX_AVG = 10        # 平均買進(券賣)成本(4-2-p 未實現-彙總)
+_PNL_MIN_FIELDS = 11
+
+
+def parse_profit_line(raw: str) -> tuple[str, float] | None:
+    """OnProfitLossGWReport(未實現-彙總)一筆 → (股號, 均價);
+    查詢結果列(000開頭)/結束標記/欄位不足/數字壞/均價≤0 → None(缺均價不出垃圾)。"""
+    if not raw or raw.startswith("#"):
+        return None
+    parts = raw.split(",")
+    if len(parts) < _PNL_MIN_FIELDS or parts[0].strip() == "000":
+        return None
+    stock_no = parts[_PNL_IDX_STOCK_NO].strip()
+    try:
+        avg = float(parts[_PNL_IDX_AVG])
+    except ValueError:
+        logger.warning("profit line 解析失敗: %r", raw)
+        return None
+    if not stock_no or avg <= 0:
+        return None
+    return (stock_no, avg)
+
+
 class BalanceCollector:
     """收集一輪查詢的多筆事件,結束標記或 timeout 後一次 flush(全量替換語意)。
-    只在 COM 執行緒上被呼叫(feed=事件、poll=幫浦圈、reset=發查詢前),無鎖。"""
+    只在 COM 執行緒上被呼叫(feed=事件、poll=幫浦圈、reset=發查詢前),無鎖。
+    parse 可換 — 損益試算報告(parse_profit_line)共用同一套節奏。"""
 
-    def __init__(self, on_complete: Callable[[list[Position]], None], timeout_s: float = 1.0) -> None:
+    def __init__(self, on_complete: Callable[[list], None], timeout_s: float = 1.0,
+                 parse: Callable[[str], object | None] = parse_balance_line) -> None:
         self._on_complete = on_complete
         self._timeout_s = timeout_s
-        self._staging: list[Position] = []
+        self._parse = parse
+        self._staging: list = []
         self._last_feed: float | None = None
 
     def reset(self) -> None:
@@ -91,7 +118,7 @@ class BalanceCollector:
         if raw and raw.startswith("#"):     # 結束標記
             self._flush()
             return
-        p = parse_balance_line(raw)
+        p = self._parse(raw)
         self._last_feed = time.monotonic()
         if p is not None:
             self._staging.append(p)

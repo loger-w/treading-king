@@ -1,6 +1,8 @@
 """OnRealBalanceReport 解析。樣本 = 2026-06-11 正式環境真實回報(ID/帳號去敏),
 欄位定義 = 官方 4-2-c(策略王COM元件使用說明_V2.13.58.docx),兩者已互相驗證。"""
-from services.capital_balance import BalanceCollector, dedupe_positions, parse_balance_line
+from services.capital_balance import (
+    BalanceCollector, dedupe_positions, parse_balance_line, parse_profit_line,
+)
 from services.capital_models import Position
 
 # 今日買進 1 張現股:昨庫 0、今委買/買成 1000、即時庫存[14]=1000
@@ -93,3 +95,31 @@ def test_collector_new_query_resets_staging():
     c.reset()                              # 新一輪查詢
     c.feed(RAW_END)
     assert got == [[]]                     # staging 已清,flush 空集合(全部出清的合法狀態)
+
+
+# 未實現-彙總(4-2-p,25 欄)依官方欄位表構造;首跑後換真實去敏樣本。
+# [1]=股票代號、[10]=平均買進(券賣)成本;第一筆=查詢結果(000,訊息)
+RAW_PNL_ROW = "臺慶科,3357,新台幣,融資,3000,156.00,0.27,468000,464000,12345,150.55,451650,0,0,665,0,1404,135495,316155,89,,2.73,0,,Y"
+RAW_PNL_STATUS = "000,查詢成功"
+
+
+def test_parse_profit_line():
+    assert parse_profit_line(RAW_PNL_ROW) == ("3357", 150.55)
+
+
+def test_parse_profit_skips_status_end_and_junk():
+    assert parse_profit_line(RAW_PNL_STATUS) is None                     # 查詢結果列
+    assert parse_profit_line("##,,,,") is None                           # 結束標記
+    assert parse_profit_line("") is None
+    assert parse_profit_line("名,3357,新台幣,現股,1000") is None          # 欄位不足
+    assert parse_profit_line(RAW_PNL_ROW.replace("150.55", "x")) is None  # 均價壞
+    assert parse_profit_line(RAW_PNL_ROW.replace("150.55", "0")) is None  # 均價 0 不出垃圾
+
+
+def test_collector_with_profit_parser():
+    got = []
+    c = BalanceCollector(on_complete=got.append, parse=parse_profit_line)
+    c.feed(RAW_PNL_STATUS)
+    c.feed(RAW_PNL_ROW)
+    c.feed("##")
+    assert got == [[("3357", 150.55)]]
