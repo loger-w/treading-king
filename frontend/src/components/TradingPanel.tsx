@@ -41,7 +41,7 @@ export function TradingPanel({ selected, onPick }: { selected: string | null; on
           階梯自帶捲動容器,不能被外層 overflow 搶 */}
       <div className={`flex-1 min-h-0 ${tab === "flash" ? "" : "overflow-y-auto pr-1 scroll-editorial"}`}>
         {tab === "order" && <OrderTicket selected={selected} ready={ready} env={ENV} pos={pos} />}
-        {tab === "flash" && <FlashPanel selected={selected} ready={ready} env={ENV} orders={orders} posQty={pos?.qty ?? null} />}
+        {tab === "flash" && <FlashPanel selected={selected} ready={ready} env={ENV} orders={orders} pos={pos} />}
         {tab === "list" && <OrdersList orders={orders} env={ENV} />}
         {tab === "positions" && <PositionsList positions={positions} env={ENV} onPick={(s) => { onPick?.(s); setTab("order"); }} />}
       </div>

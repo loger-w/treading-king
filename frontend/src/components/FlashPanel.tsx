@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type CapitalOrder } from "../lib/api";
+import { api, type CapitalOrder, type CapitalPosition } from "../lib/api";
 import { useQuoteBook } from "../hooks/useQuoteBook";
 import { subscribeTicks } from "../hooks/useSignalsStream";
 import { buildLadder, splitMyLots } from "../lib/flash-ladder";
@@ -12,10 +12,10 @@ interface Props {
   ready: boolean;          // 群益 status === "ok"
   env: string;
   orders: CapitalOrder[];  // TradingPanel 既有的委託 store
-  posQty: number | null;   // 該標的部位張數(無=null)
+  pos: CapitalPosition | null;  // 該標的庫存(無部位或庫存未載入=null)
 }
 
-export function FlashPanel({ selected, ready, env, orders, posQty }: Props) {
+export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
   const { bids, asks } = useQuoteBook(selected);
   const [last, setLast] = useState<number | null>(null);
   const [refPrice, setRefPrice] = useState<number | null>(null);
@@ -125,7 +125,9 @@ export function FlashPanel({ selected, ready, env, orders, posQty }: Props) {
     <div className="flex flex-col min-h-0 h-full" onPointerDown={touchIdle}>
       {/* 標的 + 現價 */}
       <div className="flex justify-between items-baseline mb-2 flex-shrink-0">
-        <span className="text-sm font-bold">{selected}</span>
+        <span className="text-sm font-bold">{selected}
+          {pos && <span className="text-2xs text-ink-dim font-normal ml-2">庫存 {pos.qty} 張 · 均 {pos.avg_price.toFixed(2)}</span>}
+        </span>
         <span className="text-sm tabular-nums">{last != null ? last.toFixed(2) : "—"}{estimated && <span className="text-2xs text-ink-dim ml-1">估</span>}</span>
       </div>
 
@@ -214,7 +216,7 @@ export function FlashPanel({ selected, ready, env, orders, posQty }: Props) {
 
       {/* 狀態列 + 全刪 */}
       <div className="flex justify-between items-center mt-2 pt-1.5 border-t border-line text-2xs text-ink-dim flex-shrink-0">
-        <span>掛單 {myActionable.length} 筆{posQty != null ? ` · 部位 ${posQty > 0 ? "+" : ""}${posQty} 張` : ""}</span>
+        <span>掛單 {myActionable.length} 筆{pos ? ` · 部位 ${pos.qty > 0 ? "+" : ""}${pos.qty} 張` : ""}</span>
         <button onClick={() => setConfirmAllCancel(true)} disabled={myActionable.length === 0}
           className="px-2 py-0.5 border border-bull text-bull rounded disabled:opacity-30">全部刪單</button>
       </div>
