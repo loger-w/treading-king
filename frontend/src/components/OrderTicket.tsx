@@ -14,7 +14,7 @@ interface Props {
   selected: string | null;
   ready: boolean;
   env: string;
-  pos: { qty: number; avg_price: number; name: string } | null;
+  pos: { qty: number; avg_price: number | null; name: string } | null;
 }
 
 export function OrderTicket({ selected, ready, env, pos }: Props) {
@@ -170,7 +170,7 @@ export function OrderTicket({ selected, ready, env, pos }: Props) {
   );
 }
 
-function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: number; avg_price: number; name: string } | null }) {
+function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: number; avg_price: number | null; name: string } | null }) {
   const [live, setLive] = useState<number | null>(null);
   useEffect(() => {
     setLive(null);
@@ -178,6 +178,7 @@ function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: numb
     return subscribeTicks((t) => { if (t.symbol === symbol) setLive(t.price); });
   }, [symbol]);
   if (!pos) return <div className="mt-4 text-xs text-ink-dim border-t border-line pt-3">目前標的無部位</div>;
+  const hasAvg = pos.avg_price != null;
   const gross = grossPnl(pos.qty, pos.avg_price, live);
   const net = netPnl(pos.qty, pos.avg_price, live, FEE, TAX);
   const up = gross >= 0;
@@ -185,12 +186,14 @@ function PositionCard({ symbol, pos }: { symbol: string | null; pos: { qty: numb
     <div className="mt-4 border border-line-strong rounded p-3 bg-bg-card">
       <div className="label-tiny mb-2">目前標的部位 · 即時</div>
       <div className="flex justify-between items-baseline">
-        <span className="text-sm">{pos.qty} 張 · 均 {pos.avg_price.toFixed(2)}</span>
-        <span className={`text-lg font-bold tabular-nums ${up ? "text-bull" : "text-bear"}`}>{up ? "+" : ""}{gross.toLocaleString()}</span>
+        <span className="text-sm">{pos.qty} 張 · 均 {hasAvg ? pos.avg_price!.toFixed(2) : "—"}</span>
+        <span className={`text-lg font-bold tabular-nums ${!hasAvg ? "text-ink-dim" : up ? "text-bull" : "text-bear"}`}>
+          {hasAvg ? `${up ? "+" : ""}${gross.toLocaleString()}` : "—"}
+        </span>
       </div>
       <div className="flex justify-between text-xs text-ink-dim mt-1 tabular-nums">
         <span>現價 {live != null ? live.toFixed(2) : "—"}</span>
-        <span>淨 {up ? "+" : ""}{net.toLocaleString()}</span>
+        <span>淨 {hasAvg ? `${up ? "+" : ""}${net.toLocaleString()}` : "—"}</span>
       </div>
     </div>
   );

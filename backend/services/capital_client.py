@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from services.capital_balance import BalanceCollector
+from services.capital_balance import BalanceCollector, dedupe_positions
 from services.capital_close import build_close_order
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
@@ -99,7 +99,7 @@ class CapitalClient:
         self._balance.feed(raw)
 
     def _on_balance_complete(self, positions) -> None:
-        self.store.set_positions(positions)
+        self.store.set_positions(dedupe_positions(positions))
         self._balance_last_ts = time.monotonic()
         if self._broadcast:
             self._broadcast({"event": "capital_position", "data": {"count": len(positions)}})
@@ -239,8 +239,8 @@ class CapitalClient:
             capital_audit.write(self._audit_path, env=self._env, req=req, blocked=reason, action="close")
             return OrderResult(ok=False, code=-1, message=reason)
         try:
-            # v1 部位來源=現股報表 → pos_kind 恆 "cash"。信用部位資料接上後,改從部位資料帶種類。
-            order = build_close_order(pos, req, pos_kind="cash")
+            # kind 來自即時庫存 [1] 欄(T集保/C融資/L融券)— 融資部位平倉送融資賣,不可送現股賣
+            order = build_close_order(pos, req, pos_kind=pos.kind)
         except ValueError as e:
             capital_audit.write(self._audit_path, env=self._env, req=req, blocked=str(e), action="close")
             return OrderResult(ok=False, code=-1, message=str(e))

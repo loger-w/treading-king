@@ -45,6 +45,8 @@ export function PositionsList({ positions, env, onPick }: {
 
   // 快照 30s 重載觸發 re-render,新鮮度判斷至少每輪重算一次
   const priceOf = (s: string) => pickPrice(tick[s], snap[s], Date.now());
+  // 均價未知(報告無均價欄)的列不入總損益;全未知 → 顯示「—」而非誤導的 +0
+  const anyAvg = positions.some((p) => p.avg_price != null);
   const total = positions.reduce((sum, p) => sum + grossPnl(p.qty, p.avg_price, priceOf(p.stock_no)), 0);
   const totalUp = total >= 0;
 
@@ -52,29 +54,33 @@ export function PositionsList({ positions, env, onPick }: {
     <div>
       <div className="flex justify-between items-baseline border-b border-line-strong pb-2 mb-1">
         <span className="label-tiny">總未實現損益</span>
-        <span className={`text-lg font-bold tabular-nums ${totalUp ? "text-bull" : "text-bear"}`}>
-          {totalUp ? "+" : ""}{total.toLocaleString()}
+        <span className={`text-lg font-bold tabular-nums ${!anyAvg ? "text-ink-dim" : totalUp ? "text-bull" : "text-bear"}`}>
+          {anyAvg ? `${totalUp ? "+" : ""}${total.toLocaleString()}` : "—"}
         </span>
       </div>
       {positions.map((p) => {
         const cur = priceOf(p.stock_no);
         const pnl = grossPnl(p.qty, p.avg_price, cur);
         const up = pnl >= 0;
-        const pct = cur != null && p.avg_price > 0 ? ((cur - p.avg_price) / p.avg_price) * 100 * Math.sign(p.qty) : null;
+        const pct = cur != null && p.avg_price != null && p.avg_price > 0 ? ((cur - p.avg_price) / p.avg_price) * 100 * Math.sign(p.qty) : null;
         return (
           <div key={p.stock_no} className="border-b border-line py-2 text-sm cursor-pointer hover:bg-bg-card"
             onClick={() => onPick(p.stock_no)}>
             <div className="flex items-center gap-2">
               <span className="font-serif font-medium">{p.stock_no} {p.name}</span>
-              <span className="text-xs text-ink-dim tabular-nums">{p.qty} 張 · 均 {p.avg_price.toFixed(2)}</span>
+              <span className="text-xs text-ink-dim tabular-nums">{p.qty} 張 · 均 {p.avg_price != null ? p.avg_price.toFixed(2) : "—"}</span>
               <button onClick={(e) => { e.stopPropagation(); setClosing(p); }}
                 className="ml-auto px-2 py-0.5 text-xs border border-line-strong text-ink-muted hover:text-bear hover:border-bear rounded">平</button>
             </div>
             <div className="flex justify-between text-xs tabular-nums mt-0.5">
               <span className="text-ink-dim">現價 {cur != null ? cur.toFixed(2) : "—"}</span>
-              <span className={up ? "text-bull" : "text-bear"}>
-                {up ? "+" : ""}{pnl.toLocaleString()}{pct != null ? `(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)` : ""}
-              </span>
+              {p.avg_price != null ? (
+                <span className={up ? "text-bull" : "text-bear"}>
+                  {up ? "+" : ""}{pnl.toLocaleString()}{pct != null ? `(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)` : ""}
+                </span>
+              ) : (
+                <span className="text-ink-dim">損益 —(均價待損益 API)</span>
+              )}
             </div>
           </div>
         );
@@ -100,12 +106,13 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
 
   const isLong = pos.qty > 0;
   const prod = env === "prod";
-  // 市價平倉的「閘用估價」:賣出用跌停、買回用漲停(最保守的金額上限);基準=現價,缺現價用均價
+  // 市價平倉的「閘用估價」:賣出用跌停、買回用漲停(最保守的金額上限);
+  // 基準=現價,缺現價退均價;兩者皆無(行情斷+均價未知)→ 無法估算,擋送出
   const base = cur ?? pos.avg_price;
-  const gatePrice = isLong ? limitDown(base) : limitUp(base);
+  const gatePrice = base != null ? (isLong ? limitDown(base) : limitUp(base)) : null;
 
   const send = async () => {
-    if (busy) return;
+    if (busy || gatePrice == null) return;
     setBusy(true);
     try {
       const r = await api.capitalClosePosition({
@@ -130,13 +137,14 @@ function ClosePositionDialog({ pos, env, cur, onDone, onClose }: {
         </p>
         <div className="text-sm space-y-1 tabular-nums">
           <div className="flex justify-between"><span className="text-ink-dim">標的</span><span>{pos.stock_no} {pos.name}</span></div>
-          <div className="flex justify-between"><span className="text-ink-dim">部位</span><span>{pos.qty} 張 · 均 {pos.avg_price.toFixed(2)}</span></div>
+          <div className="flex justify-between"><span className="text-ink-dim">部位</span><span>{pos.qty} 張 · 均 {pos.avg_price != null ? pos.avg_price.toFixed(2) : "—"}</span></div>
           <div className="flex justify-between"><span className="text-ink-dim">反向單</span>
             <span className={isLong ? "text-bear" : "text-bull"}>{isLong ? "賣出" : "買進"} {Math.abs(pos.qty)} 張 · 市價</span></div>
         </div>
+        {gatePrice == null && <p className="text-2xs text-bear mt-2">無現價且均價未知,無法估算金額閘用價 — 等行情恢復再平。</p>}
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="px-3 py-1.5 text-sm border border-line-strong text-ink-muted hover:text-ink">取消</button>
-          <button onClick={send} disabled={busy}
+          <button onClick={send} disabled={busy || gatePrice == null}
             className={`px-3 py-1.5 text-sm text-bg font-medium disabled:opacity-40 ${isLong ? "bg-bear" : "bg-bull"}`}>
             確認平倉
           </button>

@@ -68,12 +68,14 @@ def _req(qty=1):
 def test_handle_balance_lines_then_end_marker_updates_store(tmp_path):
     com = FakeCom()
     client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
-    client._handle_balance("TS,1234567,2330,0,3000,0,3000,985.5")
+    # 真實格式(去敏):[0]股號 [1]種類 [14]即時庫存(股)
+    client._handle_balance("3357,C,2000,1944,0,0,3000,0,0,0,0,3000,0,0,3000,0,155.63,A123456789,1234567890")
     client._handle_balance("##")
     pos = client.store.positions()
     assert len(pos) == 1
-    assert pos[0].stock_no == "2330"
+    assert pos[0].stock_no == "3357"
     assert pos[0].qty == 3
+    assert pos[0].kind == "margin"
 
 
 def test_fill_reply_marks_balance_dirty(tmp_path):

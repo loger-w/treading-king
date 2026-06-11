@@ -81,11 +81,12 @@ class OrderRecord(BaseModel):
 class Position(BaseModel):
     stock_no: str
     name: str = ""
-    qty: int           # 張(放空為負)
-    avg_price: float
+    qty: int                        # 張(融券放空為負)
+    avg_price: float | None = None  # OnRealBalanceReport 無均價欄;待接損益試算 GetProfitLossGWReport
+    kind: str = "cash"              # cash(T集保)/margin(C融資)/short(L融券) — 平倉反向映射用
 
     def unrealized_gross(self, current_price: float | None) -> float:
-        if current_price is None:
+        if current_price is None or self.avg_price is None:
             return 0.0
         return self.qty * 1000 * (current_price - self.avg_price)
 

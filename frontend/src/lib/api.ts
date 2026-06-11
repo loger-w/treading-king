@@ -345,7 +345,8 @@ export interface SignalEvent {
 
 export type { CapitalOrder } from "./capital-orders";
 export interface CapitalPosition {
-  stock_no: string; name: string; qty: number; avg_price: number;
+  stock_no: string; name: string; qty: number;
+  avg_price: number | null;  // 即時庫存報告無均價欄,接損益試算 API 前一律 null
 }
 export interface CapitalStockOrderReq {
   stock_no: string; buy_sell: "buy" | "sell"; price: number; qty: number;

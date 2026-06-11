@@ -1,14 +1,17 @@
-"""群益測試環境 smoke:登入 → 憑證 → (可選)送一筆測試單。
+"""群益 smoke:登入 → 憑證 → (可選)送測試單 / 查即時庫存。
 
 用法(在 backend/,venv):
   python scripts/capital_smoke.py                # 只登入+憑證+狀態
   python scripts/capital_smoke.py --send-test    # 額外送一筆測試單(需 CAPITAL_ORDER_ENABLED=true)
+  python scripts/capital_smoke.py --balance      # 查即時庫存,印原始字串(校準欄位假設表)
 
-讀 backend/.env(CAPITAL_*)。CAPITAL_ENV 必須 = test。
+讀 backend/.env(CAPITAL_*)。--send-test 必須 CAPITAL_ENV=test;
+--balance 唯讀(登入+查詢,不送單),prod 也允許 —— 測試沙盒群益端未開通,校準只能對 prod 做。
 """
 from __future__ import annotations
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
@@ -24,13 +27,26 @@ from services.capital_models import StockOrderRequest, BuySell, PriceType  # noq
 
 
 async def main(send_test: bool, balance: bool) -> int:
-    if os.getenv("CAPITAL_ENV", "test").strip() != "test":
-        print("CAPITAL_ENV 不是 test,為安全中止。")
+    env = os.getenv("CAPITAL_ENV", "test").strip()
+    if env != "test" and (send_test or not balance):
+        print("CAPITAL_ENV 不是 test,為安全中止(prod 只允許 --balance 唯讀查詢)。")
         return 2
+    if env != "test":
+        print("[prod] 帳號唯讀查詢:只登入+查庫存,不送單。")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     client = get_capital()
     if client is None:
         print("未設定 CAPITAL_USER_ID,無法測試。")
         return 2
+
+    if balance:
+        # 校準用:解析成功與否都印原始字串 —— 欄位 index 是假設表,
+        # 「解析成功」也可能是錯位讀到別的欄,必須對原始字串校準
+        orig_handle = client._handle_balance
+        def tap(raw: str) -> None:
+            print(f"RAW| {raw!r}")
+            orig_handle(raw)
+        client._handle_balance = tap
 
     client.start(asyncio.get_running_loop())
     # 等登入序列(輪詢 status,最多 ~20 秒)
@@ -51,9 +67,9 @@ async def main(send_test: bool, balance: bool) -> int:
         print(f"送單結果: ok={res.ok} code={res.code} msg={res.message}")
 
     if balance:
-        # 戳查詢排程,等 OnRealBalanceReport 事件;原始字串看 log(capital_balance 解析警告)
+        # 戳查詢排程,等 OnRealBalanceReport 事件(啟動後第一圈本來就會查,這裡只是保險)
         client._mark_balance_dirty(delay_s=0.0)
-        await asyncio.sleep(5)
+        await asyncio.sleep(8)
         positions = client.store.positions()
         for p in positions:
             print(f"持倉: {p.stock_no} {p.qty} 張 均 {p.avg_price}")

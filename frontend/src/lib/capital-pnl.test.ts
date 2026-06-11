@@ -19,6 +19,10 @@ describe("capital-pnl", () => {
     expect(grossPnl(5, 575, null)).toBe(0);
     expect(netPnl(5, 575, null, 0.001425, 0.003)).toBe(0);
   });
+  it("null avg -> 0(即時庫存報告無均價欄,未知均價不可估損益)", () => {
+    expect(grossPnl(5, null, 590)).toBe(0);
+    expect(netPnl(5, null, 590, 0.001425, 0.003)).toBe(0);
+  });
 });
 
 describe("snapshotPrices 快照價全量重建", () => {
