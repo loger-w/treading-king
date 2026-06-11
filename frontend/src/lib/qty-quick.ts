@@ -15,6 +15,6 @@ export function pressQuick(s: QtyState, preset: number): QtyState {
   return { qty: preset, lastPreset: preset };
 }
 
-export function manualQty(s: QtyState, qty: number): QtyState {
+export function manualQty(_s: QtyState, qty: number): QtyState {
   return { qty: Math.max(1, Math.floor(qty)), lastPreset: null };
 }
