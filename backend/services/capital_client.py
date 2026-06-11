@@ -12,11 +12,12 @@ import time
 from pathlib import Path
 
 from services.capital_balance import BalanceCollector
+from services.capital_close import build_close_order
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
 from services.capital_models import (
     StockOrderRequest, OrderResult, SEC_MARKETS,
-    CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
+    CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest, PositionCloseRequest,
 )
 from services.capital_safety import (
     SafetyConfig, GateResult,
@@ -222,14 +223,28 @@ class CapitalClient:
         self._audit_after_send(req, result, action)
         return result
 
-    async def submit_stock_order(self, req: StockOrderRequest) -> OrderResult:
+    async def submit_stock_order(self, req: StockOrderRequest, *, action: str = "order") -> OrderResult:
         def _do() -> tuple[str, int]:
             fields = to_stockorder_fields(req, self._full_account)
             return self._com.send_stock_order(self._user_id, fields)
 
         return await self._execute_write(
-            action="order", req=req,
+            action=action, req=req,
             gate=check_stock_order(req, self._safety), com_call=_do)
+
+    async def close_position(self, req: PositionCloseRequest) -> OrderResult:
+        pos = self.store.position_for(req.stock_no)
+        if pos is None or pos.qty == 0:
+            reason = f"{req.stock_no} 無部位可平"
+            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=reason, action="close")
+            return OrderResult(ok=False, code=-1, message=reason)
+        try:
+            # v1 部位來源=現股報表 → pos_kind 恆 "cash"。信用部位資料接上後,改從部位資料帶種類。
+            order = build_close_order(pos, req, pos_kind="cash")
+        except ValueError as e:
+            capital_audit.write(self._audit_path, env=self._env, req=req, blocked=str(e), action="close")
+            return OrderResult(ok=False, code=-1, message=str(e))
+        return await self.submit_stock_order(order, action="close")
 
     async def cancel_stock_order(self, req: CancelOrderRequest) -> OrderResult:
         def _do() -> tuple[str, int]:

@@ -103,3 +103,11 @@ class CorrectPriceRequest(BaseModel):
 class DecreaseQtyRequest(BaseModel):
     seq_no: str
     qty: int  # 張(與 SendStockOrder.nQty 同慣例;首次實測對群益 App 驗)
+
+
+class PositionCloseRequest(BaseModel):
+    stock_no: str
+    qty: int | None = None                    # None=全部
+    price_type: PriceType = PriceType.MARKET
+    price: float | None = None                # market=閘用估價(前端帶);limit=委託價
+    source: Literal["panel", "flash"] = "panel"

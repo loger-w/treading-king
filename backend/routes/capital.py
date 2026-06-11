@@ -8,7 +8,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from services import capital_factory
 from services.capital_models import (
-    SEC_MARKETS, StockOrderRequest, CancelOrderRequest, CorrectPriceRequest, DecreaseQtyRequest,
+    SEC_MARKETS, StockOrderRequest, CancelOrderRequest, CorrectPriceRequest,
+    DecreaseQtyRequest, PositionCloseRequest,
 )
 from services.local_store import get_local_store
 
@@ -82,4 +83,10 @@ async def capital_order_correct_price(req: CorrectPriceRequest) -> dict:
 @router.post("/api/capital/order/decrease")
 async def capital_order_decrease(req: DecreaseQtyRequest) -> dict:
     res = await _require_capital().decrease_stock_qty(req)
+    return res.model_dump(mode="json")
+
+
+@router.post("/api/capital/position/close")
+async def capital_position_close(req: PositionCloseRequest) -> dict:
+    res = await _require_capital().close_position(req)
     return res.model_dump(mode="json")
