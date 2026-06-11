@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from services.capital_balance import BalanceCollector, dedupe_positions
+from services.capital_balance import BalanceCollector, dedupe_positions, parse_profit_line
 from services.capital_close import build_close_order
 from services.capital_com import CapitalCom
 from services.capital_mapping import to_stockorder_fields
@@ -56,6 +56,7 @@ class CapitalClient:
         self.store = CapitalStore()      # 委託/部位快取:回報事件寫入、REST 讀
         self._broadcast = None           # Callable[[dict], None] | None;由 app 注入推 WS
         self._balance = BalanceCollector(on_complete=self._on_balance_complete)
+        self._profit = BalanceCollector(on_complete=self._on_profit_complete, parse=parse_profit_line)
         self._balance_due: float | None = None   # monotonic;成交後 debounce 重查
         self._balance_last_ts: float = 0.0        # 定時重查用(0=啟動後第一圈就查)
 
@@ -98,11 +99,26 @@ class CapitalClient:
         """OnRealBalanceReport 事件(COM 執行緒)。"""
         self._balance.feed(raw)
 
+    def _handle_profit(self, raw: str) -> None:
+        """OnProfitLossGWReport 事件(COM 執行緒)。"""
+        self._profit.feed(raw)
+
+    def _on_profit_complete(self, rows) -> None:
+        """rows = [(stock_no, avg)] — 回填均價後再推部位事件讓前端 refetch。"""
+        self.store.apply_avg_prices(dict(rows))
+        if self._broadcast:
+            self._broadcast({"event": "capital_position", "data": {"avg_count": len(rows)}})
+
     def _on_balance_complete(self, positions) -> None:
         self.store.set_positions(dedupe_positions(positions))
         self._balance_last_ts = time.monotonic()
         if self._broadcast:
             self._broadcast({"event": "capital_position", "data": {"count": len(positions)}})
+        # 庫存查詢剛完結(同 COM 執行緒)→ 串行接著查均價,避開 1019 查詢處理中
+        self._profit.reset()
+        rc = self._com.get_profit_loss_gw(self._user_id, self._full_account)
+        if rc != 0:
+            logger.warning("GetProfitLossGWReport rc=%s: %s", rc, self._com.return_code_message(rc))
 
     def _mark_balance_dirty(self, delay_s: float = 2.0) -> None:
         """成交回報後排程重查(debounce:連續成交只查尾端一次)。"""
@@ -127,7 +143,7 @@ class CapitalClient:
     def _init_com(self) -> bool:
         """登入 + 憑證 + 連回報主機。成功回 True、status=ok;失敗回 False、status=error。"""
         try:
-            self._com.setup(self._handle_reply, self._handle_balance)
+            self._com.setup(self._handle_reply, self._handle_balance, self._handle_profit)
             self._com.set_authority(2 if self._env == "test" else 0)
             code = self._com.login(self._user_id, self._password)
             if code != 0:
@@ -160,6 +176,7 @@ class CapitalClient:
         while True:
             self._com.pump()
             self._balance.poll()           # 沒等到結束標記的 flush 保險
+            self._profit.poll()            # 損益沒等到 ## 的 flush 保險
             self._maybe_query_balance()    # 成交後 debounce / 60s 定時重查
             try:
                 cmd = self._cmd_q.get(timeout=0.05)

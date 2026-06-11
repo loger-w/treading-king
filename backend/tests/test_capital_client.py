@@ -8,7 +8,7 @@ class FakeCom:
     def __init__(self):
         self.sent = []
 
-    def setup(self, on_reply=None, on_balance=None): ...
+    def setup(self, on_reply=None, on_balance=None, on_profit=None): ...
     def set_authority(self, flag): return 0
     def login(self, u, p): return 0
     def init_order(self): return 0
@@ -16,6 +16,10 @@ class FakeCom:
 
     def get_real_balance(self, user_id, full_account):
         self.sent.append(("get_real_balance", full_account))
+        return 0
+
+    def get_profit_loss_gw(self, user_id, full_account):
+        self.sent.append(("get_profit_loss_gw", full_account))
         return 0
 
     def send_stock_order(self, user_id, fields):
@@ -45,7 +49,7 @@ class RecordingCom(FakeCom):
         super().__init__()
         self.calls = []
 
-    def setup(self, on_reply=None, on_balance=None): self.calls.append("setup")
+    def setup(self, on_reply=None, on_balance=None, on_profit=None): self.calls.append("setup")
     def set_authority(self, flag): self.calls.append("set_authority"); return 0
     def login(self, u, p): self.calls.append("login"); return 0
     def init_order(self): self.calls.append("init_order"); return 0
@@ -76,6 +80,19 @@ def test_handle_balance_lines_then_end_marker_updates_store(tmp_path):
     assert pos[0].stock_no == "3357"
     assert pos[0].qty == 3
     assert pos[0].kind == "margin"
+
+
+def test_balance_flush_chains_profit_query_then_avg_applied(tmp_path):
+    """庫存 flush → 串行發損益查詢(避開 1019);損益 flush → 均價回填部位。"""
+    com = FakeCom()
+    client = _client(com, enabled=True, audit_path=tmp_path / "a.jsonl")
+    client._handle_balance("3357,C,2000,1944,0,0,3000,0,0,0,0,3000,0,0,3000,0,155.63,A123456789,1234567890")
+    client._handle_balance("##")
+    assert ("get_profit_loss_gw", "1234567890A") in com.sent
+    client._handle_profit("000,查詢成功")
+    client._handle_profit("臺慶科,3357,新台幣,融資,3000,156.00,0.27,468000,464000,12345,150.55,451650,0,0,665,0,1404,135495,316155,89,,2.73,0,,Y")
+    client._handle_profit("##,,,,")
+    assert client.store.position_for("3357").avg_price == 150.55
 
 
 def test_fill_reply_marks_balance_dirty(tmp_path):
