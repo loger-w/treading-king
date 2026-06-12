@@ -309,8 +309,17 @@ class SignalEngine:
                 if not ok:
                     continue
 
-                # cooldown 檢查 — per 價位:碰 NH 不該吞掉接著碰 CDP 的訊號
-                touch_level = (cdp_touch or ma_touch or {}).get("level", "")
+                # 規則整體成立才消耗 armed(AND 組合裡 touch 命中但其他條件沒過時
+                # 不標記,否則第一筆合法訊號會被先前的失敗嘗試吃掉)。放在 cooldown
+                # 檢查之前 — cooldown 擋下的觸發仍要消耗,黏線時才不會等 cooldown
+                # 到期又推。strategy 類有自己的狀態機,不套 re-arm。
+                if strat is None:
+                    self._mark_touch_suppressed(active, symbol, cdp_touch, ma_touch)
+
+                # cooldown 檢查 — proximity 觸發 per 價位(碰 NH 不該吞掉接著碰
+                # CDP 的訊號);strategy 觸發維持 per 股票(舊行為:漲停打開一個
+                # 冷卻窗只推一次,不因回落穿多條線而連發)
+                touch_level = "" if strat is not None else (cdp_touch or ma_touch or {}).get("level", "")
                 key = (active.id, symbol, touch_level)
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
@@ -484,6 +493,8 @@ class SignalEngine:
         None 表示該 proximity 沒設或沒命中。re-arm:受抑制的 level 跳過評估,
         價格離線 ≥ rearm_ticks 時解除;direction=horizontal 視為未命中(不推、
         也不消耗 armed 狀態 — 黏線情境判不出方向,真正的首次觸碰必有方向)。
+        本方法只「讀」抑制狀態;標記在 _evaluate 規則整體成立後才做
+        (_mark_touch_suppressed),AND 組合裡其他條件沒過時不消耗 armed。
         """
         from services.cdp import tick_size
 
@@ -501,7 +512,7 @@ class SignalEngine:
             if v is None or prox is None:
                 self._prox_suppressed.discard(key)   # 線值消失 / 規則改設定 → 不留殭屍抑制
                 continue
-            rearm = self._rearm_ticks_of(prox)
+            rearm = self._effective_rearm_ticks(prox)
             if rearm == 0 or abs(tick.price - v) >= rearm * tick_size(v):
                 self._prox_suppressed.discard(key)
 
@@ -517,8 +528,6 @@ class SignalEngine:
                 if direction != "horizontal":
                     role = {"from_below": "resistance", "from_above": "support"}[direction]
                     cdp_touch = {"level": level, "direction": direction, "role": role}
-                    if self._rearm_ticks_of(cdp_prox) > 0:
-                        self._prox_suppressed.add((active.id, symbol, level))
 
         ma_touch: dict | None = None
         if ma_prox is not None:
@@ -529,10 +538,21 @@ class SignalEngine:
                 if direction != "horizontal":
                     role = {"from_below": "resistance", "from_above": "support"}[direction]
                     ma_touch = {"level": level, "direction": direction, "role": role}
-                    if self._rearm_ticks_of(ma_prox) > 0:
-                        self._prox_suppressed.add((active.id, symbol, level))
 
         return cdp_touch, ma_touch
+
+    def _mark_touch_suppressed(
+        self, active: ActiveSignalOut, symbol: str,
+        cdp_touch: dict | None, ma_touch: dict | None,
+    ) -> None:
+        """規則整體成立後消耗 armed 狀態(rearm 開啟的 proximity 才標)。"""
+        f = active.filter_json
+        for touch, attr in ((cdp_touch, "cdp_proximity"), (ma_touch, "ma_proximity")):
+            if touch is None:
+                continue
+            prox = f.get(attr) if isinstance(f, dict) else getattr(f, attr, None)
+            if prox is not None and self._effective_rearm_ticks(prox) > 0:
+                self._prox_suppressed.add((active.id, symbol, touch["level"]))
 
     def _eval_non_proximity(self, active: ActiveSignalOut, symbol: str, tick: Tick) -> bool | None:
         """跑非 proximity 的條件(window + cross-field)。
@@ -622,10 +642,16 @@ class SignalEngine:
         return "horizontal"
 
     @staticmethod
-    def _rearm_ticks_of(prox) -> int:
-        """filter_json 是 raw dict 或 pydantic 模型皆可;缺欄位(舊設定檔)用預設。"""
+    def _effective_rearm_ticks(prox) -> int:
+        """解析 rearm 距離。None(未顯式設定)→ max(預設, tolerance+1):
+        任何 tolerance 下都保證能 re-arm,舊設定檔/未送此欄位的前端免遷移。
+        prox 是 raw dict(測試)或 pydantic 模型(生產,refresh 時已驗證)皆可。"""
         v = prox.get("rearm_ticks") if isinstance(prox, dict) else getattr(prox, "rearm_ticks", None)
-        return REARM_TICKS_DEFAULT if v is None else int(v)
+        if v is not None:
+            return int(v)
+        tol = (prox.get("tolerance_ticks", 0) if isinstance(prox, dict)
+               else getattr(prox, "tolerance_ticks", 0)) or 0
+        return max(REARM_TICKS_DEFAULT, int(tol) + 1)
 
     def _level_value(self, symbol: str, level: str) -> float | None:
         """level 名 → field_cache 值。CDP 線名要映射,sma_* 即 cache key。"""
