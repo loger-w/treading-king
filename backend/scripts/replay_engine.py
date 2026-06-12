@@ -187,6 +187,9 @@ async def replay_day(day: str, symbols: list[str], daily, minute, active):
 
 
 CRASH_THRESHOLDS = [-1.5, -2.0, -2.5, -3.0]
+# per-symbol 明細的基線門檻 — 用 index() 取結果,改 CRASH_THRESHOLDS 時
+# 不在列表會直接 ValueError,而非默默配錯資料與標籤
+CRASH_BASE_THR = -2.0
 
 
 async def run_crash(days, day_syms, daily, minute):
@@ -205,10 +208,10 @@ async def run_crash(days, day_syms, daily, minute):
         counts = [sum(f.values()) for f in runs]
         totals = [a + b for a, b in zip(totals, counts)]
         print(f"{day:<12}" + "".join(f"{c:>9}" for c in counts))
-        base, ref = runs[1], runs[-1]   # lt-2.0 基線 vs 突爆拉對照
+        base, ref = runs[CRASH_THRESHOLDS.index(CRASH_BASE_THR)], runs[-1]
         last_detail = {s: (base.get(s, 0), ref.get(s, 0)) for s in day_syms[day]}
     print(f"{'total':<12}" + "".join(f"{c:>9}" for c in totals))
-    print(f"\n-- {days[-1]} per-symbol (突爆殺 lt-2.0 → 突爆拉 gt2.0) --")
+    print(f"\n-- {days[-1]} per-symbol (突爆殺 lt{CRASH_BASE_THR} → 突爆拉 gt2.0) --")
     for s, (a, b) in sorted(last_detail.items()):
         print(f"{s:<6}{a:>4} → {b}")
 

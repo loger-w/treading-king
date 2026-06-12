@@ -5,10 +5,19 @@
 """
 import pytest
 
+import services.ring_buffer as ring_buffer_module
 from scripts.replay_engine import replay_day, touch_rule, window_rule
 
 DAY = "2026-06-12"
 PREV = "2026-06-11"
+
+
+@pytest.fixture(autouse=True)
+def _reset_ring_buffer_singleton():
+    """replay_day 會改寫模組單例 _default — 測後歸零,
+    不留含歷史 tick 的 buffer 給同 session 的其他測試。"""
+    yield
+    ring_buffer_module._default = None
 
 
 def _data(candles):
