@@ -1,8 +1,11 @@
-"""Fubon Neo SDK wrapper — DMA login + auto-retry（status 只有 OK/ERROR 兩態）.
+"""Fubon Neo SDK wrapper — 行情授權登入 + auto-retry（status 只有 OK/ERROR 兩態）.
 
 所有 sync SDK call 透過 asyncio.to_thread 包裝。
 
-DMA login 路線：apikey_dma_login(personal_id, api_key) — 無需 PFX 憑證。
+登入：官方要求 init_realtime 前必須先登入才能取得行情權限。三種登入只有
+apikey_dma_login(personal_id, api_key) 免 PFX 憑證,故預設走它。本系統純行情、
+下單走群益,不需 DMA 交易權 —— 未申請時登入回「查無資料」屬預期,行情仍可用,
+真正能否取得行情交由 init_realtime 判定（見 _do_login_sync）。
 用途：行情查詢 + WebSocket trades/books/ticks/snapshot/tickers 訂閱。
 不支援：下單、aggregates/candles channel（Speed mode 限制）。
 """
@@ -123,24 +126,48 @@ class FubonClient:
         sdk = FubonSDK()
         cert_path = os.getenv("FUBON_CERT_PATH", "").strip()
 
+        # 官方:需登入後才能取得行情權限,故 init_realtime 前一定要先登入。
+        # 三種登入只有 dma 免憑證 — 本系統純行情、下單走群益,預設走 dma。
         if cert_path:
             cert_pass = os.getenv("FUBON_CERT_PASS", "").strip() or None
-            logger.info("Using apikey_login (with cert)")
+            login_label = "apikey_login (with cert)"
             result = sdk.apikey_login(personal_id, api_key, cert_path, cert_pass)
         else:
-            logger.info("Using apikey_dma_login (DMA mode, no cert)")
+            login_label = "apikey_dma_login (DMA, no cert)"
             result = sdk.apikey_dma_login(personal_id, api_key)
 
-        # 官方 Result 模式:憑證/金鑰錯誤不丟例外、只回 is_success=False。
-        # 不檢查的話會拖到 init_realtime 的 token exchange 才炸,錯誤訊息遮蔽真因
-        if result is None or not getattr(result, "is_success", False):
-            raise RuntimeError(
-                f"Fubon login failed: {getattr(result, 'message', None) or '(no message)'}"
-            )
+        ok = result is not None and getattr(result, "is_success", False)
+        msg = getattr(result, "message", None) or "(no message)"
+        if ok:
+            logger.info("Fubon %s 登入成功", login_label)
+        elif cert_path:
+            # 憑證模式是操作者刻意設定、意圖取得交易層登入 — 失敗代表憑證/密碼真的
+            # 有問題,屬非預期錯誤(不是 DMA 那種「查無資料」常態)。直接中止,讓
+            # _login_with_retry 重試耗盡後 notify_critical 把它喊出來,不要靜默吞掉。
+            raise RuntimeError(f"Fubon 憑證登入失敗: {msg}")
+        else:
+            # DMA 模式未申請交易權時回「查無資料」屬預期 — 金鑰仍有效,失敗的登入
+            # 照樣發行情授權(實測:查無資料下 init_realtime 仍成功)。下單走群益,
+            # 不需 DMA 交易權,故不在此中止;能否取得行情交由 init_realtime 判定。
+            logger.info("Fubon %s 交易層未登入(%s);續以行情授權 init_realtime", login_label, msg)
 
-        # Normal 模式:Speed 預設不支援 candles / aggregates channel (期貨即時 K 需要)。
+        # init_realtime 的 token 交換才是行情可用與否的真正判準:金鑰真的壞掉時
+        # 這裡會 raise(實測)。把登入訊息一併帶進例外,避免真因被晦澀的 token 例外遮蔽。
+        # Normal 模式:Speed 預設不支援 candles / aggregates channel(期貨即時 K 需要),
         # Stock trades / 各 REST 端點兩模式都可用,切 Normal 不破壞既有股票功能。
-        sdk.init_realtime(Mode.Normal)
+        try:
+            sdk.init_realtime(Mode.Normal)
+        except Exception as e:
+            # 登入成功但行情初始化失敗 → 此 sdk 已持有 server session,先收掉再 raise。
+            # 否則 _login_with_retry 每次重試都新建並重新登入,會逐次吃掉富邦每帳號
+            # 5 連線額度(同 _teardown_sdk_sync 防的洩漏)。
+            try:
+                sdk.logout()
+            except Exception as logout_err:
+                logger.debug("logout after init_realtime failure ignored: %s", logout_err)
+            raise RuntimeError(
+                f"Fubon 行情初始化失敗(登入: {'OK' if ok else msg}): {e}"
+            ) from e
         self._sdk = sdk
 
     @staticmethod
