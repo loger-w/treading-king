@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { type ActiveSignal, type BookmarkGroup, type BookmarkItem, type MonitorListItem } from "../lib/api";
+import { applyDragToOrder, partitionByHits } from "../lib/reorder";
 import { useBookmarks } from "../hooks/useBookmarks";
 import { useAllBookmarkItems, useBookmarkItems } from "../hooks/useBookmarkItems";
 import { useMonitorList } from "../hooks/useMonitorList";
@@ -38,7 +46,7 @@ function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {
 export function BookmarksPanel({
   rules, hitCounts, refreshToken = 0, selectedSymbol, onSelectSymbol, onItemsChanged,
 }: Props) {
-  const { groups, loading: groupsLoading, error: groupsError, refresh: refreshGroups, create, remove: removeGroup, rename } = useBookmarks();
+  const { groups, loading: groupsLoading, error: groupsError, refresh: refreshGroups, create, remove: removeGroup, rename, reorderGroups } = useBookmarks();
   const { items: monitorItems, remove: removeFromMonitor } = useMonitorList();
   const [selectedGroupId, setSelectedGroupId] = useState<string>(ALL_VIEW);
   const [newDialogOpen, setNewDialogOpen] = useState(false);
@@ -52,7 +60,7 @@ export function BookmarksPanel({
 
   // 拿單一書籤 items(selectedGroupId !== ALL_VIEW)
   const singleGroupId = selectedGroupId === ALL_VIEW ? null : selectedGroupId;
-  const { items: singleItems, refresh: refreshSingle, removeItem } =
+  const { items: singleItems, refresh: refreshSingle, removeItem, reorder: reorderItems } =
     useBookmarkItems(singleGroupId);
 
   // 拿「全部」items
@@ -89,6 +97,19 @@ export function BookmarksPanel({
   function pickGroup(gid: string) {
     setSelectedGroupId(gid);
     setEditMode(false);
+  }
+
+  // Sidebar user 群組拖拉(系統書籤固定殿後、不參與)
+  const userGroups = useMemo(() => groups.filter((g) => !g.is_system), [groups]);
+  const sidebarSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+
+  function handleGroupDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    reorderGroups(applyDragToOrder(
+      userGroups.map((g) => g.id), String(active.id), String(over.id)));
   }
 
   // 目前選中書籤(物件)
@@ -154,13 +175,28 @@ export function BookmarksPanel({
             selected={selectedGroupId === ALL_VIEW}
             onClick={() => pickGroup(ALL_VIEW)}
           />
-          {groups.map((g) => (
+          <DndContext sensors={sidebarSensors} onDragEnd={handleGroupDragEnd}>
+            <SortableContext items={userGroups.map((g) => g.id)}
+              strategy={verticalListSortingStrategy}>
+              {userGroups.map((g) => (
+                <SortableSidebarItem
+                  key={g.id}
+                  id={g.id}
+                  label={g.name}
+                  count={g.count}
+                  selected={selectedGroupId === g.id}
+                  onClick={() => pickGroup(g.id)}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+          {groups.filter((g) => g.is_system).map((g) => (
             <SidebarItem
               key={g.id}
               label={g.name}
               count={g.count}
               selected={selectedGroupId === g.id}
-              system={g.is_system}
+              system
               onClick={() => pickGroup(g.id)}
             />
           ))}
@@ -222,6 +258,7 @@ export function BookmarksPanel({
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
               onRemove={removeItemEverywhere}
+              onReorder={reorderItems}
               canEdit={!!canEdit}
               onStartEdit={() => setEditMode(true)}
               isEmpty={singleItems.length === 0}
@@ -263,11 +300,17 @@ export function BookmarksPanel({
 // Sidebar item
 // ---------------------------------------------------------------------------
 
-function SidebarItem({ label, count, selected, system, onClick }: {
+function SidebarItem({ label, count, selected, system, onClick, containerRef, containerStyle, containerProps }: {
   label: string; count: number; selected: boolean; system?: boolean; onClick: () => void;
+  containerRef?: (node: HTMLElement | null) => void;
+  containerStyle?: React.CSSProperties;
+  containerProps?: React.HTMLAttributes<HTMLButtonElement>;
 }) {
   return (
     <button
+      ref={containerRef}
+      style={containerStyle}
+      {...containerProps}
       type="button"
       onClick={onClick}
       className={[
@@ -287,6 +330,25 @@ function SidebarItem({ label, count, selected, system, onClick }: {
       </div>
       <div className="text-xs text-ink-dim mt-0.5">{count}</div>
     </button>
+  );
+}
+
+// 拖拉包裝:把 dnd-kit 的 ref/transform/listeners 餵給 SidebarItem 的 button。
+// PointerSensor 有 distance 啟動門檻,點擊切換書籤不受影響。
+function SortableSidebarItem(props: Parameters<typeof SidebarItem>[0] & { id: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.id });
+  return (
+    <SidebarItem
+      {...props}
+      containerRef={setNodeRef}
+      containerStyle={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : undefined,
+      }}
+      containerProps={{ ...attributes, ...listeners }}
+    />
   );
 }
 
@@ -349,7 +411,7 @@ function AllView({ groups, byGroup, bySymbolFirst, quotes, rules, hitCounts, sel
 // ---------------------------------------------------------------------------
 
 function SingleListView({
-  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove,
+  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove, onReorder,
   canEdit, onStartEdit, isEmpty, emptyHint, isSystem,
 }: {
   items: BookmarkItem[];
@@ -359,21 +421,29 @@ function SingleListView({
   selectedSymbol: string | null;
   onSelect: (s: string) => void;
   onRemove: (s: string) => void;
+  onReorder: (symbols: string[]) => void;
   canEdit: boolean;
   onStartEdit: () => void;
   isEmpty: boolean;
   emptyHint: string;
   isSystem: boolean;
 }) {
-  // sort:has-hit 置頂(by total desc)、其餘維持原順序
-  const sorted = useMemo(() => {
-    return [...items].sort((a, b) => {
-      const ha = totalHitsForSymbol(a.symbol, hitCounts);
-      const hb = totalHitsForSymbol(b.symbol, hitCounts);
-      if (ha !== hb) return hb - ha;
-      return 0;
-    });
-  }, [items, hitCounts]);
+  // 訊號命中置頂(不可拖)、其餘照後端 position 順序(可拖)
+  const { pinned, rest } = useMemo(
+    () => partitionByHits(items, (s) => totalHitsForSymbol(s, hitCounts)),
+    [items, hitCounts],
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    // 拖拉結果套回「完整順序」(含置頂項目的 slot)送後端
+    onReorder(applyDragToOrder(
+      items.map((it) => it.symbol), String(active.id), String(over.id)));
+  }
 
   if (isEmpty) {
     return <EmptyState text={emptyHint} />;
@@ -393,7 +463,7 @@ function SingleListView({
         </div>
       )}
       <ul>
-        {sorted.map((it) => (
+        {pinned.map((it) => (
           <ItemRow
             key={it.symbol}
             item={it}
@@ -406,6 +476,39 @@ function SingleListView({
             showRemove={!isSystem}
           />
         ))}
+        {isSystem ? (
+          rest.map((it) => (
+            <ItemRow
+              key={it.symbol}
+              item={it}
+              quote={quotes[it.symbol]}
+              rules={rules}
+              hitCounts={hitCounts}
+              selectedSymbol={selectedSymbol}
+              onSelect={onSelect}
+              showRemove={false}
+            />
+          ))
+        ) : (
+          <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+            <SortableContext items={rest.map((it) => it.symbol)}
+              strategy={verticalListSortingStrategy}>
+              {rest.map((it) => (
+                <SortableItemRow
+                  key={it.symbol}
+                  item={it}
+                  quote={quotes[it.symbol]}
+                  rules={rules}
+                  hitCounts={hitCounts}
+                  selectedSymbol={selectedSymbol}
+                  onSelect={onSelect}
+                  onRemove={onRemove}
+                  showRemove
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+        )}
       </ul>
     </div>
   );
@@ -415,7 +518,7 @@ function SingleListView({
 // 單一 row — 書籤列與監聽列共用(item 只需代號/名稱,change_pct 為書籤獨有的退階欄位)
 // ---------------------------------------------------------------------------
 
-function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRemove, showRemove, removeLabel }: {
+function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRemove, showRemove, removeLabel, containerRef, containerStyle, containerProps }: {
   item: { symbol: string; name: string | null; change_pct?: number | null };
   quote: WatchlistQuote | undefined;
   rules: ActiveSignal[];   // 已過濾 enabled
@@ -425,6 +528,9 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
   onRemove?: (s: string) => void;
   showRemove: boolean;
   removeLabel?: string;
+  containerRef?: (node: HTMLElement | null) => void;
+  containerStyle?: React.CSSProperties;
+  containerProps?: React.HTMLAttributes<HTMLLIElement>;
 }) {
   const symRules = rules;
   const isSel = item.symbol === selectedSymbol;
@@ -442,6 +548,9 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
 
   return (
     <li
+      ref={containerRef}
+      style={containerStyle}
+      {...containerProps}
       className={[
         "relative px-3.5 py-4 border-b border-line cursor-pointer transition-colors duration-200",
         isSel ? `bg-bg-card border-l-2 ${markerBorder} pl-3` : "hover:bg-bg-card/40",
@@ -488,6 +597,25 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
         </button>
       )}
     </li>
+  );
+}
+
+// 拖拉包裝:把 dnd-kit 的 ref/transform/listeners 餵給 ItemRow 的 li。
+// PointerSensor 有 distance 啟動門檻,點擊選股不受影響。
+function SortableItemRow(props: Parameters<typeof ItemRow>[0]) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.item.symbol });
+  return (
+    <ItemRow
+      {...props}
+      containerRef={setNodeRef}
+      containerStyle={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : undefined,
+      }}
+      containerProps={{ ...attributes, ...listeners }}
+    />
   );
 }
 
