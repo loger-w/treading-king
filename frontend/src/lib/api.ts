@@ -419,6 +419,15 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify(payload),
       }),
+    reorderItems: (id: string, symbols: string[]) =>
+      fetchJSON<{ status: string }>(
+        `/api/bookmarks/${encodeURIComponent(id)}/items/reorder`,
+        { method: "PATCH", body: JSON.stringify({ symbols }) },
+      ),
+    reorderGroups: (ids: string[]) =>
+      fetchJSON<{ status: string }>("/api/bookmarks/reorder", {
+        method: "PATCH", body: JSON.stringify({ ids }),
+      }),
   },
 
   activeSignals: {

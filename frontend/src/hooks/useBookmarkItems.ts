@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type BookmarkGroup, type BookmarkItem } from "../lib/api";
+import { api, ApiError, type BookmarkGroup, type BookmarkItem } from "../lib/api";
 
 /**
  * 單一書籤的 items。傳 groupId=null 不撈、items=[].
@@ -37,7 +37,25 @@ export function useBookmarkItems(groupId: string | null) {
     await refresh();
   }, [groupId, refresh]);
 
-  return { items, loading, refresh, removeItem };
+  // 樂觀重排:先照新順序重組本地 items、再打 API;失敗回滾(列表彈回即為提示)。
+  const reorder = useCallback(async (symbols: string[]) => {
+    if (!groupId) return;
+    seqRef.current++;  // 作廢在途的 refresh 回應 — 不讓拖前舊順序蓋掉樂觀結果
+    const prev = items;
+    const bySym = new Map(items.map((it) => [it.symbol, it]));
+    setItems(symbols.flatMap((s) => bySym.get(s) ?? []));
+    try {
+      await api.bookmarks.reorderItems(groupId, symbols);
+    } catch (e) {
+      console.warn("reorder items failed:", e);
+      setItems(prev);
+      // 只有伺服器有回應(如 400 集合過期)才重抓現況;網路斷線時 refresh
+      // 也會失敗、其 catch 會把列表清成 [] — 反而毀掉上面的回滾
+      if (e instanceof ApiError) await refresh();
+    }
+  }, [groupId, items, refresh]);
+
+  return { items, loading, refresh, removeItem, reorder };
 }
 
 /**
@@ -57,7 +75,8 @@ export function useAllBookmarkItems(groups: BookmarkGroup[]) {
   // 每次都 setGroups 新陣列,直接依賴會讓每次 mutation 全量重抓兩次
   // (顯式 refreshAll 一次 + identity 變化觸發 effect 又一次);
   // items 變動的同步點是呼叫端的顯式 refreshAll
-  const groupIdsKey = groups.map((g) => g.id).join(",");
+  // 排序後 join = 集合 identity:群組「重排」只變順序不變內容,不該觸發全量重抓
+  const groupIdsKey = groups.map((g) => g.id).sort().join(",");
   const refresh = useCallback(async () => {
     const gs = groupsRef.current;
     const mySeq = ++seqRef.current;

@@ -120,6 +120,113 @@ def test_move_keeps_source_when_all_targets_fail(local_store_tmp, monkeypatch):
     assert client.get(f"/api/bookmarks/{g2}/items").json()["count"] == 0  # 目的已回滾
 
 
+def _setup_group_with_items(monkeypatch, symbols):
+    """共用前置:mock WS/CDP、註冊 symbols、批次加入預設書籤,回傳 group id。"""
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
+    get_local_store().market.replace_symbols(
+        [{"symbol": s, "name": s, "market": "TWSE", "is_etf": False, "is_active": True}
+         for s in symbols])
+    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"]
+               if not g["is_system"])
+    client.post(f"/api/bookmarks/{gid}/items", json={"symbols": symbols})
+    return gid
+
+
+def test_reorder_items_changes_get_order(local_store_tmp, monkeypatch):
+    # 為何重要:這就是「自訂排序」的核心 contract — reorder 後 GET 要照新順序回
+    gid = _setup_group_with_items(monkeypatch, ["2330", "2317", "2454"])
+    r = client.patch(f"/api/bookmarks/{gid}/items/reorder",
+                     json={"symbols": ["2317", "2454", "2330"]})
+    assert r.status_code == 200
+    got = [it["symbol"] for it in client.get(f"/api/bookmarks/{gid}/items").json()["items"]]
+    assert got == ["2317", "2454", "2330"]
+
+
+def test_reorder_items_mismatch_400(local_store_tmp, monkeypatch):
+    gid = _setup_group_with_items(monkeypatch, ["2330"])
+    r = client.patch(f"/api/bookmarks/{gid}/items/reorder",
+                     json={"symbols": ["2330", "9999"]})
+    assert r.status_code == 400
+
+
+def test_new_item_appears_on_top(local_store_tmp, monkeypatch):
+    # 為何重要:user 已確認「新加入排最上面」— 批次加入後再加一檔,新檔要在第一位
+    gid = _setup_group_with_items(monkeypatch, ["2330", "2317"])
+    get_local_store().market.replace_symbols(
+        [{"symbol": s, "name": s, "market": "TWSE", "is_etf": False, "is_active": True}
+         for s in ["2330", "2317", "2454"]])
+    client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2454"]})
+    got = [it["symbol"] for it in client.get(f"/api/bookmarks/{gid}/items").json()["items"]]
+    assert got[0] == "2454"
+
+
+def test_items_without_position_fallback_added_at_desc(local_store_tmp, monkeypatch):
+    # 為何重要:既有 config.json 沒有 position(spec 明定不遷移)— 舊資料要維持原本
+    # 「加入時間新→舊」的順序、且排在有 position 的項目後面
+    gid = _setup_group_with_items(monkeypatch, ["2330"])
+    cfg = get_local_store().config
+    cfg._data["watchlist_items"].extend([
+        {"id": "old1", "group_id": gid, "symbol": "1101",
+         "added_at": "2026-01-01T00:00:00+00:00", "note": None},
+        {"id": "old2", "group_id": gid, "symbol": "1102",
+         "added_at": "2026-02-01T00:00:00+00:00", "note": None},
+    ])
+    got = [it["symbol"] for it in client.get(f"/api/bookmarks/{gid}/items").json()["items"]]
+    assert got == ["2330", "1102", "1101"]  # 有 position 在前;舊資料 added_at 新→舊
+
+
+def test_reorder_groups_changes_list_order(local_store_tmp):
+    g1 = client.post("/api/bookmarks", json={"name": "甲"}).json()["id"]
+    g2 = client.post("/api/bookmarks", json={"name": "乙"}).json()["id"]
+    g0 = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"]
+              if g["name"] == "自選")
+    r = client.patch("/api/bookmarks/reorder", json={"ids": [g2, g1, g0]})
+    assert r.status_code == 200
+    user_ids = [g["id"] for g in client.get("/api/bookmarks").json()["groups"]
+                if not g["is_system"]]
+    assert user_ids == [g2, g1, g0]
+    # 系統書籤(大漲股)永遠在最後、不受影響
+    assert client.get("/api/bookmarks").json()["groups"][-1]["is_system"] is True
+
+
+def test_batch_add_preserves_input_order(local_store_tmp, monkeypatch):
+    # 為何重要:add_item 逐檔 min-1 若按輸入順序插入會把批次整個反轉;
+    # route 逆序插入後,列表由上而下必須等於使用者選的順序
+    gid = _setup_group_with_items(monkeypatch, ["2330", "2317", "2454"])
+    got = [it["symbol"] for it in client.get(f"/api/bookmarks/{gid}/items").json()["items"]]
+    assert got == ["2330", "2317", "2454"]
+
+
+def test_reorder_accepts_group_larger_than_batch_cap(local_store_tmp, monkeypatch):
+    # 為何重要:單次加入上限 200 但群組可累積超過;reorder 必須送完整集合,
+    # 若 schema 設 max_length 會讓大群組永久不可排序(422 → 前端默默回滾)
+    symbols = [f"{i:04d}" for i in range(1, 251)]  # 250 檔
+    fake_pool = AsyncMock()
+    monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
+    monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
+    get_local_store().market.replace_symbols(
+        [{"symbol": s, "name": s, "market": "TWSE", "is_etf": False, "is_active": True}
+         for s in symbols])
+    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"]
+               if not g["is_system"])
+    client.post(f"/api/bookmarks/{gid}/items", json={"symbols": symbols[:200]})
+    client.post(f"/api/bookmarks/{gid}/items", json={"symbols": symbols[200:]})
+    r = client.patch(f"/api/bookmarks/{gid}/items/reorder",
+                     json={"symbols": list(reversed(symbols))})
+    assert r.status_code == 200
+    got = [it["symbol"] for it in client.get(f"/api/bookmarks/{gid}/items").json()["items"]]
+    assert got == list(reversed(symbols))
+
+
+def test_reorder_groups_mismatch_400(local_store_tmp):
+    g0 = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"]
+              if not g["is_system"])
+    r = client.patch("/api/bookmarks/reorder", json={"ids": [g0, "no-such-id"]})
+    assert r.status_code == 400
+
+
 def test_delete_item_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):
     """刪書籤股票不該重載訊號引擎。
 

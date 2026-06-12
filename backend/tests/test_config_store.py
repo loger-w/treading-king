@@ -225,3 +225,74 @@ def test_load_filters_non_dict_list_elements(tmp_path):
     cfg = ConfigStore(path)
     cfg.load()
     assert [g["name"] for g in cfg.list_groups()] == ["我的"]  # 非 dict 被丟、使用者群組保住
+
+
+def test_add_item_assigns_position_new_on_top(tmp_path):
+    # 為何重要:自訂排序後,新加入的股票要排最上面(position 最小)且不打亂既有手動順序
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    g = cfg.create_group("X")
+    a = cfg.add_item(g["id"], "2330")
+    b = cfg.add_item(g["id"], "2317")
+    assert a["position"] == 0
+    assert b["position"] == -1  # 比現有最小值更小 → 排最上面
+
+
+def test_reorder_items_rewrites_positions(tmp_path):
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
+    cfg.load()
+    g = cfg.create_group("X")
+    for s in ("2330", "2317", "2454"):
+        cfg.add_item(g["id"], s)
+    assert cfg.reorder_items(g["id"], ["2454", "2330", "2317"]) is True
+    pos = {it["symbol"]: it["position"] for it in cfg.list_items(g["id"])}
+    assert pos == {"2454": 0, "2330": 1, "2317": 2}
+    # 為何重要:順序必須持久化 — 重載後不可退回加入時間排序
+    cfg2 = ConfigStore(path)
+    cfg2.load()
+    pos2 = {it["symbol"]: it["position"] for it in cfg2.list_items(g["id"])}
+    assert pos2 == pos
+
+
+def test_reorder_items_rejects_symbol_mismatch(tmp_path):
+    # 為何重要:另一視窗剛刪/加股票時,過期的 reorder 不可默默吃掉或產生孤兒 position
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    g = cfg.create_group("X")
+    cfg.add_item(g["id"], "2330")
+    assert cfg.reorder_items(g["id"], ["2330", "9999"]) is False
+    assert cfg.reorder_items(g["id"], []) is False
+    assert cfg.list_items(g["id"])[0]["position"] == 0  # 原值未動
+
+
+def test_import_rejects_non_numeric_position(tmp_path):
+    # 為何重要:position 是排序鍵 — 字串落地後 GET 排序與 add_item 的 min()
+    # 會對該群組永久 500,正是檔頭「落地前整包擋下」要防的情境
+    import pytest
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    base = {"schema_version": 1, "bookmark_groups": [], "active_signals": [],
+            "monitor_list": []}
+    bad = {**base, "watchlist_items": [
+        {"id": "i1", "group_id": "g1", "symbol": "2330", "position": "0"}]}
+    with pytest.raises(ValueError):
+        cfg.import_config(bad)
+    ok = {**base, "watchlist_items": [
+        {"id": "i1", "group_id": "g1", "symbol": "2330", "position": 3},
+        {"id": "i2", "group_id": "g1", "symbol": "2317"}]}  # 無 position 的舊資料合法
+    cfg.import_config(ok)
+
+
+def test_reorder_groups_rewrites_sort_order(tmp_path):
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
+    cfg.load()
+    g0 = cfg.list_groups()[0]          # 預設「自選」
+    g1 = cfg.create_group("A", sort_order=1)
+    g2 = cfg.create_group("B", sort_order=2)
+    assert cfg.reorder_groups([g2["id"], g0["id"], g1["id"]]) is True
+    order = {g["id"]: g["sort_order"] for g in cfg.list_groups()}
+    assert order == {g2["id"]: 0, g0["id"]: 1, g1["id"]: 2}
+    # mismatch(缺一個 id)→ 拒絕
+    assert cfg.reorder_groups([g2["id"], g0["id"]]) is False

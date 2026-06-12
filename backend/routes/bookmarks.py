@@ -144,6 +144,21 @@ async def create_bookmark(payload: BookmarkCreate) -> dict:
     return g
 
 
+# 不設 max_length:reorder 必須送完整集合,群組大小本身無上限,
+# 設上限會讓大群組永久不可排序;垃圾 payload 由 store 的集合一致性驗證擋
+class GroupsReorder(BaseModel):
+    ids: list[str] = Field(min_length=1)
+
+
+# 注意:必須宣告在 PATCH /api/bookmarks/{bid} 之前 — 否則 "reorder" 被當成 {bid}
+@router.patch("/api/bookmarks/reorder")
+async def reorder_bookmarks(payload: GroupsReorder) -> dict:
+    """批次重排 user 書籤群組。ids 必須與現有 user 群組集合完全一致。"""
+    if not get_local_store().config.reorder_groups(payload.ids):
+        raise HTTPException(400, detail={"error": "groups_mismatch"})
+    return {"status": "ok"}
+
+
 @router.patch("/api/bookmarks/{bid}")
 async def update_bookmark(bid: str, payload: BookmarkPatch) -> dict:
     store = get_local_store()
@@ -218,9 +233,14 @@ async def list_items(bid: str) -> dict:
 
     g = _require_user_group(bid)  # noqa: F841 — 存在性檢查(系統 id 不會到這)
 
-    # User 書籤 — 從 watchlist_items 補 symbols metadata,added_at desc
+    # User 書籤 — 有 position 的照 position 升冪在前(自訂順序);
+    # 舊資料沒有 position(不遷移),fallback added_at 新→舊接在後面
     items = store.config.list_items(bid)
-    items = sorted(items, key=lambda it: it.get("added_at") or "", reverse=True)
+    with_pos = sorted((it for it in items if it.get("position") is not None),
+                      key=lambda it: it["position"])
+    no_pos = sorted((it for it in items if it.get("position") is None),
+                    key=lambda it: it.get("added_at") or "", reverse=True)
+    items = with_pos + no_pos
     out = [
         enrich_item(
             {"symbol": it["symbol"], "added_at": it.get("added_at"), "note": it.get("note")},
@@ -255,7 +275,9 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
     owner = _owner_id(bid)
     added: list[str] = []
     failed: list[str] = []
-    for s in to_insert:
+    # 逆序插入:add_item 每檔取 min(position)-1,逆序讓使用者選的第一檔
+    # 最後插入(position 最小)→ 列表由上而下呈現輸入順序
+    for s in reversed(to_insert):
         store.config.add_item(bid, s)
         try:
             await get_ws_pool().subscribe(s, owner_id=owner)
@@ -266,6 +288,8 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
             continue
         added.append(s)
         _enqueue_backfill(s)
+    added.reverse()  # 回應仍照輸入順序
+    failed.reverse()
 
     # 不 refresh signal_engine:同 remove_item — 書籤股票不在訊號評估範圍
     # (monitor_list),refresh 只會白白重算 monitor 的 CDP、拖慢加入。
@@ -295,6 +319,20 @@ async def remove_item(bid: str, symbol: str) -> None:
     return None
 
 
+# 同 GroupsReorder:不設 max_length — 群組可多次批次加入累積超過單次上限
+class ItemsReorder(BaseModel):
+    symbols: list[str] = Field(min_length=1)
+
+
+@router.patch("/api/bookmarks/{bid}/items/reorder")
+async def reorder_bookmark_items(bid: str, payload: ItemsReorder) -> dict:
+    """以 symbols 的順序重排書籤內股票。集合與現況不符回 400(過期請求不蓋資料)。"""
+    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    if not get_local_store().config.reorder_items(bid, payload.symbols):
+        raise HTTPException(400, detail={"error": "items_mismatch"})
+    return {"status": "ok"}
+
+
 @router.patch("/api/bookmarks/items/move")
 async def move_items(payload: ItemsMove) -> dict:
     """批次跨書籤搬移 / 複製。"""
@@ -315,7 +353,8 @@ async def move_items(payload: ItemsMove) -> dict:
         ok_symbols.update(already)
         to_insert = [s for s in payload.symbols if s not in already]
         owner_to = _owner_id(to_id)
-        for s in to_insert:
+        # 逆序插入,同 add_items — 目的群組由上而下呈現搬移時的選取順序
+        for s in reversed(to_insert):
             store.config.add_item(to_id, s)
             try:
                 await get_ws_pool().subscribe(s, owner_id=owner_to)
