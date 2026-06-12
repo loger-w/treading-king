@@ -42,6 +42,13 @@ async def test_crash_rule_silent_on_flat_prices():
     assert sum(fired.values()) == 0
 
 
+def test_replay_rules_never_push_discord():
+    # ActiveSignalOut 預設 notify_discord=True;回測規則必須關掉,
+    # 否則 bot 在跑時一次回放會推出數百張圖卡
+    assert touch_rule(5, DAY).notify_discord is False
+    assert window_rule("突爆殺", "lt", -2.0, DAY).notify_discord is False
+
+
 @pytest.mark.asyncio
 async def test_touch_rule_still_fires_after_refactor():
     # 99.8 → 100.0 由下碰 CDP(=100)— 回歸:重構不能弄壞碰線回放

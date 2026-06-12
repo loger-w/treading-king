@@ -113,6 +113,7 @@ def touch_rule(rearm_ticks: int, day: str):
         )),
         scope={"type": "watchlist"},
         cooldown_seconds=600, enabled=True, created_at=day,
+        notify_discord=False,  # 回測訊號不可外推(bot 在跑時會被灌爆)
     )
 
 
@@ -127,6 +128,7 @@ def window_rule(name: str, operator: str, value: float, day: str):
         )]),
         scope={"type": "watchlist"},
         cooldown_seconds=1800, enabled=True, created_at=day,
+        notify_discord=False,  # 回測訊號不可外推(bot 在跑時會被灌爆)
     )
 
 
