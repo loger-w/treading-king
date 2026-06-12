@@ -29,6 +29,27 @@ import { resolveDisplayChangePct } from "../lib/quote-display";
 const ALL_VIEW = "__all__";
 const MONITOR_VIEW = "__monitor__";
 
+// click 與 drag 的分界:6px 內是點擊(選股/切書籤),超過才啟動拖拉
+function useDragSensors() {
+  return useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+}
+
+// dnd-kit 接線共用:回傳掛在容器元素上的 ref/transform/手勢 listeners。
+// 只 spread listeners、不 spread attributes — attributes 會把元素標成可鍵盤
+// 排序的 button,但這裡只裝 PointerSensor,鍵盤操作並不存在(誤導 a11y)
+function useSortableContainer(id: string) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return {
+    containerRef: setNodeRef,
+    containerStyle: {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.5 : undefined,
+    } as React.CSSProperties,
+    containerProps: { ...listeners },
+  };
+}
+
 interface Props {
   rules: ActiveSignal[];
   hitCounts: HitCounts;
@@ -101,15 +122,21 @@ export function BookmarksPanel({
 
   // Sidebar user 群組拖拉(系統書籤固定殿後、不參與)
   const userGroups = useMemo(() => groups.filter((g) => !g.is_system), [groups]);
-  const sidebarSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
+  // id 陣列 reference 要穩定:本面板每個行情 tick 重繪,新陣列會打穿
+  // dnd-kit SortableContext 的 items memo、迫使全部 sortable 列重算
+  const userGroupIds = useMemo(() => userGroups.map((g) => g.id), [userGroups]);
+  const sidebarSensors = useDragSensors();
 
   function handleGroupDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    reorderGroups(applyDragToOrder(
-      userGroups.map((g) => g.id), String(active.id), String(over.id)));
+    reorderGroups(applyDragToOrder(userGroupIds, String(active.id), String(over.id)));
+  }
+
+  // 「全部」view 的 byGroup 不會因 item 重排自動更新(group 集合沒變),拖完顯式同步
+  async function reorderItemsEverywhere(symbols: string[]) {
+    await reorderItems(symbols);
+    await refreshAll();
   }
 
   // 目前選中書籤(物件)
@@ -176,7 +203,7 @@ export function BookmarksPanel({
             onClick={() => pickGroup(ALL_VIEW)}
           />
           <DndContext sensors={sidebarSensors} onDragEnd={handleGroupDragEnd}>
-            <SortableContext items={userGroups.map((g) => g.id)}
+            <SortableContext items={userGroupIds}
               strategy={verticalListSortingStrategy}>
               {userGroups.map((g) => (
                 <SortableSidebarItem
@@ -258,7 +285,7 @@ export function BookmarksPanel({
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
               onRemove={removeItemEverywhere}
-              onReorder={reorderItems}
+              onReorder={reorderItemsEverywhere}
               canEdit={!!canEdit}
               onStartEdit={() => setEditMode(true)}
               isEmpty={singleItems.length === 0}
@@ -333,23 +360,8 @@ function SidebarItem({ label, count, selected, system, onClick, containerRef, co
   );
 }
 
-// 拖拉包裝:把 dnd-kit 的 ref/transform/listeners 餵給 SidebarItem 的 button。
-// PointerSensor 有 distance 啟動門檻,點擊切換書籤不受影響。
 function SortableSidebarItem(props: Parameters<typeof SidebarItem>[0] & { id: string }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.id });
-  return (
-    <SidebarItem
-      {...props}
-      containerRef={setNodeRef}
-      containerStyle={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : undefined,
-      }}
-      containerProps={{ ...attributes, ...listeners }}
-    />
-  );
+  return <SidebarItem {...props} {...useSortableContainer(props.id)} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,15 +441,19 @@ function SingleListView({
   isSystem: boolean;
 }) {
   // 訊號命中置頂(不可拖)、其餘照後端 position 順序(可拖)
-  const { pinned, rest } = useMemo(
+  const live = useMemo(
     () => partitionByHits(items, (s) => totalHitsForSymbol(s, hitCounts)),
     [items, hitCounts],
   );
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
+  // 拖拉進行中凍結分群:盤中訊號第一次命中會把列提升置頂、從 sortable 區
+  // unmount,讓 drop 目標位移或拖拉中斷 — 凍結到放開/取消為止
+  const [frozen, setFrozen] = useState<typeof live | null>(null);
+  const { pinned, rest } = frozen ?? live;
+  const restIds = useMemo(() => rest.map((it) => it.symbol), [rest]);
+  const sensors = useDragSensors();
 
   function handleDragEnd(e: DragEndEvent) {
+    setFrozen(null);
     const { active, over } = e;
     if (!over || active.id === over.id) return;
     // 拖拉結果套回「完整順序」(含置頂項目的 slot)送後端
@@ -490,8 +506,13 @@ function SingleListView({
             />
           ))
         ) : (
-          <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-            <SortableContext items={rest.map((it) => it.symbol)}
+          <DndContext
+            sensors={sensors}
+            onDragStart={() => setFrozen(live)}
+            onDragCancel={() => setFrozen(null)}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={restIds}
               strategy={verticalListSortingStrategy}>
               {rest.map((it) => (
                 <SortableItemRow
@@ -600,23 +621,8 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
   );
 }
 
-// 拖拉包裝:把 dnd-kit 的 ref/transform/listeners 餵給 ItemRow 的 li。
-// PointerSensor 有 distance 啟動門檻,點擊選股不受影響。
 function SortableItemRow(props: Parameters<typeof ItemRow>[0]) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.item.symbol });
-  return (
-    <ItemRow
-      {...props}
-      containerRef={setNodeRef}
-      containerStyle={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : undefined,
-      }}
-      containerProps={{ ...attributes, ...listeners }}
-    />
-  );
+  return <ItemRow {...props} {...useSortableContainer(props.item.symbol)} />;
 }
 
 function EmptyState({ text }: { text: string }) {

@@ -44,11 +44,19 @@ export function useBookmarks() {
   }, [refresh]);
 
   // 樂觀重排 user 群組(系統書籤固定殿後,不在 ids 內);失敗回滾。
+  // sort_order 同步改寫成 0..n-1(對齊後端寫入值)— ManageDialog 依它排序,
+  // 只重排陣列會讓 dialog 顯示拖前舊順序
   const reorderGroups = useCallback(async (ids: string[]) => {
     const prev = groups;
     const byId = new Map(groups.map((g) => [g.id, g]));
     const system = groups.filter((g) => g.is_system);
-    setGroups([...ids.flatMap((i) => byId.get(i) ?? []), ...system]);
+    setGroups([
+      ...ids.flatMap((i, idx) => {
+        const g = byId.get(i);
+        return g ? [{ ...g, sort_order: idx }] : [];
+      }),
+      ...system,
+    ]);
     try {
       await api.bookmarks.reorderGroups(ids);
     } catch (e) {

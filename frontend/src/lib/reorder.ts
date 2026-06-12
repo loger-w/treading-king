@@ -1,3 +1,5 @@
+import { arrayMove } from "@dnd-kit/sortable";
+
 /**
  * 書籤列表排序純函式 — 抽出來測(專案無 hook 測試環境)。
  *
@@ -18,15 +20,13 @@ export function partitionByHits<T extends { symbol: string }>(
 }
 
 /**
- * 把「拖 active 放到 over 的位置」套到完整順序(同 dnd-kit arrayMove 語意)。
+ * 把「拖 active 放到 over 的位置」套到完整順序。搬移本體用 dnd-kit 的
+ * arrayMove — 與 SortableContext 拖拉預覽的位移計算同一份語意,不自製。
  * 置頂項目不會是 over(不在拖拉區),它們的 slot 自然保留。
  */
 export function applyDragToOrder(order: string[], active: string, over: string): string[] {
   const from = order.indexOf(active);
   const to = order.indexOf(over);
   if (from < 0 || to < 0 || from === to) return order;
-  const next = [...order];
-  next.splice(from, 1);
-  next.splice(to, 0, active);
-  return next;
+  return arrayMove(order, from, to);
 }
