@@ -39,13 +39,23 @@ def test_ma_proximity_rejects_invalid_level():
         MAProximityCondition(levels=["sma_60"])  # type: ignore
 
 
-def test_cdp_proximity_rearm_defaults_to_5():
+def test_cdp_proximity_rearm_defaults_to_none():
+    """未顯式設定 = None,實際距離由引擎解析(max(預設, tolerance+1))。"""
     from models.condition import CdpProximityCondition
     c = CdpProximityCondition()
-    assert c.rearm_ticks == 5
+    assert c.rearm_ticks is None
 
 
-def test_cdp_proximity_rearm_must_exceed_tolerance():
+def test_cdp_proximity_high_tolerance_without_rearm_loads():
+    """回歸:tolerance 5~10 不帶 rearm_ticks 必須可載入 — 前端編輯器允許
+    tolerance 0~10 且不送 rearm 欄位;舊設定檔/匯入檔同樣不能因新欄位失效。"""
+    from models.condition import CdpProximityCondition
+    for tol in (5, 7, 10):
+        c = CdpProximityCondition(tolerance_ticks=tol)
+        assert c.rearm_ticks is None
+
+
+def test_cdp_proximity_explicit_rearm_must_exceed_tolerance():
     from models.condition import CdpProximityCondition
     with pytest.raises(ValidationError):
         CdpProximityCondition(tolerance_ticks=5, rearm_ticks=3)
@@ -59,9 +69,22 @@ def test_cdp_proximity_rearm_zero_disables_regardless_of_tolerance():
 
 def test_ma_proximity_rearm_same_rules():
     from models.condition import MAProximityCondition
-    assert MAProximityCondition().rearm_ticks == 5
+    assert MAProximityCondition().rearm_ticks is None
+    assert MAProximityCondition(tolerance_ticks=8).rearm_ticks is None
     with pytest.raises(ValidationError):
         MAProximityCondition(tolerance_ticks=5, rearm_ticks=5)  # 必須「大於」
+
+
+def test_active_signal_out_loads_row_with_high_tolerance():
+    """refresh_active_signals 走 ActiveSignalOut 物化 filter_json — 這條路炸掉
+    會讓磁碟上的規則被靜默跳過,必須保證舊 row 永遠可載入。"""
+    from models.condition import ActiveSignalOut
+    out = ActiveSignalOut(
+        id="x", created_at="2026-01-01", name="t",
+        filter_json={"cdp_proximity": {"levels": ["nh"], "tolerance_ticks": 6}},
+        scope={"type": "watchlist"},
+    )
+    assert out.filter_json.cdp_proximity.rearm_ticks is None
 
 
 def test_active_filter_schema_bumps_to_5():

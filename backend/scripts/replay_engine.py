@@ -117,6 +117,9 @@ async def replay_day(day: str, symbols: list[str], daily, minute, rearm_ticks: i
         )),
         scope={"type": "symbols", "symbols": symbols},
         cooldown_seconds=600, enabled=True, created_at=day,
+        # _fanout 會對 notify_discord=True 的規則 POST SIGNALS_BOT_PUSH_URL —
+        # 重播幾百筆觸發不能灌進真 Discord
+        notify_discord=False,
     )]
 
     streams = []  # (ts, symbol, price) 全股票合併、按時間序
