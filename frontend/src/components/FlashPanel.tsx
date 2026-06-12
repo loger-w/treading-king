@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type CapitalOrder, type CapitalPosition } from "../lib/api";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import { useQuoteBook } from "../hooks/useQuoteBook";
 import { subscribeTicks } from "../hooks/useSignalsStream";
 import { buildLadder, splitMyLots } from "../lib/flash-ladder";
@@ -50,14 +51,7 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
 
   // Esc = 鍵盤解除:滑鼠停在階梯上忙的時候,鍵盤是最快的降風險出口。
   // 只在武裝期間掛 window 監聽;與全刪確認彈窗的 Esc 同向(都是降風險),不互斥
-  useEffect(() => {
-    if (!arm.armed) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setArm((s) => reduceArm(s, { type: "disarm" }));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [arm.armed]);
+  useEscapeKey(() => setArm((s) => reduceArm(s, { type: "disarm" })), arm.armed);
 
   // 閒置 5 分鐘解除:任何互動 reset
   const touchIdle = () => {
