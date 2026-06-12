@@ -32,5 +32,11 @@ describe("武裝開關狀態機", () => {
     expect(s.failStreak).toBe(0);
   });
 
+  it("disarm 只會解除、不會反向武裝(與 toggle 的差異所在)", () => {
+    expect(reduceArm({ armed: true, failStreak: 1 }, { type: "disarm" }).armed).toBe(false);
+    // 已解除時冪等 — 解除列/Esc 連按絕不能把狀態翻回武裝
+    expect(reduceArm({ armed: false, failStreak: 0 }, { type: "disarm" }).armed).toBe(false);
+  });
+
   it("閒置時限 = 5 分鐘", () => expect(ARM_IDLE_MS).toBe(5 * 60 * 1000));
 });

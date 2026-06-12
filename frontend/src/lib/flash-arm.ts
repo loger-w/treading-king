@@ -10,6 +10,7 @@ export interface ArmState {
 
 export type ArmEvent =
   | { type: "toggle" }
+  | { type: "disarm" }
   | { type: "symbol_changed" }
   | { type: "conn_lost" }
   | { type: "idle_timeout" }
@@ -24,6 +25,7 @@ export function reduceArm(s: ArmState, e: ArmEvent): ArmState {
   switch (e.type) {
     case "toggle":
       return { armed: !s.armed, failStreak: 0 };
+    case "disarm":
     case "symbol_changed":
     case "conn_lost":
     case "idle_timeout":
