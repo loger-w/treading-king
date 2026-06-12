@@ -140,8 +140,13 @@ class FubonClient:
         msg = getattr(result, "message", None) or "(no message)"
         if ok:
             logger.info("Fubon %s 登入成功", login_label)
+        elif cert_path:
+            # 憑證模式是操作者刻意設定、意圖取得交易層登入 — 失敗代表憑證/密碼真的
+            # 有問題,屬非預期錯誤(不是 DMA 那種「查無資料」常態)。直接中止,讓
+            # _login_with_retry 重試耗盡後 notify_critical 把它喊出來,不要靜默吞掉。
+            raise RuntimeError(f"Fubon 憑證登入失敗: {msg}")
         else:
-            # 未申請 DMA 交易權時回「查無資料」屬預期 — 金鑰仍有效,失敗的登入
+            # DMA 模式未申請交易權時回「查無資料」屬預期 — 金鑰仍有效,失敗的登入
             # 照樣發行情授權(實測:查無資料下 init_realtime 仍成功)。下單走群益,
             # 不需 DMA 交易權,故不在此中止;能否取得行情交由 init_realtime 判定。
             logger.info("Fubon %s 交易層未登入(%s);續以行情授權 init_realtime", login_label, msg)
@@ -153,6 +158,13 @@ class FubonClient:
         try:
             sdk.init_realtime(Mode.Normal)
         except Exception as e:
+            # 登入成功但行情初始化失敗 → 此 sdk 已持有 server session,先收掉再 raise。
+            # 否則 _login_with_retry 每次重試都新建並重新登入,會逐次吃掉富邦每帳號
+            # 5 連線額度(同 _teardown_sdk_sync 防的洩漏)。
+            try:
+                sdk.logout()
+            except Exception as logout_err:
+                logger.debug("logout after init_realtime failure ignored: %s", logout_err)
             raise RuntimeError(
                 f"Fubon 行情初始化失敗(登入: {'OK' if ok else msg}): {e}"
             ) from e

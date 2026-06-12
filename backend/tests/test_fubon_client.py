@@ -133,3 +133,36 @@ def test_cert_present_uses_apikey_login(monkeypatch, dma_env):
     assert rec["login"][0] == "cert"
     assert rec["login"][3] == r"C:\fake\fubon.pfx"
     assert rec["login"][4] == "pw"
+
+
+def test_cert_login_failure_raises_and_skips_init(monkeypatch, dma_env):
+    # 憑證模式失敗語意 ≠ DMA:操作者刻意設了憑證、意圖交易層登入,失敗屬非預期錯誤,
+    # 須直接 raise(讓重試+notify_critical 喊出來),且不該繼續打 init_realtime。
+    monkeypatch.setenv("FUBON_CERT_PATH", r"C:\fake\fubon.pfx")
+    monkeypatch.setenv("FUBON_CERT_PASS", "pw")
+    rec = _install_fake_sdk(monkeypatch, login_result=_Result(False, "憑證已過期"))
+    client = FubonClient()
+
+    with pytest.raises(RuntimeError) as ei:
+        client._do_login_sync()
+
+    assert "憑證" in str(ei.value)
+    assert rec["sdk"].init_realtime_calls == 0
+    assert client._sdk is None
+
+
+def test_logout_on_init_realtime_failure(monkeypatch, dma_env):
+    # 登入成功但 init_realtime 失敗 → 須先 logout 收掉已建立的 server session 再 raise,
+    # 否則重試每次重新登入會吃掉富邦每帳號 5 連線額度。
+    rec = _install_fake_sdk(
+        monkeypatch,
+        login_result=_Result(True),
+        init_realtime_raises=ValueError("token exchange boom"),
+    )
+    client = FubonClient()
+
+    with pytest.raises(RuntimeError):
+        client._do_login_sync()
+
+    assert rec.get("logout") is True
+    assert client._sdk is None
