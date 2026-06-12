@@ -111,7 +111,27 @@ class WindowCondition(BaseModel):
 REARM_TICKS_DEFAULT = 5
 
 
-class CdpProximityCondition(BaseModel):
+class _ProximityRearmBase(BaseModel):
+    """proximity 條件共用欄位 — tolerance(觸發區寬度)+ rearm(再武裝距離)。
+
+    rearm_ticks=None 表「未顯式設定」:引擎解析為 max(REARM_TICKS_DEFAULT,
+    tolerance_ticks + 1),任何 tolerance(0~10)下舊設定檔/未送此欄位的前端
+    都能載入且保證可 re-arm。顯式值才驗證「0(關閉)或必須大於 tolerance」—
+    rearm ≤ tolerance 時價格永遠在觸發區內,永遠無法重新武裝。
+    """
+
+    tolerance_ticks: int = Field(default=0, ge=0, le=10)
+    rearm_ticks: int | None = Field(default=None, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def _rearm_exceeds_tolerance(self):
+        if (self.rearm_ticks is not None and self.rearm_ticks != 0
+                and self.rearm_ticks <= self.tolerance_ticks):
+            raise ValueError("rearm_ticks 必須為 0(關閉)或大於 tolerance_ticks")
+        return self
+
+
+class CdpProximityCondition(_ProximityRearmBase):
     """CDP 觸發條件 — tick price 落在所選 CDP 線的 ±N tick 範圍內。
 
     levels: 要監看的 CDP 線(5 條任意組合,預設全選)
@@ -125,18 +145,9 @@ class CdpProximityCondition(BaseModel):
         default_factory=lambda: ["ah", "nh", "cdp", "nl", "al"],
         min_length=1,
     )
-    tolerance_ticks: int = Field(default=0, ge=0, le=10)
-    rearm_ticks: int = Field(default=REARM_TICKS_DEFAULT, ge=0, le=50)
-
-    @model_validator(mode="after")
-    def _rearm_exceeds_tolerance(self):
-        # rearm 距離 ≤ tolerance 時價格永遠在觸發區內,無法重新武裝
-        if self.rearm_ticks != 0 and self.rearm_ticks <= self.tolerance_ticks:
-            raise ValueError("rearm_ticks 必須為 0(關閉)或大於 tolerance_ticks")
-        return self
 
 
-class MAProximityCondition(BaseModel):
+class MAProximityCondition(_ProximityRearmBase):
     """MA 觸發條件 — tick price 落在所選 MA 線的 ±N tick 範圍內。
 
     SMA raw 通常不在合法 tick 上(算術平均),tolerance=0 嚴格打到實務上很難命中;
@@ -147,15 +158,6 @@ class MAProximityCondition(BaseModel):
         default_factory=lambda: ["sma_5", "sma_20"],
         min_length=1,
     )
-    tolerance_ticks: int = Field(default=0, ge=0, le=10)
-    rearm_ticks: int = Field(default=REARM_TICKS_DEFAULT, ge=0, le=50)
-
-    @model_validator(mode="after")
-    def _rearm_exceeds_tolerance(self):
-        # 同 CdpProximityCondition — rearm ≤ tolerance 時永遠在觸發區內
-        if self.rearm_ticks != 0 and self.rearm_ticks <= self.tolerance_ticks:
-            raise ValueError("rearm_ticks 必須為 0(關閉)或大於 tolerance_ticks")
-        return self
 
 
 CdpLevel = Literal["ah", "nh", "cdp", "nl", "al"]

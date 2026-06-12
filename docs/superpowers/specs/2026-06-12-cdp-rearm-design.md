@@ -94,3 +94,22 @@
 - 06-12 per-symbol:磨盤股 8150 14→4、8064 10→3、6207 9→4(−65~70%);
   趨勢/低噪股 6239 7→7、2327 4→4、6173 1→1(零誤殺)
 - 與設計預測一致,驗收通過
+
+## Code review 後的修正決策(2026-06-13 follow-up)
+
+PR #29 併入後 code review 發現四個問題,修正如下:
+
+1. **rearm_ticks 預設改 None(未顯式設定)**。原「Field 預設 5 + 必須 > tolerance」
+   使 tolerance 5~10 的規則(前端允許、舊設定檔可能存在)驗證必炸;且
+   refresh_active_signals 走 pydantic 物化 filter_json,炸掉的規則會被**靜默跳過**。
+   改為:顯式值才驗證;None 由引擎解析為 `max(REARM_TICKS_DEFAULT, tolerance+1)`,
+   任何 tolerance 下保證可 re-arm 且舊資料永遠可載入。
+2. **抑制標記移到規則整體成立後**(_evaluate 內、cooldown 檢查前)。原本在
+   _eval_with_touch_meta 內標記,AND 組合規則「碰線但其他條件沒過」也會消耗
+   armed,吃掉之後的第一筆合法訊號。cooldown 擋下仍標記(維持原意:黏線不等
+   cooldown 到期重推)。
+3. **strategy 類 cooldown 還原 per (策略, 股票)**。per 價位粒度原本連帶套到
+   limit_up_open_touch / breakout_retest,使漲停打開回落連穿多線時一個冷卻窗
+   可推多發 — 未經回測驗證的行為變更,先還原舊行為;要改另行決策。
+4. **replay_engine 設 notify_discord=False**。_fanout 會對 notify_discord=True
+   POST SIGNALS_BOT_PUSH_URL,重播數百筆觸發不可灌進真 Discord。
