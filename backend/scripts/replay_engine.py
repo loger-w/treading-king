@@ -1,8 +1,9 @@
 """引擎級重播:近 N 日 1 分 K 餵真 SignalEngine,比較 re-arm 開/關的訊號量。
 
 用法(backend/ 下,先停 dev server — 跑此腳本會登入富邦一次):
-  .venv\\Scripts\\python scripts\\replay_engine.py            # 近 5 日
-  .venv\\Scripts\\python scripts\\replay_engine.py --rearm 8  # 對照組改 8 ticks
+  .venv\\Scripts\\python scripts\\replay_engine.py                 # 近 5 日
+  .venv\\Scripts\\python scripts\\replay_engine.py --rearm 8       # 對照組改 8 ticks
+  .venv\\Scripts\\python scripts\\replay_engine.py --preset crash  # 突爆殺門檻掃描
 
 已知近似:1 分 K 每根轉 4 筆 tick(紅 K 走 O→L→H→C、黑 K 走 O→H→L→C),
 與真實逐筆有偏差 — 絕對數字僅供參考,看「rearm 開 vs 關」的相對差距。
@@ -179,10 +180,38 @@ async def replay_day(day: str, symbols: list[str], daily, minute, active):
     return fired
 
 
+CRASH_THRESHOLDS = [-1.5, -2.0, -2.5, -3.0]
+
+
+async def run_crash(days, day_syms, daily, minute):
+    """突爆殺門檻掃描 + 突爆拉(gt 2.0)同池對照。"""
+    cols = [f"lt{t}" for t in CRASH_THRESHOLDS] + ["gt2.0"]
+    print(f"\n{'day':<12}" + "".join(f"{c:>9}" for c in cols))
+    totals = [0] * len(cols)
+    last_detail = {}
+    for day in days:
+        runs = []
+        for thr in CRASH_THRESHOLDS:
+            runs.append(await replay_day(day, day_syms[day], daily, minute,
+                                         window_rule("突爆殺", "lt", thr, day)))
+        runs.append(await replay_day(day, day_syms[day], daily, minute,
+                                     window_rule("突爆拉", "gt", 2.0, day)))
+        counts = [sum(f.values()) for f in runs]
+        totals = [a + b for a, b in zip(totals, counts)]
+        print(f"{day:<12}" + "".join(f"{c:>9}" for c in counts))
+        base, ref = runs[1], runs[-1]   # lt-2.0 基線 vs 突爆拉對照
+        last_detail = {s: (base.get(s, 0), ref.get(s, 0)) for s in day_syms[day]}
+    print(f"{'total':<12}" + "".join(f"{c:>9}" for c in totals))
+    print(f"\n-- {days[-1]} per-symbol (突爆殺 lt-2.0 → 突爆拉 gt2.0) --")
+    for s, (a, b) in sorted(last_detail.items()):
+        print(f"{s:<6}{a:>4} → {b}")
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=5)
     ap.add_argument("--rearm", type=int, default=5)
+    ap.add_argument("--preset", choices=["touch", "crash"], default="touch")
     args = ap.parse_args()
 
     day_syms = day_symbols_from_log(args.days)
@@ -192,6 +221,10 @@ async def main():
     all_syms = sorted({s for v in day_syms.values() for s in v})
     days = sorted(day_syms)
     daily, minute = fetch_fubon(all_syms, days[0], days[-1])
+
+    if args.preset == "crash":
+        await run_crash(days, day_syms, daily, minute)
+        return
 
     print(f"\n{'day':<12}{'rearm=0':>9}{'rearm=' + str(args.rearm):>9}")
     tot0 = totN = 0
