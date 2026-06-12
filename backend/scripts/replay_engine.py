@@ -19,7 +19,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.stdout.reconfigure(encoding="utf-8")
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
@@ -102,22 +101,46 @@ def candles_to_ticks(day: str, candles: list) -> list[tuple[float, float]]:
     return out
 
 
-async def replay_day(day: str, symbols: list[str], daily, minute, rearm_ticks: int):
+def touch_rule(rearm_ticks: int, day: str):
+    """碰 CDP 規則(沿用 2026-06-12 re-arm 回測的設定)。"""
     from models.condition import ActiveFilter, ActiveSignalOut, CdpProximityCondition
-    from services.cdp import compute_cdp
-    from services.ring_buffer import Tick
-    from services.signal_engine import SignalEngine
-
-    engine = SignalEngine()
-    engine._active = [ActiveSignalOut(
+    return ActiveSignalOut(
         id="replay", name="碰CDP",
         filter_json=ActiveFilter(cdp_proximity=CdpProximityCondition(
             levels=["ah", "nh", "cdp", "nl", "al"],
             tolerance_ticks=0, rearm_ticks=rearm_ticks,
         )),
-        scope={"type": "symbols", "symbols": symbols},
+        scope={"type": "watchlist"},
         cooldown_seconds=600, enabled=True, created_at=day,
-    )]
+    )
+
+
+def window_rule(name: str, operator: str, value: float, day: str):
+    """price_change_pct 時窗規則 — 突爆殺(lt 負值)/ 突爆拉(gt 正值)共用。"""
+    from models.condition import ActiveFilter, ActiveSignalOut, WindowCondition
+    return ActiveSignalOut(
+        id="replay", name=name,
+        filter_json=ActiveFilter(window_conditions=[WindowCondition(
+            type="price_change_pct", window_seconds=300,
+            operator=operator, value=value,
+        )]),
+        scope={"type": "watchlist"},
+        cooldown_seconds=1800, enabled=True, created_at=day,
+    )
+
+
+async def replay_day(day: str, symbols: list[str], daily, minute, active):
+    import services.ring_buffer as ring_buffer_module
+    from services.cdp import compute_cdp
+    from services.ring_buffer import RingBuffer, Tick
+    from services.signal_engine import SignalEngine
+
+    engine = SignalEngine()
+    engine._active = [active]
+
+    # window 條件讀 ring_buffer 單例 — 每日換全新實例,避免跨日殘留 tick
+    ring_buffer_module._default = RingBuffer()
+    rb = ring_buffer_module.get_ring_buffer()
 
     streams = []  # (ts, symbol, price) 全股票合併、按時間序
     for sym in symbols:
@@ -131,6 +154,7 @@ async def replay_day(day: str, symbols: list[str], daily, minute, rearm_ticks: i
             "cdp_ah": lv["ah"], "cdp_nh": lv["nh"], "cdp": lv["cdp"],
             "cdp_nl": lv["nl"], "cdp_al": lv["al"],
         }
+        rb.ensure(sym)
         streams.extend((ts, sym, p) for ts, p in candles_to_ticks(day, candles))
     streams.sort()
 
@@ -140,6 +164,8 @@ async def replay_day(day: str, symbols: list[str], daily, minute, rearm_ticks: i
         fired[payload["data"]["symbol"]] += 1
 
     clock = [0.0]
+    # 此 patch 改的是全域 time 模組的 time 屬性 — signal_engine 與 ring_buffer
+    # import 同一個 time 模組物件,ring_buffer.window() 的 cutoff 一併用假時鐘
     with patch("services.signal_engine.time.time", side_effect=lambda: clock[0]), \
          patch("services.signal_engine.get_broadcaster") as mock_bc, \
          patch("services.signal_engine.get_signal_writer") as mock_sw:
@@ -147,7 +173,9 @@ async def replay_day(day: str, symbols: list[str], daily, minute, rearm_ticks: i
         mock_sw.return_value = MagicMock()
         for ts, sym, price in streams:
             clock[0] = ts
-            await engine._evaluate(sym, Tick(price=price, size=1, time=ts))
+            tick = Tick(price=price, size=1, time=ts)
+            rb.append(sym, tick)
+            await engine._evaluate(sym, tick)
     return fired
 
 
@@ -169,8 +197,8 @@ async def main():
     tot0 = totN = 0
     last_detail = {}
     for day in days:
-        f0 = await replay_day(day, day_syms[day], daily, minute, rearm_ticks=0)
-        fN = await replay_day(day, day_syms[day], daily, minute, rearm_ticks=args.rearm)
+        f0 = await replay_day(day, day_syms[day], daily, minute, touch_rule(0, day))
+        fN = await replay_day(day, day_syms[day], daily, minute, touch_rule(args.rearm, day))
         print(f"{day:<12}{sum(f0.values()):>9}{sum(fN.values()):>9}")
         tot0 += sum(f0.values())
         totN += sum(fN.values())
@@ -182,4 +210,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
     asyncio.run(main())
