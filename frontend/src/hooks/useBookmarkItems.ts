@@ -37,7 +37,22 @@ export function useBookmarkItems(groupId: string | null) {
     await refresh();
   }, [groupId, refresh]);
 
-  return { items, loading, refresh, removeItem };
+  // 樂觀重排:先照新順序重組本地 items、再打 API;失敗回滾(列表彈回即為提示)。
+  const reorder = useCallback(async (symbols: string[]) => {
+    if (!groupId) return;
+    const prev = items;
+    const bySym = new Map(items.map((it) => [it.symbol, it]));
+    setItems(symbols.flatMap((s) => bySym.get(s) ?? []));
+    try {
+      await api.bookmarks.reorderItems(groupId, symbols);
+    } catch (e) {
+      console.warn("reorder items failed:", e);
+      setItems(prev);
+      await refresh();  // 400 = 集合過期(他處剛增刪)— 重抓伺服器現況
+    }
+  }, [groupId, items, refresh]);
+
+  return { items, loading, refresh, removeItem, reorder };
 }
 
 /**

@@ -43,5 +43,20 @@ export function useBookmarks() {
     await refresh();
   }, [refresh]);
 
-  return { groups, loading, error, refresh, create, rename, remove };
+  // 樂觀重排 user 群組(系統書籤固定殿後,不在 ids 內);失敗回滾。
+  const reorderGroups = useCallback(async (ids: string[]) => {
+    const prev = groups;
+    const byId = new Map(groups.map((g) => [g.id, g]));
+    const system = groups.filter((g) => g.is_system);
+    setGroups([...ids.flatMap((i) => byId.get(i) ?? []), ...system]);
+    try {
+      await api.bookmarks.reorderGroups(ids);
+    } catch (e) {
+      console.warn("reorder groups failed:", e);
+      setGroups(prev);
+      await refresh();
+    }
+  }, [groups, refresh]);
+
+  return { groups, loading, error, refresh, create, rename, remove, reorderGroups };
 }
