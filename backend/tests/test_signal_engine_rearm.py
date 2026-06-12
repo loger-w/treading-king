@@ -97,3 +97,51 @@ def test_daily_reset_clears_suppressed():
     engine._eval_with_touch_meta(a, "2330", _tick(100.0), _tick(99.5))
     engine._reset_daily_strategy_state()
     assert engine._prox_suppressed == set()
+
+
+# ---- cooldown per 價位(走 _evaluate 完整路徑)----
+
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+POST_OPEN = datetime(2026, 6, 12, 10, 0, tzinfo=timezone(timedelta(hours=8))).timestamp()
+
+
+@pytest.mark.asyncio
+async def test_cooldown_is_per_level_not_per_symbol():
+    """碰 NH 觸發後,cooldown 內碰 CDP 線要照樣觸發(舊行為會被同一把 cooldown 吞掉)。"""
+    engine = SignalEngine()
+    active = ActiveSignalOut(
+        id="a1", name="t",
+        filter_json=ActiveFilter(
+            cdp_proximity=CdpProximityCondition(
+                levels=["nh", "cdp"], tolerance_ticks=0, rearm_ticks=0,  # 隔離 cooldown 行為
+            ),
+        ),
+        scope={"type": "symbols", "symbols": ["2330"]},
+        cooldown_seconds=600, enabled=True, created_at="2026-06-12",
+    )
+    engine._active = [active]
+    engine._field_cache["2330"] = {"cdp_nh": 100.0, "cdp": 95.0}
+
+    fired: list[str] = []
+
+    async def fake_broadcast(payload):
+        fired.append(payload["data"]["cdp_touch"]["level"])
+
+    with patch("services.signal_engine.time.time", return_value=POST_OPEN), \
+         patch("services.signal_engine.get_broadcaster") as mock_bc, \
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
+        mock_bc.return_value.broadcast = fake_broadcast
+        mock_sw.return_value = MagicMock()
+
+        engine._prev_tick["2330"] = Tick(price=99.5, size=1, time=0.0)
+        await engine._evaluate("2330", Tick(price=100.0, size=1, time=1.0))   # 碰 NH
+        engine._prev_tick["2330"] = Tick(price=95.5, size=1, time=2.0)
+        await engine._evaluate("2330", Tick(price=95.0, size=1, time=3.0))    # 碰 CDP(cooldown 內)
+        engine._prev_tick["2330"] = Tick(price=99.5, size=1, time=4.0)
+        await engine._evaluate("2330", Tick(price=100.0, size=1, time=5.0))   # 再碰 NH → 被擋
+
+    assert fired == ["nh", "cdp"]

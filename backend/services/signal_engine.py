@@ -47,8 +47,9 @@ class SignalEngine:
         self._monitor: asyncio.Task | None = None
         self._heartbeat: asyncio.Task | None = None
         self._active: list[ActiveSignalOut] = []
-        # cooldown: (active_signal_id, symbol) → last_triggered_at (epoch s)
-        self._cooldown: dict[tuple[str, str], float] = {}
+        # cooldown: (active_signal_id, symbol, level) → last_triggered_at (epoch s)
+        # level = 觸碰的線名;純 window 條件(無觸碰)用空字串,行為同舊制
+        self._cooldown: dict[tuple[str, str, str], float] = {}
         # in-memory cache: symbol → field → value (indicator + cdp 共用)
         self._field_cache: dict[str, dict[str, float]] = {}
         # 上次 refill field_cache 的本地日期 — heartbeat 跨午夜時自動重 refill
@@ -308,8 +309,9 @@ class SignalEngine:
                 if not ok:
                     continue
 
-                # cooldown 檢查
-                key = (active.id, symbol)
+                # cooldown 檢查 — per 價位:碰 NH 不該吞掉接著碰 CDP 的訊號
+                touch_level = (cdp_touch or ma_touch or {}).get("level", "")
+                key = (active.id, symbol, touch_level)
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
                     continue
