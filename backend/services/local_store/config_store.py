@@ -57,6 +57,13 @@ def _validate_import_lists(data: dict) -> None:
             missing = [f for f in _IMPORT_REQUIRED_FIELDS[k] if f not in item]
             if missing:
                 raise ValueError(f"{k}[{i}]: missing fields {missing}")
+            if k == "watchlist_items":
+                # position 是排序鍵:GET 排序與 add_item 的 min() 都假設它是數字,
+                # 字串落地會讓該群組的讀取/新增永久 500
+                pos = item.get("position")
+                if pos is not None and (isinstance(pos, bool)
+                                        or not isinstance(pos, (int, float))):
+                    raise ValueError(f"{k}[{i}].position: expected a number")
             if k == "active_signals":
                 # filter_json / scope 形狀錯會在訊號引擎建 ActiveSignalOut 時炸
                 if not isinstance(item["filter_json"], dict):

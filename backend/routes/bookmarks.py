@@ -144,8 +144,10 @@ async def create_bookmark(payload: BookmarkCreate) -> dict:
     return g
 
 
+# 不設 max_length:reorder 必須送完整集合,群組大小本身無上限,
+# 設上限會讓大群組永久不可排序;垃圾 payload 由 store 的集合一致性驗證擋
 class GroupsReorder(BaseModel):
-    ids: list[str] = Field(min_length=1, max_length=100)
+    ids: list[str] = Field(min_length=1)
 
 
 # 注意:必須宣告在 PATCH /api/bookmarks/{bid} 之前 — 否則 "reorder" 被當成 {bid}
@@ -273,7 +275,9 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
     owner = _owner_id(bid)
     added: list[str] = []
     failed: list[str] = []
-    for s in to_insert:
+    # 逆序插入:add_item 每檔取 min(position)-1,逆序讓使用者選的第一檔
+    # 最後插入(position 最小)→ 列表由上而下呈現輸入順序
+    for s in reversed(to_insert):
         store.config.add_item(bid, s)
         try:
             await get_ws_pool().subscribe(s, owner_id=owner)
@@ -284,6 +288,8 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
             continue
         added.append(s)
         _enqueue_backfill(s)
+    added.reverse()  # 回應仍照輸入順序
+    failed.reverse()
 
     # 不 refresh signal_engine:同 remove_item — 書籤股票不在訊號評估範圍
     # (monitor_list),refresh 只會白白重算 monitor 的 CDP、拖慢加入。
@@ -313,8 +319,9 @@ async def remove_item(bid: str, symbol: str) -> None:
     return None
 
 
+# 同 GroupsReorder:不設 max_length — 群組可多次批次加入累積超過單次上限
 class ItemsReorder(BaseModel):
-    symbols: list[str] = Field(min_length=1, max_length=200)
+    symbols: list[str] = Field(min_length=1)
 
 
 @router.patch("/api/bookmarks/{bid}/items/reorder")
@@ -346,7 +353,8 @@ async def move_items(payload: ItemsMove) -> dict:
         ok_symbols.update(already)
         to_insert = [s for s in payload.symbols if s not in already]
         owner_to = _owner_id(to_id)
-        for s in to_insert:
+        # 逆序插入,同 add_items — 目的群組由上而下呈現搬移時的選取順序
+        for s in reversed(to_insert):
             store.config.add_item(to_id, s)
             try:
                 await get_ws_pool().subscribe(s, owner_id=owner_to)

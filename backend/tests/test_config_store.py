@@ -266,6 +266,24 @@ def test_reorder_items_rejects_symbol_mismatch(tmp_path):
     assert cfg.list_items(g["id"])[0]["position"] == 0  # 原值未動
 
 
+def test_import_rejects_non_numeric_position(tmp_path):
+    # 為何重要:position 是排序鍵 — 字串落地後 GET 排序與 add_item 的 min()
+    # 會對該群組永久 500,正是檔頭「落地前整包擋下」要防的情境
+    import pytest
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    base = {"schema_version": 1, "bookmark_groups": [], "active_signals": [],
+            "monitor_list": []}
+    bad = {**base, "watchlist_items": [
+        {"id": "i1", "group_id": "g1", "symbol": "2330", "position": "0"}]}
+    with pytest.raises(ValueError):
+        cfg.import_config(bad)
+    ok = {**base, "watchlist_items": [
+        {"id": "i1", "group_id": "g1", "symbol": "2330", "position": 3},
+        {"id": "i2", "group_id": "g1", "symbol": "2317"}]}  # 無 position 的舊資料合法
+    cfg.import_config(ok)
+
+
 def test_reorder_groups_rewrites_sort_order(tmp_path):
     path = tmp_path / "config.json"
     cfg = ConfigStore(path)
