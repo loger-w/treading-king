@@ -144,6 +144,19 @@ async def create_bookmark(payload: BookmarkCreate) -> dict:
     return g
 
 
+class GroupsReorder(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=100)
+
+
+# 注意:必須宣告在 PATCH /api/bookmarks/{bid} 之前 — 否則 "reorder" 被當成 {bid}
+@router.patch("/api/bookmarks/reorder")
+async def reorder_bookmarks(payload: GroupsReorder) -> dict:
+    """批次重排 user 書籤群組。ids 必須與現有 user 群組集合完全一致。"""
+    if not get_local_store().config.reorder_groups(payload.ids):
+        raise HTTPException(400, detail={"error": "groups_mismatch"})
+    return {"status": "ok"}
+
+
 @router.patch("/api/bookmarks/{bid}")
 async def update_bookmark(bid: str, payload: BookmarkPatch) -> dict:
     store = get_local_store()
@@ -218,9 +231,14 @@ async def list_items(bid: str) -> dict:
 
     g = _require_user_group(bid)  # noqa: F841 — 存在性檢查(系統 id 不會到這)
 
-    # User 書籤 — 從 watchlist_items 補 symbols metadata,added_at desc
+    # User 書籤 — 有 position 的照 position 升冪在前(自訂順序);
+    # 舊資料沒有 position(不遷移),fallback added_at 新→舊接在後面
     items = store.config.list_items(bid)
-    items = sorted(items, key=lambda it: it.get("added_at") or "", reverse=True)
+    with_pos = sorted((it for it in items if it.get("position") is not None),
+                      key=lambda it: it["position"])
+    no_pos = sorted((it for it in items if it.get("position") is None),
+                    key=lambda it: it.get("added_at") or "", reverse=True)
+    items = with_pos + no_pos
     out = [
         enrich_item(
             {"symbol": it["symbol"], "added_at": it.get("added_at"), "note": it.get("note")},
@@ -293,6 +311,19 @@ async def remove_item(bid: str, symbol: str) -> None:
     # monitor_list。refresh 會對 monitor 全部 symbol 序列 await cdp.get()(實測
     # 幾秒)→ 純粹拖慢刪除、對訊號毫無影響。
     return None
+
+
+class ItemsReorder(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=200)
+
+
+@router.patch("/api/bookmarks/{bid}/items/reorder")
+async def reorder_bookmark_items(bid: str, payload: ItemsReorder) -> dict:
+    """以 symbols 的順序重排書籤內股票。集合與現況不符回 400(過期請求不蓋資料)。"""
+    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    if not get_local_store().config.reorder_items(bid, payload.symbols):
+        raise HTTPException(400, detail={"error": "items_mismatch"})
+    return {"status": "ok"}
 
 
 @router.patch("/api/bookmarks/items/move")
