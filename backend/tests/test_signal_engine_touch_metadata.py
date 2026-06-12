@@ -15,10 +15,14 @@ POST_OPEN = datetime(2026, 5, 20, 10, 0, tzinfo=timezone(timedelta(hours=8))).ti
 
 
 def _make_active() -> ActiveSignalOut:
+    # rearm_ticks=0:本檔驗 touch metadata / touch_index(需要重複觸發),
+    # re-arm 行為由 test_signal_engine_rearm.py 覆蓋
     return ActiveSignalOut(
         id="x", name="t",
         filter_json=ActiveFilter(
-            cdp_proximity=CdpProximityCondition(levels=["ah"], tolerance_ticks=0),
+            cdp_proximity=CdpProximityCondition(
+                levels=["ah"], tolerance_ticks=0, rearm_ticks=0,
+            ),
         ),
         scope={"type": "symbols", "symbols": ["2330"]},
         cooldown_seconds=60,

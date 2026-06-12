@@ -106,6 +106,11 @@ class WindowCondition(BaseModel):
     value: float
 
 
+# 觸發後價格須離線幾個 tick 才重新武裝(0 = 關閉 re-arm)。
+# 預設值經 2026-06-08~12 五日 1 分 K 重播選定,見 docs spec 2026-06-12-cdp-rearm。
+REARM_TICKS_DEFAULT = 5
+
+
 class CdpProximityCondition(BaseModel):
     """CDP 觸發條件 — tick price 落在所選 CDP 線的 ±N tick 範圍內。
 
@@ -113,6 +118,7 @@ class CdpProximityCondition(BaseModel):
     tolerance_ticks:
       - 0  → 嚴格「打到」(tick.price == cdp_X,已 round to tick 所以可 exact match)
       - >0 → 「接近」(tick.price 在 cdp_X ± tolerance × tick_size(cdp_X) 內)
+    rearm_ticks: 觸發後價格須離線 ≥ N tick 才允許同一條線再觸發(黏線磨盤降噪)
     """
 
     levels: list[Literal["ah", "nh", "cdp", "nl", "al"]] = Field(
@@ -120,6 +126,14 @@ class CdpProximityCondition(BaseModel):
         min_length=1,
     )
     tolerance_ticks: int = Field(default=0, ge=0, le=10)
+    rearm_ticks: int = Field(default=REARM_TICKS_DEFAULT, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def _rearm_exceeds_tolerance(self):
+        # rearm 距離 ≤ tolerance 時價格永遠在觸發區內,無法重新武裝
+        if self.rearm_ticks != 0 and self.rearm_ticks <= self.tolerance_ticks:
+            raise ValueError("rearm_ticks 必須為 0(關閉)或大於 tolerance_ticks")
+        return self
 
 
 class MAProximityCondition(BaseModel):
@@ -134,6 +148,14 @@ class MAProximityCondition(BaseModel):
         min_length=1,
     )
     tolerance_ticks: int = Field(default=0, ge=0, le=10)
+    rearm_ticks: int = Field(default=REARM_TICKS_DEFAULT, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def _rearm_exceeds_tolerance(self):
+        # 同 CdpProximityCondition — rearm ≤ tolerance 時永遠在觸發區內
+        if self.rearm_ticks != 0 and self.rearm_ticks <= self.tolerance_ticks:
+            raise ValueError("rearm_ticks 必須為 0(關閉)或大於 tolerance_ticks")
+        return self
 
 
 CdpLevel = Literal["ah", "nh", "cdp", "nl", "al"]

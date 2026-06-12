@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from models.condition import (
-    ActiveSignalOut, Condition, Filter, WindowCondition,
+    REARM_TICKS_DEFAULT, ActiveSignalOut, Condition, Filter, WindowCondition,
 )
 from services import alerts, discord_notifier, ma_service
 from services.cdp import get_cdp_service, limit_up_price
@@ -47,8 +47,9 @@ class SignalEngine:
         self._monitor: asyncio.Task | None = None
         self._heartbeat: asyncio.Task | None = None
         self._active: list[ActiveSignalOut] = []
-        # cooldown: (active_signal_id, symbol) → last_triggered_at (epoch s)
-        self._cooldown: dict[tuple[str, str], float] = {}
+        # cooldown: (active_signal_id, symbol, level) → last_triggered_at (epoch s)
+        # level = 觸碰的線名;純 window 條件(無觸碰)用空字串,行為同舊制
+        self._cooldown: dict[tuple[str, str, str], float] = {}
         # in-memory cache: symbol → field → value (indicator + cdp 共用)
         self._field_cache: dict[str, dict[str, float]] = {}
         # 上次 refill field_cache 的本地日期 — heartbeat 跨午夜時自動重 refill
@@ -59,6 +60,10 @@ class SignalEngine:
         # 當天觸碰次數計數 (symbol, level, date) → count,跨日 GC
         self._cdp_touch_count: dict[tuple[str, str, date], int] = {}
         self._ma_touch_count:  dict[tuple[str, str, date], int] = {}
+        # re-arm 抑制:armed 觸碰發生後 (active_id, symbol, level) 進此 set,
+        # 價格離線 ≥ rearm_ticks × tick_size 才解除。level = ah/nh/cdp/nl/al 或 sma_5/sma_20。
+        # 注意:觸碰「發生」即標記(不論 cooldown 是否放行)— 黏線時不會等 cooldown 到期又推。
+        self._prox_suppressed: set[tuple[str, str, str]] = set()
         # 漲停 latch(per-symbol,當日;daily reset)
         self._limit_at_since: dict[str, float] = {}    # 目前連續盯漲停價起點(離開即清)
         self._limit_lock_best: dict[str, float] = {}   # 今日達到過的最長連續鎖死秒數
@@ -304,8 +309,9 @@ class SignalEngine:
                 if not ok:
                     continue
 
-                # cooldown 檢查
-                key = (active.id, symbol)
+                # cooldown 檢查 — per 價位:碰 NH 不該吞掉接著碰 CDP 的訊號
+                touch_level = (cdp_touch or ma_touch or {}).get("level", "")
+                key = (active.id, symbol, touch_level)
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
                     continue
@@ -459,6 +465,7 @@ class SignalEngine:
         self._limit_at_since.clear()
         self._limit_lock_best.clear()
         self._breakout_armed.clear()
+        self._prox_suppressed.clear()
         self._day_volume.clear()
         # 昨日收盤 tick 不該當隔日第一筆的方向參考;順手擋 24/7 長駐下
         # 換股訂閱(top_gainers / preview)造成的慢速累積
@@ -474,33 +481,56 @@ class SignalEngine:
     ) -> tuple[dict | None, dict | None]:
         """跑 cdp/ma proximity,回 (cdp_touch_dict, ma_touch_dict) 含方向 + role。
 
-        None 表示該 proximity 沒設或沒命中。
+        None 表示該 proximity 沒設或沒命中。re-arm:受抑制的 level 跳過評估,
+        價格離線 ≥ rearm_ticks 時解除;direction=horizontal 視為未命中(不推、
+        也不消耗 armed 狀態 — 黏線情境判不出方向,真正的首次觸碰必有方向)。
         """
-        f = active.filter_json
+        from services.cdp import tick_size
 
+        f = active.filter_json
         cdp_prox = (f.get("cdp_proximity") if isinstance(f, dict)
                     else getattr(f, "cdp_proximity", None))
-        cdp_touch: dict | None = None
-        if cdp_prox is not None:
-            ok, level = self._eval_cdp_proximity(symbol, tick, cdp_prox)
-            if ok and level is not None:
-                field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp",
-                             "nl": "cdp_nl", "al": "cdp_al"}
-                v = self._field_cache.get(symbol, {}).get(field_map[level])
-                direction = self._direction_of_touch(prev, tick, v) if v is not None else "horizontal"
-                role = {"from_below": "resistance", "from_above": "support"}.get(direction, "touch")
-                cdp_touch = {"level": level, "direction": direction, "role": role}
-
         ma_prox = (f.get("ma_proximity") if isinstance(f, dict)
                    else getattr(f, "ma_proximity", None))
+
+        # re-arm:離線夠遠(或設定已失效)的抑制項解除
+        for key in [k for k in self._prox_suppressed if k[0] == active.id and k[1] == symbol]:
+            level = key[2]
+            v = self._level_value(symbol, level)
+            prox = ma_prox if level.startswith("sma_") else cdp_prox
+            if v is None or prox is None:
+                self._prox_suppressed.discard(key)   # 線值消失 / 規則改設定 → 不留殭屍抑制
+                continue
+            rearm = self._rearm_ticks_of(prox)
+            if rearm == 0 or abs(tick.price - v) >= rearm * tick_size(v):
+                self._prox_suppressed.discard(key)
+
+        skip = {k[2] for k in self._prox_suppressed
+                if k[0] == active.id and k[1] == symbol}
+
+        cdp_touch: dict | None = None
+        if cdp_prox is not None:
+            ok, level = self._eval_cdp_proximity(symbol, tick, cdp_prox, skip=skip)
+            if ok and level is not None:
+                v = self._level_value(symbol, level)
+                direction = self._direction_of_touch(prev, tick, v) if v is not None else "horizontal"
+                if direction != "horizontal":
+                    role = {"from_below": "resistance", "from_above": "support"}[direction]
+                    cdp_touch = {"level": level, "direction": direction, "role": role}
+                    if self._rearm_ticks_of(cdp_prox) > 0:
+                        self._prox_suppressed.add((active.id, symbol, level))
+
         ma_touch: dict | None = None
         if ma_prox is not None:
-            ok, level = self._eval_ma_proximity(symbol, tick, ma_prox)
+            ok, level = self._eval_ma_proximity(symbol, tick, ma_prox, skip=skip)
             if ok and level is not None:
                 v = self._field_cache.get(symbol, {}).get(level)
                 direction = self._direction_of_touch(prev, tick, v) if v is not None else "horizontal"
-                role = {"from_below": "resistance", "from_above": "support"}.get(direction, "touch")
-                ma_touch = {"level": level, "direction": direction, "role": role}
+                if direction != "horizontal":
+                    role = {"from_below": "resistance", "from_above": "support"}[direction]
+                    ma_touch = {"level": level, "direction": direction, "role": role}
+                    if self._rearm_ticks_of(ma_prox) > 0:
+                        self._prox_suppressed.add((active.id, symbol, level))
 
         return cdp_touch, ma_touch
 
@@ -591,10 +621,25 @@ class SignalEngine:
             return "from_above"
         return "horizontal"
 
-    def _eval_cdp_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
+    @staticmethod
+    def _rearm_ticks_of(prox) -> int:
+        """filter_json 是 raw dict 或 pydantic 模型皆可;缺欄位(舊設定檔)用預設。"""
+        v = prox.get("rearm_ticks") if isinstance(prox, dict) else getattr(prox, "rearm_ticks", None)
+        return REARM_TICKS_DEFAULT if v is None else int(v)
+
+    def _level_value(self, symbol: str, level: str) -> float | None:
+        """level 名 → field_cache 值。CDP 線名要映射,sma_* 即 cache key。"""
+        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+        return self._field_cache.get(symbol, {}).get(field_map.get(level, level))
+
+    def _eval_cdp_proximity(
+        self, symbol: str, tick: Tick, prox,
+        skip: frozenset[str] | set[str] = frozenset(),
+    ) -> tuple[bool, str | None]:
         """tick.price 落在所選 CDP 線的 ±N tick 範圍內 → (True, 哪條觸發)。
 
         prox 可以是 dict(從 filter_json JSON 讀)或 Pydantic CdpProximityCondition。
+        skip:受 re-arm 抑制的 level,跳過不評(其他 level 照常可命中)。
         """
         from services.cdp import tick_size
 
@@ -608,6 +653,8 @@ class SignalEngine:
             "nl": "cdp_nl", "al": "cdp_al",
         }
         for level in levels:
+            if level in skip:
+                continue
             v = cache.get(field_map[level])
             if v is None:
                 continue
@@ -616,10 +663,14 @@ class SignalEngine:
                 return True, level
         return False, None
 
-    def _eval_ma_proximity(self, symbol: str, tick: Tick, prox) -> tuple[bool, str | None]:
+    def _eval_ma_proximity(
+        self, symbol: str, tick: Tick, prox,
+        skip: frozenset[str] | set[str] = frozenset(),
+    ) -> tuple[bool, str | None]:
         """tick.price 落在所選 MA 線的 ±N tick 範圍內 → (True, 哪條觸發)。
 
         cache 內 sma 是 raw 算術平均,常落在非合法 tick;tolerance=0 實務上很難命中。
+        skip:受 re-arm 抑制的 level,跳過不評。
         """
         from services.cdp import tick_size
 
@@ -629,6 +680,8 @@ class SignalEngine:
                      else prox.tolerance_ticks)
 
         for level in levels:  # "sma_5" or "sma_20"
+            if level in skip:
+                continue
             v = cache.get(level)
             if v is None:
                 continue
