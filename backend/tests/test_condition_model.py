@@ -39,6 +39,31 @@ def test_ma_proximity_rejects_invalid_level():
         MAProximityCondition(levels=["sma_60"])  # type: ignore
 
 
+def test_cdp_proximity_rearm_defaults_to_5():
+    from models.condition import CdpProximityCondition
+    c = CdpProximityCondition()
+    assert c.rearm_ticks == 5
+
+
+def test_cdp_proximity_rearm_must_exceed_tolerance():
+    from models.condition import CdpProximityCondition
+    with pytest.raises(ValidationError):
+        CdpProximityCondition(tolerance_ticks=5, rearm_ticks=3)
+
+
+def test_cdp_proximity_rearm_zero_disables_regardless_of_tolerance():
+    from models.condition import CdpProximityCondition
+    c = CdpProximityCondition(tolerance_ticks=5, rearm_ticks=0)
+    assert c.rearm_ticks == 0
+
+
+def test_ma_proximity_rearm_same_rules():
+    from models.condition import MAProximityCondition
+    assert MAProximityCondition().rearm_ticks == 5
+    with pytest.raises(ValidationError):
+        MAProximityCondition(tolerance_ticks=5, rearm_ticks=5)  # 必須「大於」
+
+
 def test_active_filter_schema_bumps_to_5():
     from models.condition import ActiveFilter
     f = ActiveFilter(conditions=[Condition(field="close", operator="gt", value=100)])
