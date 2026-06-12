@@ -37,6 +37,9 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
   useEffect(() => {
     setLast(null);
     setHint(null);
+    // 在前一檔手動捲動過會把跟隨置中關掉;新標的價位帶不同,沿用舊捲動位置
+    // 會停在離現價很遠的空白區,看起來像整個階梯凍住
+    setFollowCenter(true);
     if (!selected) return;
     return subscribeTicks((t) => { if (t.symbol === selected) setLast(t.price); });
   }, [selected]);
@@ -44,6 +47,17 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
   // 自動解除:換標的 / 連線斷
   useEffect(() => { setArm((s) => reduceArm(s, { type: "symbol_changed" })); }, [selected]);
   useEffect(() => { if (!ready) setArm((s) => reduceArm(s, { type: "conn_lost" })); }, [ready]);
+
+  // Esc = 鍵盤解除:滑鼠停在階梯上忙的時候,鍵盤是最快的降風險出口。
+  // 只在武裝期間掛 window 監聽;與全刪確認彈窗的 Esc 同向(都是降風險),不互斥
+  useEffect(() => {
+    if (!arm.armed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setArm((s) => reduceArm(s, { type: "disarm" }));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [arm.armed]);
 
   // 閒置 5 分鐘解除:任何互動 reset
   const touchIdle = () => {
@@ -201,6 +215,15 @@ export function FlashPanel({ selected, ready, env, orders, pos }: Props) {
           </div>
         ))}
       </div>
+
+      {/* 解除武裝常駐列:武裝是唯一繞過確認彈窗的狀態,出口要比入口顯眼好按 —
+          全寬大目標、緊鄰點價的滑鼠動線;未武裝時不渲染 */}
+      {arm.armed && (
+        <button onClick={() => setArm((s) => reduceArm(s, { type: "disarm" }))}
+          className="w-full py-2.5 mt-1.5 text-sm font-bold rounded bg-bull text-bg flex-shrink-0">
+          ⚠ 解除武裝(Esc)
+        </button>
+      )}
 
       {/* 張數快捷 + stepper */}
       <div className="flex gap-1 mt-2 items-center flex-shrink-0">
