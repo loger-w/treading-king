@@ -148,6 +148,17 @@ class ConfigStore:
             return True
         return False
 
+    def reorder_groups(self, ids: list[str]) -> bool:
+        """以 ids 的順序重寫所有 user 群組的 sort_order(0..n-1)。集合不符拒絕。"""
+        user_groups = [g for g in self._data["bookmark_groups"] if not g.get("is_system")]
+        if sorted(ids) != sorted(g["id"] for g in user_groups):
+            return False
+        order = {gid: i for i, gid in enumerate(ids)}
+        for g in user_groups:
+            g["sort_order"] = order[g["id"]]
+        self._persist()
+        return True
+
     # ---- bookmarks: items ----
     def list_items(self, group_id: str) -> list[dict]:
         return [it for it in self._data["watchlist_items"] if it["group_id"] == group_id]
@@ -162,8 +173,13 @@ class ConfigStore:
         for it in self._data["watchlist_items"]:
             if it["group_id"] == group_id and it["symbol"] == symbol:
                 return it  # 同 (group, symbol) 不重複
+        # position 越小越上面;新加入排最上 → 取現有最小值 - 1。
+        # 舊資料可能沒有 position(讀取端 fallback added_at),這裡只看有 position 的。
+        positions = [it["position"] for it in self._data["watchlist_items"]
+                     if it["group_id"] == group_id and it.get("position") is not None]
         it = {"id": _new_id(), "group_id": group_id, "symbol": symbol,
-              "added_at": _now_iso(), "note": note}
+              "added_at": _now_iso(), "note": note,
+              "position": (min(positions) - 1) if positions else 0}
         self._data["watchlist_items"].append(it)
         self._persist()
         return it
@@ -178,6 +194,21 @@ class ConfigStore:
             self._persist()
             return True
         return False
+
+    def reorder_items(self, group_id: str, symbols: list[str]) -> bool:
+        """以 symbols 的順序重寫該群組所有 position(0..n-1)。
+
+        symbols 集合必須與群組現況完全一致 — 否則拒絕(回 False),
+        避免過期的 reorder(另一視窗剛增刪)默默蓋掉資料。
+        """
+        items = [it for it in self._data["watchlist_items"] if it["group_id"] == group_id]
+        if sorted(symbols) != sorted(it["symbol"] for it in items):
+            return False
+        pos = {s: i for i, s in enumerate(symbols)}
+        for it in items:
+            it["position"] = pos[it["symbol"]]
+        self._persist()
+        return True
 
     # ---- active_signals ----
     def list_active_signals(self, enabled_only: bool = False) -> list[dict]:
