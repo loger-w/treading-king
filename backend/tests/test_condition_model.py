@@ -90,7 +90,7 @@ def test_active_signal_out_loads_row_with_high_tolerance():
 def test_active_filter_schema_bumps_to_5():
     from models.condition import ActiveFilter
     f = ActiveFilter(conditions=[Condition(field="close", operator="gt", value=100)])
-    assert f.schema_version == 5  # 4→5:加 strategy discriminated union
+    assert f.schema_version == 6  # 5→6:加 cdp_breakout_confirm strategy
     assert f.ma_proximity is None
 
 
