@@ -482,6 +482,68 @@ class SignalEngine:
                 return {"level": level, "direction": "from_above", "role": "support"}
         return None
 
+    def _eval_breakout_confirm(
+        self, strat: dict, active: ActiveSignalOut, symbol: str,
+        candle: MinuteCandle, now: float,
+    ) -> dict | None:
+        """連續 N 根 1 分 K 收在 CDP 線正確側 → 回 cdp_touch dict。
+
+        direction="both" 時 above/below 分開追蹤:per (rule, symbol, level, dir) 各一計數。
+        """
+        from services.cdp import tick_size
+
+        cache = self._field_cache.get(symbol, {})
+        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+        confirm_bars = strat["confirm_bars"]
+        margin_ticks = strat.get("margin_ticks", 0)
+        min_vr = strat.get("min_volume_ratio")
+        directions = (["above", "below"] if strat["direction"] == "both"
+                      else [strat["direction"]])
+
+        result = None
+        for level in strat["levels"]:
+            v = cache.get(field_map.get(level, level))
+            if v is None:
+                continue
+            margin = margin_ticks * tick_size(v)
+            for d in directions:
+                key = (active.id, symbol, f"{level}:{d}")
+                on_correct_side = (candle.close > v + margin if d == "above"
+                                   else candle.close < v - margin)
+                if on_correct_side:
+                    count = self._breakout_confirm_count.get(key, 0)
+                    if count == 0 and min_vr is not None:
+                        vr = self._candle_volume_ratio(symbol, candle, now)
+                        if vr < min_vr:
+                            continue
+                    count += 1
+                    self._breakout_confirm_count[key] = count
+                    if count >= confirm_bars:
+                        self._breakout_confirm_count[key] = 0
+                        touch_dir = "from_below" if d == "above" else "from_above"
+                        self._breakout_confirmed.add((symbol, level, d))
+                        if result is None:
+                            result = {
+                                "level": level,
+                                "direction": touch_dir,
+                                "role": "breakout",
+                                "confirm_bars": count,
+                            }
+                else:
+                    self._breakout_confirm_count[(active.id, symbol, f"{level}:{d}")] = 0
+        return result
+
+    def _candle_volume_ratio(self, symbol: str, candle: MinuteCandle, now: float) -> float:
+        """該 candle 的 volume / 當日每分鐘平均成交量。"""
+        day_vol = self._day_volume.get(symbol, 0)
+        if day_vol <= 0:
+            return 0.0
+        elapsed = self._minutes_since_open(now)
+        if elapsed < 1:
+            return 0.0
+        avg_per_min = day_vol / elapsed
+        return candle.volume / avg_per_min if avg_per_min > 0 else 0.0
+
     def _update_candle(
         self, symbol: str, tick: Tick, now: float, is_new_tick: bool,
     ) -> MinuteCandle | None:
