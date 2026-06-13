@@ -5,7 +5,7 @@ from models.condition import ActiveFilter, ActiveSignalOut, BreakoutConfirmStrat
 from services.signal_engine import MinuteCandle, SignalEngine
 
 TZ = timezone(timedelta(hours=8))
-MORNING = datetime(2026, 6, 13, 9, 20, tzinfo=TZ).timestamp()
+MORNING = datetime(2026, 6, 15, 9, 20, tzinfo=TZ).timestamp()  # 週一
 
 NH = 100.0
 
@@ -175,3 +175,39 @@ def test_volume_ratio_none_skips_check():
     strat = engine._strategy_of(active)
     r = engine._eval_breakout_confirm(strat, active, "2330", _candle(101.0, minute=0), 0)
     assert r is not None
+
+
+# ---------- 整合測試 ----------
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+from services.ring_buffer import Tick
+
+
+@pytest.mark.asyncio
+async def test_evaluate_integration_fires_on_candle_settlement():
+    """整合：tick 跨分鐘 → candle 結算 → evaluator → fanout。"""
+    engine = _engine()
+    active = _active(confirm_bars=1, direction="above")
+    engine._active = [active]
+    fired = []
+
+    async def fake_broadcast(payload):
+        fired.append(payload)
+
+    min0 = MORNING
+    min1 = MORNING + 60
+
+    with patch("services.signal_engine.time.time", return_value=min0), \
+         patch("services.signal_engine.get_broadcaster") as mock_bc, \
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
+        mock_bc.return_value.broadcast = fake_broadcast
+        mock_sw.return_value = MagicMock()
+        await engine._evaluate("2330", Tick(101.0, 100, min0))
+        assert len(fired) == 0
+
+        with patch("services.signal_engine.time.time", return_value=min1):
+            await engine._evaluate("2330", Tick(102.0, 50, min1))
+        assert len(fired) == 1
+        assert fired[0]["data"]["cdp_touch"]["role"] == "breakout"

@@ -290,19 +290,16 @@ class SignalEngine:
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
-        if not self._in_trading_session(time.time()):
-            # 非正盤時段(試撮 / 盤後 / 隔夜 / 週末)直接 return — 不評估 / 不累積量 /
-            # 不更新 prev_tick。用 wall-clock(time.time)而非 tick.time,
-            # heartbeat path 拿到收盤 stale tick 時也能正確擋下。
+        now = time.time()
+        is_new_tick = tick is not self._prev_tick.get(symbol)
+        settled = self._update_candle(symbol, tick, now, is_new_tick)
+
+        if not self._in_trading_session(now):
             return
 
-        now = time.time()
         if self._limit_up_active:
             self._update_limit_up_state(symbol, tick, now)
-        # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染。
-        # heartbeat 每秒重餵 ring_buffer.latest 的同一個 Tick 物件 — 用 identity
-        # 去重,同一筆成交只加一次,否則成交稀疏的股票 day_volume 會膨脹數倍
-        if tick is not self._prev_tick.get(symbol):
+        if is_new_tick:
             self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
         prev = self._prev_tick.get(symbol)
@@ -312,7 +309,15 @@ class SignalEngine:
                     continue
 
                 strat = self._strategy_of(active)
-                if strat is not None:
+                stype = strat.get("type") if strat else None
+
+                if stype == "cdp_breakout_confirm":
+                    if settled is None:
+                        continue
+                    cdp_touch = self._eval_breakout_confirm(strat, active, symbol, settled, now)
+                    ma_touch = None
+                    ok = cdp_touch is not None
+                elif strat is not None:
                     cdp_touch = self._eval_strategy(strat, active, symbol, tick, prev, now)
                     ma_touch = None
                     ok = cdp_touch is not None
@@ -323,24 +328,17 @@ class SignalEngine:
                 if not ok:
                     continue
 
-                # 規則整體成立才消耗 armed(AND 組合裡 touch 命中但其他條件沒過時
-                # 不標記,否則第一筆合法訊號會被先前的失敗嘗試吃掉)。放在 cooldown
-                # 檢查之前 — cooldown 擋下的觸發仍要消耗,黏線時才不會等 cooldown
-                # 到期又推。strategy 類有自己的狀態機,不套 re-arm。
                 if strat is None:
                     self._mark_touch_suppressed(active, symbol, cdp_touch, ma_touch)
 
-                # cooldown 檢查 — proximity 觸發 per 價位(碰 NH 不該吞掉接著碰
-                # CDP 的訊號);strategy 觸發維持 per 股票(舊行為:漲停打開一個
-                # 冷卻窗只推一次,不因回落穿多條線而連發)
-                touch_level = "" if strat is not None else (cdp_touch or ma_touch or {}).get("level", "")
+                # breakout_confirm 用 per-level cooldown;其他 strategy 維持 per-symbol
+                touch_level = (cdp_touch or {}).get("level", "") if (stype is None or stype == "cdp_breakout_confirm") else ""
                 key = (active.id, symbol, touch_level)
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
                     continue
                 self._cooldown[key] = now
 
-                # touch_count(proximity / strategy 觸發才計次)
                 today = date.today()
                 if cdp_touch is not None:
                     count_key = (symbol, cdp_touch["level"], today)
