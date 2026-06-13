@@ -1,6 +1,11 @@
 """驗策略：CDP 突破確認（站穩）。"""
+from datetime import datetime, timedelta, timezone
+
 from models.condition import ActiveFilter, ActiveSignalOut, BreakoutConfirmStrategy
 from services.signal_engine import MinuteCandle, SignalEngine
+
+TZ = timezone(timedelta(hours=8))
+MORNING = datetime(2026, 6, 13, 9, 20, tzinfo=TZ).timestamp()
 
 NH = 100.0
 
@@ -123,3 +128,50 @@ def test_daily_reset_clears_breakout_state():
     engine._reset_daily_strategy_state()
     assert len(engine._breakout_confirm_count) == 0
     assert len(engine._breakout_confirmed) == 0
+
+
+# ---------- 量能確認 ----------
+
+def test_volume_ratio_blocks_first_bar():
+    engine = _engine()
+    engine._day_volume["2330"] = 10000
+    active = _active(confirm_bars=1, direction="above", min_volume_ratio=2.0)
+    strat = engine._strategy_of(active)
+    # 09:20 = 開盤後 20 分, avg=500/min, candle vol=800 → ratio=1.6 < 2.0
+    r = engine._eval_breakout_confirm(strat, active, "2330",
+                                       _candle(101.0, volume=800, minute=0), MORNING)
+    assert r is None
+
+
+def test_volume_ratio_allows_first_bar():
+    engine = _engine()
+    engine._day_volume["2330"] = 10000
+    active = _active(confirm_bars=1, direction="above", min_volume_ratio=2.0)
+    strat = engine._strategy_of(active)
+    # 09:20 = 開盤後 20 分, avg=500/min, candle vol=1200 → ratio=2.4 ≥ 2.0
+    r = engine._eval_breakout_confirm(strat, active, "2330",
+                                       _candle(101.0, volume=1200, minute=0), MORNING)
+    assert r is not None
+
+
+def test_volume_not_checked_on_subsequent_bars():
+    engine = _engine()
+    engine._day_volume["2330"] = 10000
+    active = _active(confirm_bars=2, direction="above", min_volume_ratio=2.0)
+    strat = engine._strategy_of(active)
+    # 首根: ratio OK
+    engine._eval_breakout_confirm(strat, active, "2330",
+                                   _candle(101.0, volume=1200, minute=0), MORNING)
+    # 第 2 根: volume 低(ratio=0.2),但不檢查 → 仍觸發
+    r = engine._eval_breakout_confirm(strat, active, "2330",
+                                       _candle(102.0, volume=100, minute=1), MORNING + 60)
+    assert r is not None
+
+
+def test_volume_ratio_none_skips_check():
+    engine = _engine()
+    engine._day_volume["2330"] = 0
+    active = _active(confirm_bars=1, direction="above", min_volume_ratio=None)
+    strat = engine._strategy_of(active)
+    r = engine._eval_breakout_confirm(strat, active, "2330", _candle(101.0, minute=0), 0)
+    assert r is not None
