@@ -290,11 +290,17 @@ class SignalEngine:
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
+        # wall-clock 而非 tick.time — heartbeat path 拿到收盤 stale tick 時也能正確擋下
         now = time.time()
+        in_session = self._in_trading_session(now)
+        # heartbeat 每秒重餵 ring_buffer.latest 的同一個 Tick 物件 — identity 去重,
+        # 同一筆成交只加一次,否則成交稀疏的股票 day_volume / candle volume 會膨脹
         is_new_tick = tick is not self._prev_tick.get(symbol)
-        settled = self._update_candle(symbol, tick, now, is_new_tick)
+        # candle 聚合在 gate 之前:13:30 後 heartbeat 仍可結算最後一根,但只有
+        # in_session 才建立/更新 candle — 試撮 indicative tick 不建 candle
+        settled = self._update_candle(symbol, tick, now, is_new_tick, in_session)
 
-        if not self._in_trading_session(now):
+        if not in_session:
             return
 
         if self._limit_up_active:
@@ -328,26 +334,36 @@ class SignalEngine:
                 if not ok:
                     continue
 
+                # 規則整體成立才消耗 armed;strategy 類有自己的狀態機,不套 re-arm
                 if strat is None:
                     self._mark_touch_suppressed(active, symbol, cdp_touch, ma_touch)
 
-                # breakout_confirm 用 per-level cooldown;其他 strategy 維持 per-symbol
-                touch_level = (cdp_touch or {}).get("level", "") if (stype is None or stype == "cdp_breakout_confirm") else ""
+                # cooldown — proximity 和 breakout_confirm 用 per 價位(碰 NH
+                # 不該吞掉碰 CDP);其他 strategy 維持 per 股票
+                if stype is None:
+                    touch_level = (cdp_touch or ma_touch or {}).get("level", "")
+                elif stype == "cdp_breakout_confirm":
+                    touch_level = (cdp_touch or {}).get("level", "")
+                else:
+                    touch_level = ""
                 key = (active.id, symbol, touch_level)
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
                     continue
                 self._cooldown[key] = now
 
-                today = date.today()
-                if cdp_touch is not None:
-                    count_key = (symbol, cdp_touch["level"], today)
-                    self._cdp_touch_count[count_key] = self._cdp_touch_count.get(count_key, 0) + 1
-                    cdp_touch["touch_index"] = self._cdp_touch_count[count_key]
-                if ma_touch is not None:
-                    count_key = (symbol, ma_touch["level"], today)
-                    self._ma_touch_count[count_key] = self._ma_touch_count.get(count_key, 0) + 1
-                    ma_touch["touch_index"] = self._ma_touch_count[count_key]
+                # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
+                # 不計入碰線觸碰次數(避免 touch_index 混計)
+                if stype != "cdp_breakout_confirm":
+                    today = date.today()
+                    if cdp_touch is not None:
+                        count_key = (symbol, cdp_touch["level"], today)
+                        self._cdp_touch_count[count_key] = self._cdp_touch_count.get(count_key, 0) + 1
+                        cdp_touch["touch_index"] = self._cdp_touch_count[count_key]
+                    if ma_touch is not None:
+                        count_key = (symbol, ma_touch["level"], today)
+                        self._ma_touch_count[count_key] = self._ma_touch_count.get(count_key, 0) + 1
+                        ma_touch["touch_index"] = self._ma_touch_count[count_key]
 
                 await self._fanout(active, symbol, tick, cdp_touch, ma_touch)
         finally:
@@ -528,7 +544,7 @@ class SignalEngine:
                                 "confirm_bars": count,
                             }
                 else:
-                    self._breakout_confirm_count[(active.id, symbol, f"{level}:{d}")] = 0
+                    self._breakout_confirm_count[key] = 0
         return result
 
     def _candle_volume_ratio(self, symbol: str, candle: MinuteCandle, now: float) -> float:
@@ -543,15 +559,20 @@ class SignalEngine:
         return candle.volume / avg_per_min if avg_per_min > 0 else 0.0
 
     def _update_candle(
-        self, symbol: str, tick: Tick, now: float, is_new_tick: bool,
+        self, symbol: str, tick: Tick, now: float,
+        is_new_tick: bool, in_session: bool = True,
     ) -> MinuteCandle | None:
-        """維護 per-symbol 1 分鐘 candle;跨分鐘時回傳結算後的前一根。"""
+        """維護 per-symbol 1 分鐘 candle;跨分鐘時回傳結算後的前一根。
+
+        in_session=False 時只做結算(wall-clock 推進 → 回傳 settled),
+        不建立/更新 candle — 試撮 indicative tick 不進 candle。
+        """
         tick_minute = int(tick.time // 60)
         wall_minute = int(now // 60)
         candle = self._minute_candle.get(symbol)
 
         if candle is None:
-            if not is_new_tick:
+            if not is_new_tick or not in_session:
                 return None
             self._minute_candle[symbol] = MinuteCandle(
                 minute=tick_minute, open=tick.price, high=tick.price,
@@ -561,10 +582,13 @@ class SignalEngine:
 
         if is_new_tick and tick_minute > candle.minute:
             settled = candle
-            self._minute_candle[symbol] = MinuteCandle(
-                minute=tick_minute, open=tick.price, high=tick.price,
-                low=tick.price, close=tick.price, volume=tick.size,
-            )
+            if in_session:
+                self._minute_candle[symbol] = MinuteCandle(
+                    minute=tick_minute, open=tick.price, high=tick.price,
+                    low=tick.price, close=tick.price, volume=tick.size,
+                )
+            else:
+                del self._minute_candle[symbol]
             return settled
 
         if (not is_new_tick) and wall_minute > candle.minute:

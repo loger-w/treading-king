@@ -312,6 +312,8 @@ BREAKOUT_CONFIRM_BARS = [1, 2, 3, 5]
 BREAKOUT_MARGINS = [0, 1, 2]
 BREAKOUT_DETAIL_CB = 2
 BREAKOUT_DETAIL_MG = 0
+assert BREAKOUT_DETAIL_CB in BREAKOUT_CONFIRM_BARS
+assert BREAKOUT_DETAIL_MG in BREAKOUT_MARGINS
 
 
 async def run_breakout(days, day_syms, daily, minute, rearm: int):

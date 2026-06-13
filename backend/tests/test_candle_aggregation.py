@@ -78,3 +78,21 @@ def test_daily_reset_clears_candle():
     assert "2330" in engine._minute_candle
     engine._reset_daily_strategy_state()
     assert "2330" not in engine._minute_candle
+
+
+def test_out_of_session_tick_no_candle_created():
+    engine = SignalEngine()
+    tick = Tick(price=100.0, size=10, time=MIN0)
+    settled = engine._update_candle("2330", tick, MIN0, is_new_tick=True, in_session=False)
+    assert settled is None
+    assert "2330" not in engine._minute_candle
+
+
+def test_out_of_session_tick_settles_existing_candle():
+    engine = SignalEngine()
+    engine._update_candle("2330", Tick(100.0, 10, MIN0), MIN0, True, in_session=True)
+    tick2 = Tick(price=105.0, size=5, time=MIN1)
+    settled = engine._update_candle("2330", tick2, MIN1, is_new_tick=True, in_session=False)
+    assert settled is not None
+    assert settled.close == 100.0
+    assert "2330" not in engine._minute_candle
