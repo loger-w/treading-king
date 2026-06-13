@@ -87,7 +87,7 @@ class Filter(BaseModel):
 # 即時訊號 DSL — Filter 之上加時窗條件
 # ---------------------------------------------------------------------------
 
-WindowConditionType = Literal["price_change_pct", "volume_burst", "trade_count"]
+WindowConditionType = Literal["price_change_pct", "volume_burst", "volume_ratio", "trade_count"]
 WindowSeconds = Literal[60, 180, 300, 600, 1800]
 
 
@@ -96,7 +96,8 @@ class WindowCondition(BaseModel):
 
     type:
       - price_change_pct: (latest_price / window_start_price - 1) * 100
-      - volume_burst: 窗口累積成交量 / 過去 N 個窗口平均成交量
+      - volume_burst: 窗口累積成交量(絕對值比較)
+      - volume_ratio: 窗口累積成交量 / 當日每分鐘平均成交量(倍數比較)
       - trade_count: 窗口內成交筆數
     """
 
@@ -104,6 +105,10 @@ class WindowCondition(BaseModel):
     window_seconds: WindowSeconds
     operator: Literal["gt", "gte", "lt", "lte"]
     value: float
+    min_elapsed_minutes: int = Field(
+        default=0, ge=0, le=60,
+        description="開盤後至少經過幾分鐘才啟用（僅 volume_ratio 有效，避免早盤均量不穩）",
+    )
 
 
 # 觸發後價格須離線幾個 tick 才重新武裝(0 = 關閉 re-arm)。
@@ -188,8 +193,21 @@ class BreakoutRetestStrategy(BaseModel):
     tolerance_ticks: int = Field(default=1, ge=0, le=10)
 
 
+class BreakoutConfirmStrategy(BaseModel):
+    """策略：連續 N 根 1 分 K 收在 CDP 線之上/之下 = 突破確認。"""
+
+    type: Literal["cdp_breakout_confirm"]
+    levels: list[CdpLevel] = Field(
+        default_factory=lambda: ["ah", "nh", "nl", "al"], min_length=1,
+    )
+    direction: Literal["above", "below", "both"] = "both"
+    confirm_bars: int = Field(default=2, ge=1, le=10)
+    margin_ticks: int = Field(default=0, ge=0, le=5)
+    min_volume_ratio: float | None = Field(default=None, ge=0.5, le=20.0)
+
+
 StrategyConfig = Annotated[
-    LimitUpOpenTouchStrategy | BreakoutRetestStrategy,
+    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy,
     Field(discriminator="type"),
 ]
 
@@ -201,7 +219,7 @@ class ActiveFilter(Filter):
     ma_proximity / strategy 任一非空。
     """
 
-    schema_version: int = 5  # 4→5,加 strategy(preset 策略)
+    schema_version: int = 6  # 5→6,加 cdp_breakout_confirm strategy
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
     ma_proximity:  MAProximityCondition  | None = None

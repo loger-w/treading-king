@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -38,6 +39,16 @@ STALE_TICK_MAX_AGE_S = 900
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MARKET_OPEN  = (9, 0)
 MARKET_CLOSE = (13, 30)
+
+
+@dataclass
+class MinuteCandle:
+    minute: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
 
 
 class SignalEngine:
@@ -78,6 +89,9 @@ class SignalEngine:
         self._last_lag_ms = 0.0
         self._lag_violation_started: float | None = None
         self._degraded = False
+        self._minute_candle: dict[str, MinuteCandle] = {}
+        self._breakout_confirm_count: dict[tuple[str, str, str], int] = {}
+        self._breakout_confirmed: set[tuple[str, str, str]] = set()
 
     # ---------- 公開 API ----------
 
@@ -276,19 +290,22 @@ class SignalEngine:
 
     async def _evaluate(self, symbol: str, tick: Tick) -> None:
         """對每個涉及這 symbol 的 active_signal 跑條件,觸發時帶 touch metadata fanout。"""
-        if not self._in_trading_session(time.time()):
-            # 非正盤時段(試撮 / 盤後 / 隔夜 / 週末)直接 return — 不評估 / 不累積量 /
-            # 不更新 prev_tick。用 wall-clock(time.time)而非 tick.time,
-            # heartbeat path 拿到收盤 stale tick 時也能正確擋下。
+        # wall-clock 而非 tick.time — heartbeat path 拿到收盤 stale tick 時也能正確擋下
+        now = time.time()
+        in_session = self._in_trading_session(now)
+        # heartbeat 每秒重餵 ring_buffer.latest 的同一個 Tick 物件 — identity 去重,
+        # 同一筆成交只加一次,否則成交稀疏的股票 day_volume / candle volume 會膨脹
+        is_new_tick = tick is not self._prev_tick.get(symbol)
+        # candle 聚合在 gate 之前:13:30 後 heartbeat 仍可結算最後一根,但只有
+        # in_session 才建立/更新 candle — 試撮 indicative tick 不建 candle
+        settled = self._update_candle(symbol, tick, now, is_new_tick, in_session)
+
+        if not in_session:
             return
 
-        now = time.time()
         if self._limit_up_active:
             self._update_limit_up_state(symbol, tick, now)
-        # 正盤內才累積今日總量,避免試撮 / 盤後 stale tick 污染。
-        # heartbeat 每秒重餵 ring_buffer.latest 的同一個 Tick 物件 — 用 identity
-        # 去重,同一筆成交只加一次,否則成交稀疏的股票 day_volume 會膨脹數倍
-        if tick is not self._prev_tick.get(symbol):
+        if is_new_tick:
             self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
         prev = self._prev_tick.get(symbol)
@@ -298,7 +315,15 @@ class SignalEngine:
                     continue
 
                 strat = self._strategy_of(active)
-                if strat is not None:
+                stype = strat.get("type") if strat else None
+
+                if stype == "cdp_breakout_confirm":
+                    if settled is None:
+                        continue
+                    cdp_touch = self._eval_breakout_confirm(strat, active, symbol, settled, now)
+                    ma_touch = None
+                    ok = cdp_touch is not None
+                elif strat is not None:
                     cdp_touch = self._eval_strategy(strat, active, symbol, tick, prev, now)
                     ma_touch = None
                     ok = cdp_touch is not None
@@ -309,33 +334,36 @@ class SignalEngine:
                 if not ok:
                     continue
 
-                # 規則整體成立才消耗 armed(AND 組合裡 touch 命中但其他條件沒過時
-                # 不標記,否則第一筆合法訊號會被先前的失敗嘗試吃掉)。放在 cooldown
-                # 檢查之前 — cooldown 擋下的觸發仍要消耗,黏線時才不會等 cooldown
-                # 到期又推。strategy 類有自己的狀態機,不套 re-arm。
+                # 規則整體成立才消耗 armed;strategy 類有自己的狀態機,不套 re-arm
                 if strat is None:
                     self._mark_touch_suppressed(active, symbol, cdp_touch, ma_touch)
 
-                # cooldown 檢查 — proximity 觸發 per 價位(碰 NH 不該吞掉接著碰
-                # CDP 的訊號);strategy 觸發維持 per 股票(舊行為:漲停打開一個
-                # 冷卻窗只推一次,不因回落穿多條線而連發)
-                touch_level = "" if strat is not None else (cdp_touch or ma_touch or {}).get("level", "")
+                # cooldown — proximity 和 breakout_confirm 用 per 價位(碰 NH
+                # 不該吞掉碰 CDP);其他 strategy 維持 per 股票
+                if stype is None:
+                    touch_level = (cdp_touch or ma_touch or {}).get("level", "")
+                elif stype == "cdp_breakout_confirm":
+                    touch_level = (cdp_touch or {}).get("level", "")
+                else:
+                    touch_level = ""
                 key = (active.id, symbol, touch_level)
                 last_ts = self._cooldown.get(key, 0)
                 if now - last_ts < active.cooldown_seconds:
                     continue
                 self._cooldown[key] = now
 
-                # touch_count(proximity / strategy 觸發才計次)
-                today = date.today()
-                if cdp_touch is not None:
-                    count_key = (symbol, cdp_touch["level"], today)
-                    self._cdp_touch_count[count_key] = self._cdp_touch_count.get(count_key, 0) + 1
-                    cdp_touch["touch_index"] = self._cdp_touch_count[count_key]
-                if ma_touch is not None:
-                    count_key = (symbol, ma_touch["level"], today)
-                    self._ma_touch_count[count_key] = self._ma_touch_count.get(count_key, 0) + 1
-                    ma_touch["touch_index"] = self._ma_touch_count[count_key]
+                # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
+                # 不計入碰線觸碰次數(避免 touch_index 混計)
+                if stype != "cdp_breakout_confirm":
+                    today = date.today()
+                    if cdp_touch is not None:
+                        count_key = (symbol, cdp_touch["level"], today)
+                        self._cdp_touch_count[count_key] = self._cdp_touch_count.get(count_key, 0) + 1
+                        cdp_touch["touch_index"] = self._cdp_touch_count[count_key]
+                    if ma_touch is not None:
+                        count_key = (symbol, ma_touch["level"], today)
+                        self._ma_touch_count[count_key] = self._ma_touch_count.get(count_key, 0) + 1
+                        ma_touch["touch_index"] = self._ma_touch_count[count_key]
 
                 await self._fanout(active, symbol, tick, cdp_touch, ma_touch)
         finally:
@@ -468,6 +496,113 @@ class SignalEngine:
                 return {"level": level, "direction": "from_above", "role": "support"}
         return None
 
+    def _eval_breakout_confirm(
+        self, strat: dict, active: ActiveSignalOut, symbol: str,
+        candle: MinuteCandle, now: float,
+    ) -> dict | None:
+        """連續 N 根 1 分 K 收在 CDP 線正確側 → 回 cdp_touch dict。
+
+        direction="both" 時 above/below 分開追蹤:per (rule, symbol, level, dir) 各一計數。
+        """
+        from services.cdp import tick_size
+
+        cache = self._field_cache.get(symbol, {})
+        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+        confirm_bars = strat["confirm_bars"]
+        margin_ticks = strat.get("margin_ticks", 0)
+        min_vr = strat.get("min_volume_ratio")
+        directions = (["above", "below"] if strat["direction"] == "both"
+                      else [strat["direction"]])
+
+        result = None
+        for level in strat["levels"]:
+            v = cache.get(field_map.get(level, level))
+            if v is None:
+                continue
+            margin = margin_ticks * tick_size(v)
+            for d in directions:
+                key = (active.id, symbol, f"{level}:{d}")
+                on_correct_side = (candle.close > v + margin if d == "above"
+                                   else candle.close < v - margin)
+                if on_correct_side:
+                    count = self._breakout_confirm_count.get(key, 0)
+                    if count == 0 and min_vr is not None:
+                        vr = self._candle_volume_ratio(symbol, candle, now)
+                        if vr < min_vr:
+                            continue
+                    count += 1
+                    self._breakout_confirm_count[key] = count
+                    if count >= confirm_bars:
+                        self._breakout_confirm_count[key] = 0
+                        touch_dir = "from_below" if d == "above" else "from_above"
+                        self._breakout_confirmed.add((symbol, level, d))
+                        if result is None:
+                            result = {
+                                "level": level,
+                                "direction": touch_dir,
+                                "role": "breakout",
+                                "confirm_bars": count,
+                            }
+                else:
+                    self._breakout_confirm_count[key] = 0
+        return result
+
+    def _candle_volume_ratio(self, symbol: str, candle: MinuteCandle, now: float) -> float:
+        """該 candle 的 volume / 當日每分鐘平均成交量。"""
+        day_vol = self._day_volume.get(symbol, 0)
+        if day_vol <= 0:
+            return 0.0
+        elapsed = self._minutes_since_open(now)
+        if elapsed < 1:
+            return 0.0
+        avg_per_min = day_vol / elapsed
+        return candle.volume / avg_per_min if avg_per_min > 0 else 0.0
+
+    def _update_candle(
+        self, symbol: str, tick: Tick, now: float,
+        is_new_tick: bool, in_session: bool = True,
+    ) -> MinuteCandle | None:
+        """維護 per-symbol 1 分鐘 candle;跨分鐘時回傳結算後的前一根。
+
+        in_session=False 時只做結算(wall-clock 推進 → 回傳 settled),
+        不建立/更新 candle — 試撮 indicative tick 不進 candle。
+        """
+        tick_minute = int(tick.time // 60)
+        wall_minute = int(now // 60)
+        candle = self._minute_candle.get(symbol)
+
+        if candle is None:
+            if not is_new_tick or not in_session:
+                return None
+            self._minute_candle[symbol] = MinuteCandle(
+                minute=tick_minute, open=tick.price, high=tick.price,
+                low=tick.price, close=tick.price, volume=tick.size,
+            )
+            return None
+
+        if is_new_tick and tick_minute > candle.minute:
+            settled = candle
+            if in_session:
+                self._minute_candle[symbol] = MinuteCandle(
+                    minute=tick_minute, open=tick.price, high=tick.price,
+                    low=tick.price, close=tick.price, volume=tick.size,
+                )
+            else:
+                del self._minute_candle[symbol]
+            return settled
+
+        if (not is_new_tick) and wall_minute > candle.minute:
+            settled = candle
+            del self._minute_candle[symbol]
+            return settled
+
+        if is_new_tick:
+            candle.high = max(candle.high, tick.price)
+            candle.low = min(candle.low, tick.price)
+            candle.close = tick.price
+            candle.volume += tick.size
+        return None
+
     def _reset_daily_strategy_state(self) -> None:
         """跨午夜清當日狀態。放 heartbeat daily 分支,不放 _refill_field_cache —
         後者也在規則 / 監聽編輯時被呼叫,會誤清盤中累積的鎖死 / arming / 總量狀態。"""
@@ -482,6 +617,9 @@ class SignalEngine:
         # cooldown 上限 86400s — 更舊的 key 不可能再擋觸發,留著只會累積
         cutoff = time.time() - 86400
         self._cooldown = {k: ts for k, ts in self._cooldown.items() if ts >= cutoff}
+        self._minute_candle.clear()
+        self._breakout_confirm_count.clear()
+        self._breakout_confirmed.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
 
@@ -734,7 +872,20 @@ class SignalEngine:
             return _cmp(actual, op, val)
         if wc_type == "volume_burst":
             current_vol = sum(t.size for t in ticks)
-            return _cmp(current_vol, op, val)  # 簡化：跟絕對 value 比，未來可加歷史平均
+            return _cmp(current_vol, op, val)
+        if wc_type == "volume_ratio":
+            min_el = (wc.get("min_elapsed_minutes", 0) if isinstance(wc, dict)
+                      else getattr(wc, "min_elapsed_minutes", 0))
+            elapsed = self._minutes_since_open(ticks[-1].time)
+            if elapsed < max(min_el, 1):
+                return False
+            window_vol = sum(t.size for t in ticks)
+            day_vol = self._day_volume.get(symbol, 0)
+            if day_vol <= 0:
+                return False
+            avg_per_min = day_vol / elapsed
+            ratio = window_vol / avg_per_min
+            return _cmp(ratio, op, val)
         if wc_type == "trade_count":
             return _cmp(len(ticks), op, val)
         return False
