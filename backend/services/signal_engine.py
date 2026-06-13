@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -38,6 +39,16 @@ STALE_TICK_MAX_AGE_S = 900
 TAIPEI_TZ = timezone(timedelta(hours=8))
 MARKET_OPEN  = (9, 0)
 MARKET_CLOSE = (13, 30)
+
+
+@dataclass
+class MinuteCandle:
+    minute: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
 
 
 class SignalEngine:
@@ -78,6 +89,9 @@ class SignalEngine:
         self._last_lag_ms = 0.0
         self._lag_violation_started: float | None = None
         self._degraded = False
+        self._minute_candle: dict[str, MinuteCandle] = {}
+        self._breakout_confirm_count: dict[tuple[str, str, str], int] = {}
+        self._breakout_confirmed: set[tuple[str, str, str]] = set()
 
     # ---------- 公開 API ----------
 
@@ -468,6 +482,43 @@ class SignalEngine:
                 return {"level": level, "direction": "from_above", "role": "support"}
         return None
 
+    def _update_candle(
+        self, symbol: str, tick: Tick, now: float, is_new_tick: bool,
+    ) -> MinuteCandle | None:
+        """維護 per-symbol 1 分鐘 candle;跨分鐘時回傳結算後的前一根。"""
+        tick_minute = int(tick.time // 60)
+        wall_minute = int(now // 60)
+        candle = self._minute_candle.get(symbol)
+
+        if candle is None:
+            if not is_new_tick:
+                return None
+            self._minute_candle[symbol] = MinuteCandle(
+                minute=tick_minute, open=tick.price, high=tick.price,
+                low=tick.price, close=tick.price, volume=tick.size,
+            )
+            return None
+
+        if is_new_tick and tick_minute > candle.minute:
+            settled = candle
+            self._minute_candle[symbol] = MinuteCandle(
+                minute=tick_minute, open=tick.price, high=tick.price,
+                low=tick.price, close=tick.price, volume=tick.size,
+            )
+            return settled
+
+        if (not is_new_tick) and wall_minute > candle.minute:
+            settled = candle
+            del self._minute_candle[symbol]
+            return settled
+
+        if is_new_tick:
+            candle.high = max(candle.high, tick.price)
+            candle.low = min(candle.low, tick.price)
+            candle.close = tick.price
+            candle.volume += tick.size
+        return None
+
     def _reset_daily_strategy_state(self) -> None:
         """跨午夜清當日狀態。放 heartbeat daily 分支,不放 _refill_field_cache —
         後者也在規則 / 監聽編輯時被呼叫,會誤清盤中累積的鎖死 / arming / 總量狀態。"""
@@ -482,6 +533,9 @@ class SignalEngine:
         # cooldown 上限 86400s — 更舊的 key 不可能再擋觸發,留著只會累積
         cutoff = time.time() - 86400
         self._cooldown = {k: ts for k, ts in self._cooldown.items() if ts >= cutoff}
+        self._minute_candle.clear()
+        self._breakout_confirm_count.clear()
+        self._breakout_confirmed.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
 
@@ -734,7 +788,20 @@ class SignalEngine:
             return _cmp(actual, op, val)
         if wc_type == "volume_burst":
             current_vol = sum(t.size for t in ticks)
-            return _cmp(current_vol, op, val)  # 簡化：跟絕對 value 比，未來可加歷史平均
+            return _cmp(current_vol, op, val)
+        if wc_type == "volume_ratio":
+            min_el = (wc.get("min_elapsed_minutes", 0) if isinstance(wc, dict)
+                      else getattr(wc, "min_elapsed_minutes", 0))
+            elapsed = self._minutes_since_open(ticks[-1].time)
+            if elapsed < max(min_el, 1):
+                return False
+            window_vol = sum(t.size for t in ticks)
+            day_vol = self._day_volume.get(symbol, 0)
+            if day_vol <= 0:
+                return False
+            avg_per_min = day_vol / elapsed
+            ratio = window_vol / avg_per_min
+            return _cmp(ratio, op, val)
         if wc_type == "trade_count":
             return _cmp(len(ticks), op, val)
         return False
