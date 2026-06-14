@@ -92,6 +92,8 @@ class SignalEngine:
         self._minute_candle: dict[str, MinuteCandle] = {}
         self._breakout_confirm_count: dict[tuple[str, str, str], int] = {}
         self._breakout_confirmed: set[tuple[str, str, str]] = set()
+        # 策略5 雙峰造山:per (active.id, symbol) 當日狀態機(daily reset 清)
+        self._peak_state: dict[tuple[str, str], dict] = {}
 
     # ---------- 公開 API ----------
 
@@ -547,6 +549,79 @@ class SignalEngine:
                     self._breakout_confirm_count[key] = 0
         return result
 
+    def _eval_peak_divergence(
+        self, strat: dict, active: ActiveSignalOut, symbol: str,
+        candle: MinuteCandle, now: float,
+    ) -> dict | None:
+        """策略 5:雙峰量價背離造山。每根結算 candle 餵一次,推進 per-symbol 狀態機。
+
+        主峰 = candle.high 創當日新高(可選量門檻);close 回落 pullback_pct 確認主峰封頂。
+        次峰 = 主峰後反彈高點;不過前高 + 量縮 + close 滾頭 → 觸發「做頭轉弱」、當日 latch。
+        量縮直接比 raw candle.volume(不經 _candle_volume_ratio,避開 day_volume 重啟偏誤)。
+        """
+        key = (active.id, symbol)
+        st = self._peak_state.get(key)
+        if st is None:
+            st = {"phase": "watch", "day_high": 0.0,
+                  "peak1_high": 0.0, "peak1_vol": 0, "peak1_minute": candle.minute,
+                  "trough_low": candle.low, "peak2_high": 0.0, "peak2_vol": 0}
+            self._peak_state[key] = st
+
+        pullback = strat["pullback_pct"] / 100.0
+        tol = strat["not_exceed_tolerance_pct"] / 100.0
+        shrink = strat["volume_shrink_ratio"]
+        max_gap = strat["max_gap_minutes"]
+        min_vr = strat.get("min_main_peak_volume_ratio")
+
+        is_new_high = candle.high > st["day_high"]
+        st["day_high"] = max(st["day_high"], candle.high)
+
+        if st["phase"] == "watch":
+            if is_new_high and (
+                min_vr is None or self._candle_volume_ratio(symbol, candle, now) >= min_vr
+            ):
+                st["peak1_high"] = candle.high
+                st["peak1_vol"] = candle.volume
+                st["peak1_minute"] = candle.minute
+            if st["peak1_high"] > 0 and candle.close < st["peak1_high"] * (1 - pullback):
+                st["phase"] = "pullback"
+                st["trough_low"] = candle.low
+                st["peak2_high"] = 0.0
+                st["peak2_vol"] = 0
+            return None
+
+        if st["phase"] == "pullback":
+            st["trough_low"] = min(st["trough_low"], candle.low)
+            if candle.minute - st["peak1_minute"] > max_gap:
+                st["phase"] = "watch"
+                return None
+            if candle.high > st["peak2_high"]:
+                st["peak2_high"] = candle.high
+                st["peak2_vol"] = candle.volume
+            if st["peak2_high"] >= st["peak1_high"] * (1 + tol):
+                # 過前高 → 不是做頭,次峰當新主峰、回 watch 續找
+                st["peak1_high"] = st["peak2_high"]
+                st["peak1_vol"] = st["peak2_vol"]
+                st["peak1_minute"] = candle.minute
+                st["phase"] = "watch"
+                return None
+            if st["peak2_high"] > 0 and candle.close < st["peak2_high"] * (1 - pullback):
+                if st["peak2_vol"] < st["peak1_vol"] * shrink:
+                    st["phase"] = "confirmed"
+                    return {
+                        "level": "peak", "direction": "from_above", "role": "distribution",
+                        "main_peak_price": st["peak1_high"],
+                        "second_peak_price": st["peak2_high"],
+                        "volume_shrink": (round(st["peak2_vol"] / st["peak1_vol"], 2)
+                                          if st["peak1_vol"] else 0.0),
+                    }
+                # 量沒縮:這波反彈不算背離,重置次峰候選續找
+                st["peak2_high"] = 0.0
+                st["peak2_vol"] = 0
+            return None
+
+        return None  # confirmed:當日 latch
+
     def _candle_volume_ratio(self, symbol: str, candle: MinuteCandle, now: float) -> float:
         """該 candle 的 volume / 當日每分鐘平均成交量。"""
         day_vol = self._day_volume.get(symbol, 0)
@@ -620,6 +695,7 @@ class SignalEngine:
         self._minute_candle.clear()
         self._breakout_confirm_count.clear()
         self._breakout_confirmed.clear()
+        self._peak_state.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
 
