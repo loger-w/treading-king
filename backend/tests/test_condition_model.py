@@ -87,10 +87,10 @@ def test_active_signal_out_loads_row_with_high_tolerance():
     assert out.filter_json.cdp_proximity.rearm_ticks is None
 
 
-def test_active_filter_schema_bumps_to_5():
+def test_active_filter_schema_bumps_to_7():
     from models.condition import ActiveFilter
     f = ActiveFilter(conditions=[Condition(field="close", operator="gt", value=100)])
-    assert f.schema_version == 6  # 5→6:加 cdp_breakout_confirm strategy
+    assert f.schema_version == 7  # 6→7:加 peak_divergence strategy
     assert f.ma_proximity is None
 
 

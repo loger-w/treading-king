@@ -30,7 +30,7 @@ def test_min_volume_ratio_range():
 
 def test_active_filter_with_breakout_confirm():
     f = ActiveFilter(strategy=BreakoutConfirmStrategy(type="cdp_breakout_confirm"))
-    assert f.schema_version == 6
+    assert f.schema_version == 7
     assert f.strategy.type == "cdp_breakout_confirm"
 
 
