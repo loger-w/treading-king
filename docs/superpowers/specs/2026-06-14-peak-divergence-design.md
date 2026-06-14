@@ -194,3 +194,14 @@ engine 取用:必填 `strat['pullback_pct']` hard index、可選 `strat.get('min
 3. **不過前高基準**:次峰 high vs 主峰 high(spec 取 high 找峰、close 確認回落 —— 已定,列此供 review 確認)。
 4. **`max_gap_minutes`** 上限值由回測 / 實盤定。
 5. **是否抽獨立 detector class**:目前照 codebase 慣例用 engine method + state dict;未來做組合框架時再評估抽離。
+
+## Code Review 後續追蹤(2026-06-14)
+
+實作完成後跑兩輪 review(/code-review high + requesting-code-review subagent),Assessment = Ready to merge,無 Critical/Important。下列 finding 經 receiving-code-review 技術評估,判定皆為設計層級 / spec 未規範灰區 / 既有 replay 限制(**非實作偏離 spec 的 bug**),首版不改 code,列此供盤中實機驗收後迭代:
+
+1. **roll-up 新主峰繞過 `min_main_peak_volume_ratio`**(次峰過前高轉新主峰分支):roll-up 時不重驗主峰量門檻;且量門檻擋掉的高點仍墊高 `day_high`,後續較低但帶量的真主峰可能因 `is_new_high` 失敗而鎖不上。預設 `min_vr=None` 不受影響。實機若啟用量門檻,驗收 roll-up 與 day_high desync 是否需收緊。
+2. **同根 high+close 判封頂**:開高走低長黑根(high 創當日新高、close 大幅回落)會在創高那一根自身就進 pullback(spec「該根 close 回落確認」未要求下一根)。單邊上漲日可能誤啟動做頭判斷;實機驗是否要求「下一根才確認回落」。
+3. **`peak1_vol==0` 靜默不觸發**:主峰那根 volume=0(稀疏成交分鐘 / replay 原始 K 量 0)時量縮條件恆 False,即使完美做頭也不觸發、無 log。語意上「無量主峰不算」可接受,但違反 fail-loud,實機若遇可加 guard/log。
+4. **replay 無 end-of-day flush**(`replay_day`):最後一根 candle 不結算,`run_peak`(及既有 breakout preset)系統性漏尾盤滾頭訊號 → 回測數字偏低。既有 replay 限制、跨 preset,改善宜獨立處理。
+5. **`trough_low` 預留未用**(`_peak_state` 欄位):狀態定義列 `trough_low`、pullback 階段以 `min()` 維護,但無任何觸發條件讀取(dead state)。未來「谷底深度過濾」可用,否則移除。
+6. **confirmed 當日單發 latch**:符合上文「當日 latch」明定行為(一日只觸發一次);「早盤做頭→反彈→午後二次做頭」會漏第二訊號。屬產品取捨,上線觀察是否需放寬。
