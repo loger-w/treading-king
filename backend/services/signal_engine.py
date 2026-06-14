@@ -325,6 +325,12 @@ class SignalEngine:
                     cdp_touch = self._eval_breakout_confirm(strat, active, symbol, settled, now)
                     ma_touch = None
                     ok = cdp_touch is not None
+                elif stype == "peak_divergence":
+                    if settled is None:
+                        continue
+                    cdp_touch = self._eval_peak_divergence(strat, active, symbol, settled, now)
+                    ma_touch = None
+                    ok = cdp_touch is not None
                 elif strat is not None:
                     cdp_touch = self._eval_strategy(strat, active, symbol, tick, prev, now)
                     ma_touch = None
@@ -356,7 +362,7 @@ class SignalEngine:
 
                 # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
                 # 不計入碰線觸碰次數(避免 touch_index 混計)
-                if stype != "cdp_breakout_confirm":
+                if stype not in ("cdp_breakout_confirm", "peak_divergence"):
                     today = date.today()
                     if cdp_touch is not None:
                         count_key = (symbol, cdp_touch["level"], today)

@@ -1,7 +1,11 @@
 """驗策略 5:雙峰量價背離造山(吃結算 1 分 K candle)。"""
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from models.condition import ActiveFilter, ActiveSignalOut, PeakDivergenceStrategy
+from services.ring_buffer import Tick
 from services.signal_engine import MinuteCandle, SignalEngine
 
 TZ = timezone(timedelta(hours=8))
@@ -153,3 +157,38 @@ def test_daily_reset_clears_peak_state():
     engine._peak_state[("x", "2330")] = {"phase": "pullback"}
     engine._reset_daily_strategy_state()
     assert engine._peak_state == {}
+
+
+@pytest.mark.asyncio
+async def test_evaluate_fires_double_peak_through_fanout():
+    """整合:逐 tick 跨分鐘結算 candle → _evaluate → fanout payload 帶 distribution。"""
+    engine = SignalEngine()
+    active = _active(pullback_pct=1.0, volume_shrink_ratio=0.8)
+    engine._active = [active]
+    engine._field_cache["2330"] = {}            # scope 閘門:monitor symbol 一律建 entry
+    fired = []
+
+    async def fake_broadcast(payload):
+        fired.append(payload)
+
+    # 四根 K 的代表 tick(high=close 同根則用兩筆模擬 high 後收低);這裡用每分鐘一筆收盤 tick
+    # 跨分鐘結算前一根,故需多餵一筆「下一分鐘」tick 把最後一根結算出來。
+    ticks = [
+        (110.0, 1000, 0),   # m0 建 candle
+        (108.0, 300, 1),    # m1 → 結算 m0(high=close=110/vol1000 主峰),建 m1
+        (108.0, 500, 2),    # m2 → 結算 m1(close108 主峰確認 pullback),建 m2
+        (106.0, 200, 3),    # m3 → 結算 m2(次峰 high108/vol500),建 m3
+        (104.0, 50, 4),     # m4 → 結算 m3(close106 滾頭+量縮 → 觸發)
+    ]
+    with patch("services.signal_engine.get_broadcaster") as mock_bc, \
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
+        mock_bc.return_value.broadcast = fake_broadcast
+        mock_sw.return_value = MagicMock()
+        for price, size, minute in ticks:
+            ts = MORNING + minute * 60
+            with patch("services.signal_engine.time.time", return_value=ts):
+                await engine._evaluate("2330", Tick(price=price, size=size, time=ts))
+
+    assert len(fired) == 1
+    assert fired[0]["data"]["cdp_touch"]["role"] == "distribution"
+    assert fired[0]["data"]["cdp_touch"]["main_peak_price"] == 110.0
