@@ -52,7 +52,7 @@ export function parseSignalPayload(raw: unknown): SignalPayload | null {
   };
 }
 
-const ROLE_ZH: Record<string, string> = { support: "支撐", resistance: "壓力", touch: "觸碰" };
+const ROLE_ZH: Record<string, string> = { support: "支撐", resistance: "壓力", touch: "觸碰", distribution: "做頭轉弱" };
 const MA_LABEL: Record<string, string> = { sma_5: "MA5", sma_20: "MA20" };
 
 // CDP 線大寫顯示(AH/NH/NL/AL);中軸線代號本身就是 cdp,大寫會變「碰 CDP CDP」撞字 → 顯示「中軸」。
@@ -63,6 +63,10 @@ function levelLabel(kind: "CDP" | "MA", level: string): string {
 }
 
 function touchLine(kind: "CDP" | "MA", t: TouchMeta): string {
+  // 雙峰造山「做頭轉弱」不是碰線事件,獨立文案(不走「碰 CDP <LEVEL>」)
+  if (t.level === "peak") {
+    return `📉 ${t.role ? (ROLE_ZH[t.role] ?? t.role) : "做頭轉弱"}`;
+  }
   // role / touch_index 各自可有可無:用 parts 組,避免缺 role 時出現孤兒分隔符「（·第N次）」
   const parts: string[] = [];
   if (t.role) parts.push(ROLE_ZH[t.role] ?? t.role);

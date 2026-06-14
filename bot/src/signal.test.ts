@@ -84,6 +84,11 @@ describe("formatBanner", () => {
     const b = formatBanner({ ...base, cdp_touch: { level: "al", role: "support", touch_index: 5 } });
     expect(b).toContain("碰 CDP AL");
   });
+  it("雙峰造山(level peak / role distribution)→「📉 做頭轉弱」,不走碰線文案", () => {
+    const b = formatBanner({ ...base, cdp_touch: { level: "peak", role: "distribution" }, ma_touch: null });
+    expect(b).toContain("📉 做頭轉弱");
+    expect(b).not.toContain("碰 CDP");
+  });
 });
 
 describe("withBanner", () => {
