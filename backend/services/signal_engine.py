@@ -555,75 +555,109 @@ class SignalEngine:
                     self._breakout_confirm_count[key] = 0
         return result
 
+    def _detect_surge(
+        self, symbol: str, candle: MinuteCandle, recent_closes: list[float],
+        now: float, strat: dict,
+    ) -> bool:
+        """急拉根判定(造山積木用):同時滿足陡升 + 出量才回 True。
+
+        陡升:close 相對 surge_window_bars 根前 close 漲幅 ≥ surge_pct%。
+        出量:_candle_volume_ratio(這根) ≥ surge_volume_ratio。
+        recent_closes 含當根(最後一個 = candle.close),需 ≥ surge_window_bars+1 根才有可比基準。
+        """
+        w = strat["surge_window_bars"]
+        if len(recent_closes) <= w:
+            return False
+        base = recent_closes[-(w + 1)]
+        if base <= 0:
+            return False
+        rise_pct = (recent_closes[-1] / base - 1) * 100
+        if rise_pct < strat["surge_pct"]:
+            return False
+        return self._candle_volume_ratio(symbol, candle, now) >= strat["surge_volume_ratio"]
+
     def _eval_peak_divergence(
         self, strat: dict, active: ActiveSignalOut, symbol: str,
         candle: MinuteCandle, now: float,
     ) -> dict | None:
-        """策略 5:雙峰量價背離造山。每根結算 candle 餵一次,推進 per-symbol 狀態機。
+        """策略 5 v2:雙峰急拉量價背離造山(做頭轉弱)。每根結算 candle 推進 per-symbol 狀態機。
 
-        主峰 = candle.high 創當日新高(可選量門檻);close 回落 pullback_pct 確認主峰封頂。
-        次峰 = 主峰後反彈高點;不過前高 + 量縮 + close 滾頭 → 觸發「做頭轉弱」、當日 latch。
-        量縮直接比 raw candle.volume(不經 _candle_volume_ratio,避開 day_volume 重啟偏誤)。
+        主峰:由「急拉根」(_detect_surge:陡升+出量)啟動;啟動後追這波最高 high / 最大量比,
+              close 回落 pullback_pct 確認封頂、進 retrace。
+        次峰:回測中「出量反彈」(_candle_volume_ratio ≥ peak2_volume_ratio,**不要求陡升**)的
+              反彈高點;不過前高 + 量縮(peak2_vr < peak1_vr × volume_shrink_ratio)+ close 滾頭
+              → 觸發「做頭轉弱」、當日 latch。次峰不要求陡升:第二峰本質是無力反彈(見 spec 附錄二)。
+        量基準統一用 _candle_volume_ratio(到當下每分鐘均量的倍數);承擔 day_volume 盤中重啟偏誤(同 v1)。
         """
         key = (active.id, symbol)
         st = self._peak_state.get(key)
         if st is None:
-            st = {"phase": "watch", "day_high": 0.0,
-                  "peak1_high": 0.0, "peak1_vol": 0, "peak1_minute": candle.minute,
-                  "trough_low": candle.low, "peak2_high": 0.0, "peak2_vol": 0}
+            st = {"phase": "watch", "surge_seen": False, "recent_closes": [],
+                  "peak1_high": 0.0, "peak1_vr": 0.0, "peak1_minute": candle.minute,
+                  "peak2_high": 0.0, "peak2_vr": 0.0}
             self._peak_state[key] = st
+
+        # recent_closes 含當根、只留最近 W+1 根(供 _detect_surge 算陡升);先維護再判定
+        rc = st["recent_closes"]
+        rc.append(candle.close)
+        del rc[:-(strat["surge_window_bars"] + 1)]
 
         pullback = strat["pullback_pct"] / 100.0
         tol = strat["not_exceed_tolerance_pct"] / 100.0
         shrink = strat["volume_shrink_ratio"]
         max_gap = strat["max_gap_minutes"]
-        min_vr = strat.get("min_main_peak_volume_ratio")
+        peak2_vr_min = strat["peak2_volume_ratio"]
 
-        is_new_high = candle.high > st["day_high"]
-        st["day_high"] = max(st["day_high"], candle.high)
+        vr = self._candle_volume_ratio(symbol, candle, now)
+        is_surge = self._detect_surge(symbol, candle, rc, now, strat)
 
         if st["phase"] == "watch":
-            if is_new_high and (
-                min_vr is None or self._candle_volume_ratio(symbol, candle, now) >= min_vr
-            ):
-                st["peak1_high"] = candle.high
-                st["peak1_vol"] = candle.volume
-                st["peak1_minute"] = candle.minute
+            if is_surge:
+                st["surge_seen"] = True
+            # 急拉啟動後,持續追這波最高 high / 最大量比(不限急拉根本身那一根)
+            if st["surge_seen"]:
+                if candle.high > st["peak1_high"]:
+                    st["peak1_high"] = candle.high
+                    st["peak1_minute"] = candle.minute
+                st["peak1_vr"] = max(st["peak1_vr"], vr)
             if st["peak1_high"] > 0 and candle.close < st["peak1_high"] * (1 - pullback):
-                st["phase"] = "pullback"
-                st["trough_low"] = candle.low
+                st["phase"] = "retrace"
+                st["surge_seen"] = False
                 st["peak2_high"] = 0.0
-                st["peak2_vol"] = 0
+                st["peak2_vr"] = 0.0
             return None
 
-        if st["phase"] == "pullback":
-            st["trough_low"] = min(st["trough_low"], candle.low)
+        if st["phase"] == "retrace":
             if candle.minute - st["peak1_minute"] > max_gap:
                 st["phase"] = "watch"
                 return None
-            if candle.high > st["peak2_high"]:
+            # 次峰候選 = 出量反彈高點(只要出量,不要求陡升)
+            if vr >= peak2_vr_min and candle.high > st["peak2_high"]:
                 st["peak2_high"] = candle.high
-                st["peak2_vol"] = candle.volume
+                st["peak2_vr"] = max(st["peak2_vr"], vr)
             if st["peak2_high"] >= st["peak1_high"] * (1 + tol):
-                # 過前高 → 不是做頭,次峰當新主峰、回 watch 續找
+                # 出量反彈過前高 → 不是做頭,次峰升級為新主峰、回 watch 續找
                 st["peak1_high"] = st["peak2_high"]
-                st["peak1_vol"] = st["peak2_vol"]
+                st["peak1_vr"] = st["peak2_vr"]
                 st["peak1_minute"] = candle.minute
                 st["phase"] = "watch"
+                st["surge_seen"] = True
+                st["peak2_high"] = 0.0
+                st["peak2_vr"] = 0.0
                 return None
             if st["peak2_high"] > 0 and candle.close < st["peak2_high"] * (1 - pullback):
-                if st["peak2_vol"] < st["peak1_vol"] * shrink:
+                if st["peak2_vr"] < st["peak1_vr"] * shrink:
                     st["phase"] = "confirmed"
                     return {
                         "level": "peak", "direction": "from_above", "role": "distribution",
                         "main_peak_price": st["peak1_high"],
                         "second_peak_price": st["peak2_high"],
-                        "volume_shrink": (round(st["peak2_vol"] / st["peak1_vol"], 2)
-                                          if st["peak1_vol"] else 0.0),
+                        "volume_shrink": (round(st["peak2_vr"] / st["peak1_vr"], 2)
+                                          if st["peak1_vr"] else 0.0),
                     }
                 # 量沒縮:這波反彈不算背離,重置次峰候選續找
                 st["peak2_high"] = 0.0
-                st["peak2_vol"] = 0
+                st["peak2_vr"] = 0.0
             return None
 
         return None  # confirmed:當日 latch
