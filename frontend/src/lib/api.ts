@@ -379,6 +379,11 @@ export const api = {
       fetchJSON(`/api/monitor_list/${encodeURIComponent(symbol)}`, {
         method: "DELETE",
       }),
+    reorder: (symbols: string[]) =>
+      fetchJSON<{ status: string }>("/api/monitor_list/reorder", {
+        method: "PATCH",
+        body: JSON.stringify({ symbols }),
+      }),
   },
 
   bookmarks: {

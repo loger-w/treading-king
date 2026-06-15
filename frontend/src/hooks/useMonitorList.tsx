@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, type MonitorListItem } from "../lib/api";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { api, ApiError, type MonitorListItem } from "../lib/api";
 
 interface MonitorListContextValue {
   items: MonitorListItem[];
@@ -8,6 +8,7 @@ interface MonitorListContextValue {
   refresh: () => Promise<void>;
   add: (symbol: string) => Promise<void>;
   remove: (symbol: string) => Promise<void>;
+  reorder: (symbols: string[]) => Promise<void>;
 }
 
 const MonitorListContext = createContext<MonitorListContextValue | null>(null);
@@ -16,16 +17,18 @@ export function MonitorListProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<MonitorListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const seqRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const mySeq = ++seqRef.current;
     try {
       setError(null);
       const r = await api.monitorList.list();
-      setItems(r.items);
+      if (mySeq === seqRef.current) setItems(r.items);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mySeq === seqRef.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (mySeq === seqRef.current) setLoading(false);
     }
   }, []);
 
@@ -51,14 +54,28 @@ export function MonitorListProvider({ children }: { children: ReactNode }) {
     }
   }, [refresh]);
 
+  const reorder = useCallback(async (symbols: string[]) => {
+    seqRef.current++;
+    const prev = items;
+    const bySymbol = new Map(items.map((it) => [it.symbol, it]));
+    setItems(symbols.flatMap((s) => bySymbol.get(s) ?? []));
+    try {
+      await api.monitorList.reorder(symbols);
+    } catch (e) {
+      console.warn("reorder monitor failed:", e);
+      setItems(prev);
+      if (e instanceof ApiError) await refresh();
+    }
+  }, [items, refresh]);
+
   useEffect(() => { refresh(); }, [refresh]);
 
   // Memo:每 render 新 object 會讓所有 consumer 重 render,在有 setState 寫回的 child
   // useEffect 路徑下會引發無窮 loop(實測 BookmarksPanel.onItemsChanged → setBookmarkSymbolNames
   // spread → Provider re-render → 新 value → BookmarksPanel re-render → ...)。
   const value = useMemo(
-    () => ({ items, loading, error, refresh, add, remove }),
-    [items, loading, error, refresh, add, remove],
+    () => ({ items, loading, error, refresh, add, remove, reorder }),
+    [items, loading, error, refresh, add, remove, reorder],
   );
 
   return (
