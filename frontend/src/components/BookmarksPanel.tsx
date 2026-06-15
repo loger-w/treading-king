@@ -651,7 +651,7 @@ function MonitorListView({
             onSelect={onSelect}
             onRemove={onRemove}
             showRemove
-            removeLabel={`從監聯清單移除 ${it.symbol}`}
+            removeLabel={`從監聽清單移除 ${it.symbol}`}
           />
         ))}
       </ul>

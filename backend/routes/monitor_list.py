@@ -35,11 +35,10 @@ class MonitorListReorder(BaseModel):
 @router.get("/api/monitor_list")
 async def list_monitor() -> dict:
     store = get_local_store()
-    items = sorted(
-        store.config.list_monitor(),
-        key=lambda m: (m.get("position") if m.get("position") is not None else float("inf"),
-                       m["added_at"]),
-    )
+    raw = store.config.list_monitor()
+    # 有 position 的照 position 升冪；無 position 的(舊資料)排在後面、照 added_at 降冪(新的在前)
+    raw.sort(key=lambda m: m["added_at"], reverse=True)
+    items = sorted(raw, key=lambda m: m["position"] if m.get("position") is not None else float("inf"))
     out = [enrich_item(m, store.market) for m in items]
     return {"items": out, "count": len(out)}
 
