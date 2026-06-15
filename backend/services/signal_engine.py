@@ -557,8 +557,8 @@ class SignalEngine:
         return result
 
     MOUNTAIN_SURGE_PCT = 3.0
-    MOUNTAIN_SURGE_WINDOW = 5
-    MOUNTAIN_SURGE_VR = 2.5
+    MOUNTAIN_SURGE_WINDOW = 10
+    MOUNTAIN_SURGE_VR = 1.5
     MOUNTAIN_CONFIRM_BARS = 3
 
     def _update_mountain(
