@@ -4,6 +4,15 @@
 > 但經 6/12 真實 1 分 K 診斷證實有**結構性缺陷**(下節),核心定義要重做。v1 spec 與 PR #33
 > 保留為歷史;v2 實作完成後再決定 PR #33 的處置(取代 / 關閉)。
 
+> **⚠️ 2026-06-14 不對稱修正(實作前定案,使用者已拍板)**:原 v2 設計要求**主峰、次峰都必須
+> 是「急拉根」(陡升 AND 出量)**。但用 cache 實證模擬發現這與「做頭轉弱」本質矛盾——6207 的
+> 真右肩(10:49–50,逼近主峰的做頭高點)漲幅僅 **0.4–1.1%**、最有量的 10:40 也才 1.92%,**全都
+> 不到 surge_pct=2.0**;「第二波無力(漲不動)」正是轉弱的定義,卻被「次峰也要陡升」的對稱閘門
+> 擋掉,導致 spec 預設參數下 **6207 根本不觸發、驗收硬標準失敗**。
+> **定案:改不對稱閘門——主峰要急拉(陡升+出量);次峰只要「出量反彈 + 不過前高 + 量縮 + 滾頭」,
+> 去掉陡升要求**(次峰新增獨立參數 `peak2_volume_ratio`)。實證已翻轉驗收(6207 主峰134/次峰133@10:54、
+> 8064/8150/6239 全排除,見文末附錄二)。**以下正文已就地改為不對稱版;「急拉根」現僅用於主峰啟動。**
+
 ## 為何要 v2(v1 的結構性缺陷,診斷實證)
 
 v1 把「主峰 = `candle.high` 創當日新高」,次峰 = 「pullback 後任何反彈 high」。用 6/12 真實 1 分 K
@@ -27,7 +36,7 @@ v1 把「主峰 = `candle.high` 創當日新高」,次峰 = 「pullback 後任�
 明確排除(這次不抓,範圍見下):
 - 開高走低 / 久盤後一波急拉到頂的**單峰**(8064、8150、6239 力成)→ 它們沒有「回測後第二波急拉」。
 
-## 急拉根(策略核心的新閘門)
+## 急拉根(**主峰啟動**的閘門)
 
 一根結算的 1 分 K 是「**急拉根**」,當且僅當**同時**滿足:
 
@@ -36,8 +45,13 @@ v1 把「主峰 = `candle.high` 創當日新高」,次峰 = 「pullback 後任�
 2. **出量**:`_candle_volume_ratio(這根) ≥ surge_volume_ratio`
    (= 這根量 ÷ 「開盤至今每分鐘均量」的倍數;既有 method,signal_engine.py:550)
 
-「陡 + 快(短窗)+ 量」三者缺一不可。這道閘門就是用來擋掉**開盤高、慢拉、陰跌反彈**
-(它們不是「短窗內陡升且爆量」)。
+「陡 + 快(短窗)+ 量」三者缺一不可。這道閘門用來擋掉**開盤高、慢拉**,確保**主峰**是真有人
+急著拉上去的真高(不是開盤假高、不是慢慢墊上去)。
+
+**急拉根只用於「啟動主峰」(watch 階段)。次峰不要求急拉**——理由見開頭 banner:做頭轉弱的
+第二峰本質是「無力反彈」(漲不陡),硬要它陡升等於要求「轉弱的峰不准轉弱」。次峰改用較鬆的
+「出量反彈」門檻(`_candle_volume_ratio ≥ peak2_volume_ratio`,擋陰跌雜訊小彈)+ 不過前高 +
+量縮 + 滾頭來界定。`_detect_surge` 積木仍只服務主峰啟動(及未來 6239 單峰)。
 
 ## 狀態機
 
@@ -45,15 +59,20 @@ per `(active.id, symbol)` 當日狀態 `_peak_state`,phase = `watch → retrace 
 每根結算 candle 依序:
 
 1. **watch(找主峰)**
-   - 出現**急拉根** → 進入造主峰:`peak1_high` 追這波最高 high、`peak1_vr` 記這波出現過的**最大**量比
-   - `close` 從 `peak1_high` 回落 ≥ `pullback_pct%` → 主峰封頂,進 `retrace`(記 `peak1_minute`)
-   - **沒有急拉就不鎖主峰**(開盤高、緩漲一律不算主峰)
+   - 出現**急拉根** → 進入「造主峰模式」(`surge_seen=True`)
+   - **造主峰模式下,每根都更新** `peak1_high = max(peak1_high, high)`、`peak1_vr = max(...)`、
+     `peak1_minute`(追這波最高 high / 最大量比,**不限急拉根本身那一根**——急拉只負責「啟動」,
+     啟動後即使非急拉根、只要持續創高就計入主峰。6207 即靠此把主峰追到 09:59 的 **134**,
+     而非停在啟動根 09:56 的 133.5)
+   - `close` 從 `peak1_high` 回落 ≥ `pullback_pct%` → 主峰封頂,進 `retrace`(`surge_seen` 歸 False)
+   - **沒有急拉根啟動就不鎖主峰**(開盤高、緩漲一律不算主峰)
 2. **retrace(回測找次峰)**
    - `close` 回落中(記回測;主峰已封頂)
-   - 出現**第二個急拉根** → 造次峰:`peak2_high`、`peak2_vr`(同樣取這波最大量比)
+   - **出量反彈**(`_candle_volume_ratio(這根) ≥ peak2_volume_ratio`,**不要求陡升**)且
+     `high > peak2_high` → 更新次峰候選:`peak2_high`、`peak2_vr`(取這波最大量比)
    - 次峰**過前高**(`peak2_high ≥ peak1_high × (1 + not_exceed_tolerance_pct/100)`)
-     → 不是背離:次峰升級為新主峰(`peak1 ← peak2`)、回 `watch` 續找
-   - 次峰造峰後 `close` 回落 ≥ `pullback_pct%`(滾頭)→ 檢查背離:
+     → 不是背離:次峰升級為新主峰(`peak1 ← peak2`、`surge_seen=True`)、回 `watch` 續找
+   - 次峰候選成形後 `close` 回落 ≥ `pullback_pct%`(滾頭)→ 檢查背離:
      - 不過前高(已保證)**＋ 量縮**(`peak2_vr < peak1_vr × volume_shrink_ratio`)
        → **觸發「做頭轉弱」**,phase = `confirmed`
      - 量沒縮 → 重置次峰候選(`peak2` 清 0)、繼續找
@@ -71,20 +90,27 @@ per `(active.id, symbol)` 當日狀態 `_peak_state`,phase = `watch → retrace 
 
 | 欄位 | 預設 | 白話 |
 |---|---|---|
-| `surge_pct` | 2.0 | 陡升:close 相對 W 根前漲 ≥ 此% |
-| `surge_window_bars` | 3 | 陡升回看根數 W(跟 surge_pct 合定「速度」,W 必須小才擋慢拉) |
-| `surge_volume_ratio` | 2.5 | 出量:`_candle_volume_ratio ≥ 此`(到當下均量的倍數) |
+| `surge_pct` | 2.0 | **主峰**陡升:close 相對 W 根前漲 ≥ 此% |
+| `surge_window_bars` | 3 | **主峰**陡升回看根數 W(跟 surge_pct 合定「速度」,W 小才擋慢拉;只管主峰) |
+| `surge_volume_ratio` | 2.5 | **主峰**出量:`_candle_volume_ratio ≥ 此`(到當下均量的倍數) |
+| `peak2_volume_ratio` | 2.0 | **次峰**出量門檻:`_candle_volume_ratio ≥ 此`(只需出量、**不需陡升**;擋陰跌雜訊小彈) |
 | `pullback_pct` | 1.0 | 峰封頂 / 次峰滾頭的回落確認幅度 |
-| `volume_shrink_ratio` | 0.8 | 次峰量比 < 主峰量比 × 此(量縮背離,策略靈魂) |
+| `volume_shrink_ratio` | 0.6 | 次峰量比 < 主峰量比 × 此(量縮背離,策略靈魂)。0.8 太鬆會放進單峰假訊號(6239 shrink 0.72 誤觸發);真做頭量縮明顯(6207=0.38)→ 0.6 才是「明顯量縮」,見附錄三 |
 | `not_exceed_tolerance_pct` | 0.0 | 次峰不過主峰高的容差(0 = 完全不准超過) |
 | `max_gap_minutes` | 120 | 主峰→次峰最大間隔 |
 
-(移除 v1 的 `min_main_peak_volume_ratio` —— 被 `surge_volume_ratio` 取代)
-schema_version 7 → 8(欄位大改;v1 PeakDivergenceStrategy 整個換掉)。
+- **`peak2_volume_ratio` 為何獨立、不復用 `surge_volume_ratio`**:次峰是「轉弱的弱反彈」,出量門檻
+  本該比主峰(爆量急拉)低。實證(6/12 cache):次峰門檻 **2.0** 抓到 6207 真右肩 133.0,
+  **2.5** 只抓到早期衝量根 132.5(點位偏早)→ 2.0 抓點較準,有實證區分力(非冗餘參數)。
+  (註:單峰 6239 的最終排除主要靠 `volume_shrink_ratio=0.6` 擋輕微量縮,**非**靠 peak2 門檻——
+  真引擎驗收見附錄三;附錄二的模擬曾誤判「peak2=2.0 即可排 6239」,被真引擎推翻。)
+- (移除 v1 的 `min_main_peak_volume_ratio` —— 被 `surge_volume_ratio` 取代)
+- schema_version 7 → 8(欄位大改;v1 PeakDivergenceStrategy 整個換掉)。
 
 ## 量基準(統一用 `_candle_volume_ratio`)
 
-出量(急拉資格)與量縮(背離)**共用一套基準** = `_candle_volume_ratio`(到當下每分鐘均量的倍數):
+主峰出量(急拉資格 `surge_volume_ratio`)、次峰出量(`peak2_volume_ratio`)、量縮(背離)
+**共用一套基準** = `_candle_volume_ratio`(到當下每分鐘均量的倍數):
 - `peak1_vr` / `peak2_vr` = 各自造峰期間出現過的**最大**量比(代表該波出量峰值)
 - 背離 = `peak2_vr < peak1_vr × volume_shrink_ratio`
 
@@ -99,8 +125,9 @@ schema_version 7 → 8(欄位大改;v1 PeakDivergenceStrategy 整個換掉)。
 - **策略5 = 一個 evaluator method**(`_eval_peak_divergence`,照 codebase 慣例,同策略 1/2/3),
   用 `_peak_state` dict 狀態機。**不是**一堆散條件,也**不是**現在就蓋組合框架。
 - **抽出一塊可重用積木**:`_detect_surge(symbol, candle, recent_closes, now, strat) → bool`
-  (陡升 + 出量判定)。理由:6239 單峰、未來其他做頭家族都會複用同一個「急拉」判定 → 抽成
-  獨立、可單元測的 helper。峰追蹤 / 量縮 / 狀態機這次留在 method 內(只一個策略用,YAGNI)。
+  (陡升 + 出量判定)。**本策略只在「啟動主峰」用它**(次峰走較鬆的出量門檻,不經 `_detect_surge`);
+  抽出的理由是 6239 單峰、未來其他做頭家族會複用同一個「急拉」判定 → 抽成獨立、可單元測的 helper。
+  次峰出量判定 / 峰追蹤 / 量縮 / 狀態機這次留在 method 內(只一個策略用,YAGNI)。
 - **「組合框架」(整個策略當積木疊加投票成高置信)= 未來**;積木累積夠(急拉、量縮、峰偵測…)再做。
 
 ## 與現有 code 的關係
@@ -108,17 +135,20 @@ schema_version 7 → 8(欄位大改;v1 PeakDivergenceStrategy 整個換掉)。
 - **沿用**:`_update_candle`(candle 結算)、`_candle_volume_ratio`、`_evaluate` 的
   `peak_divergence` dispatch 分支(三處 stype)、`_fanout`、`_reset_daily_strategy_state`、bot 圖卡。
 - **重寫**:`_eval_peak_divergence`(改成急拉造峰狀態機)+ 新增 `_detect_surge` helper。
-- **`_peak_state` 欄位**:`phase, recent_closes(最近 W 根 close,算陡升), peak1_high, peak1_vr,
-  peak1_minute, peak2_high, peak2_vr`(day_high / trough_low 不再需要;主峰由急拉鎖、不靠當日新高)。
+- **`_peak_state` 欄位**:`phase, surge_seen(主峰是否已被急拉啟動), recent_closes(最近 W 根 close,
+  算主峰陡升), peak1_high, peak1_vr, peak1_minute, peak2_high, peak2_vr`(day_high / trough_low
+  不再需要;主峰由急拉鎖、不靠當日新高)。
 - **schema**:`PeakDivergenceStrategy` 欄位全換(見參數表),schema_version 7→8。
-- **回測**:`replay_engine.py` 的 `peak_rule` / `run_peak` 改掃新參數
-  (surge_pct × surge_volume_ratio 為主軸)。
+- **回測**:`replay_engine.py` 的 `peak_rule` / `run_peak` 改掃新參數。主峰急拉門檻已穩,
+  掃描主軸建議改 **`peak2_volume_ratio` × `volume_shrink_ratio`**(次峰那組才是區分做頭 vs 噪音的關鍵)。
 
 ## 測試 / 回測驗收
 
 - **單元測試**(重寫 `test_signal_engine_peak_divergence.py`):
-  - 急拉根判定(陡升+出量皆過 / 只陡不出量 / 只出量不陡 → 各案例)
-  - 雙急拉觸發、次峰過前高升級新主峰、次峰量沒縮不觸發、無第二波急拉不觸發、max_gap、daily reset
+  - 主峰急拉啟動(陡升+出量皆過 → 鎖主峰;只陡不出量 / 只出量不陡 → 不鎖主峰)
+  - 主峰啟動後追高(急拉啟動 → 後續非急拉根但持續創高 → 主峰追到最高那根,**非啟動根**)
+  - 觸發(主峰急拉 + 次峰出量反彈不過前高 + 量縮 + 滾頭)、次峰**出量反彈**過前高升級新主峰、
+    次峰量沒縮不觸發、次峰**沒出量**(陰跌雜訊小彈 < `peak2_volume_ratio`)不算次峰、max_gap、daily reset
   - 整合測(逐 tick 跨分鐘結算 → `_evaluate` → fanout 帶 distribution)
 - **`_detect_surge` 獨立單元測**(積木可單測)
 - **回測驗收(用 `_diag_cache.json`,已含 6207/8064/8150/6239)**:
@@ -159,3 +189,60 @@ schema_version 7 → 8(欄位大改;v1 PeakDivergenceStrategy 整個換掉)。
 
 → **出量門檻 `surge_volume_ratio` 設 ~2.5(留安全邊際分開真急拉 ~3-7x vs 雜訊 <1.5x);
 急拉② 的 2.9x 剛好在門檻上,回測需確認 6207 急拉②不被門檻誤殺**(可能要 2.0–2.5 之間掃)。
+
+> 註:附錄一把「急拉②(次峰)」放在舊**對稱**框架下分析(假設次峰也要急拉)。附錄二證明這框架
+> 對 6207 跑不出驗收,改為**不對稱**——次峰不走 `surge_volume_ratio`,改走 `peak2_volume_ratio`。
+
+## 附錄二:不對稱閘門實證(6/12 cache,模擬腳本 `backend/scripts/_diag_surge.py`,untracked)
+
+精確重現 engine 的 `_candle_volume_ratio`(tick 4-拆、day_volume 到「下一根開盤」累積)後跑狀態機:
+
+**Root cause — 6207 第二峰(右肩)逐根**(`vr`=量比,`w3/w5`=close 相對 3/5 根前漲%):
+
+| 時間 | High | Close | vr | w3 漲% | w5 漲% |
+|---|---|---|---|---|---|
+| 10:40 | 132.5 | 132.5 | 2.7 | **+1.92%** | +2.32% |
+| 10:49 | 133.0 | 133.0 | 2.4 | +0.76% | +0.38% |
+| 10:50 | 133.0 | 133.0 | 2.2 | +1.14% | +0.76% |
+
+→ 真右肩(10:49–50,逼近主峰的做頭高點)漲幅僅 0.4–1.1%,連最有量的 10:40 也才 1.92% < surge_pct 2.0。
+**「無力反彈」是轉弱的定義,卻被對稱的「次峰也要陡升」擋掉。**
+
+**對稱方案(雙峰都要急拉)掃描** — spec 原預設直接驗收失敗:
+
+| 參數 | 6207 | 8064 | 8150 | 6239 |
+|---|---|---|---|---|
+| **原預設** sp2.0/**w3**/svr2.5 | ❌**不觸發** | 排除 | 排除 | 排除 |
+| sp2.0/w5/svr2.5 | 觸發(次峰132.5 偏早) | 排除 | 排除 | 排除 |
+| sp1.5/w5/svr2.0 | 觸發 | 排除 | 排除 | ❌**誤抓** |
+
+**不對稱方案(模擬初篩)** — 主峰 sp2.0/w3/svr2.5,次峰只需出量 `peak2_volume_ratio`(shrink 模擬用 0.8):
+
+| 次峰門檻 | 6207 | 8064 | 8150 | 6239 |
+|---|---|---|---|---|
+| **2.0** | 🔥 主峰**134.0**/次峰**133.0** @10:54 | 排除 | 排除 | 排除* |
+| 2.5(=復用svr) | 🔥 主峰134.0/次峰132.5 @10:55(點位偏早) | 排除 | 排除 | 排除 |
+| 1.5 | 🔥 | 排除 | 排除 | ❌**誤抓6239** |
+
+→ 模擬選定 **`peak2_volume_ratio=2.0`**(抓到 6207 真右肩 133、點位最準)。
+**\*但模擬的 6239「排除」是假象**:`_diag_surge.py` 的狀態機是簡化版(次峰 `h<p1h` 限制 + 無「過前高
+升級」邏輯),與真 method 有出入。真引擎(`replay_day`)下 6239 在 peak2=2.0 會誤觸發 → 見附錄三。
+
+## 附錄三:真引擎驗收 + 6239 修正(權威,`backend/scripts/_diag_acceptance.py`,untracked)
+
+附錄二是**簡化模擬**;最終驗收用**真 `SignalEngine`**(`replay_day`,4-tick 展開、逐 tick 真實
+`_day_volume` 累積),才是 production 行為。真引擎攔截 6207 vs 6239 觸發 detail:
+
+| | 觸發 | 當日高 | main | peak1_vr | peak2_vr | **shrink** |
+|---|---|---|---|---|---|---|
+| **6207**(真做頭,留) | 10:55 | 134.0@09:59 | 134.0 | 7.10 | 2.73 | **0.38** |
+| **6239**(假訊號,排) | 11:21 | **363.5@11:39** | 357.5 | 3.29 | 2.38 | **0.72** |
+
+- **6239 是假訊號的鐵證**:11:21 觸發,但當日真頂 363.5 在 **11:39**——觸發後股價還漲 6 塊。它把
+  攻頂半山腰(357.5)的「小急拉→小回檔→357.0 反彈→滾頭」微結構誤判成做頭(正是 spec 說的單峰)。
+- **區分維度 = 量縮程度**:6207 真背離 shrink **0.38**(次峰量僅主峰 38%);6239 假訊號 shrink **0.72**
+  (輕微量縮,勉強低於 0.8 才觸發)。
+- **修正**:`volume_shrink_ratio` 0.8 → **0.6**。6207(0.38<0.6)仍觸發;6239(需 peak2_vr<3.29×0.6=1.97,
+  實際 2.38)→ 排除。真引擎 4 檔驗收:**6207 觸發、8064/8150/6239 全排除 ✓**(6239 整檔 fired=0,
+  11:39 真頂後也無誤觸發)。
+- **教訓**:模擬可初篩、但**驗收必須用真引擎**;簡化狀態機會漏掉真 method 的觸發路徑。
