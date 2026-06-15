@@ -177,3 +177,31 @@ def test_daily_reset_clears_mountain_state():
     engine._mountain_state["2330"] = {"phase": "confirmed", "peak_high": 134}
     engine._reset_daily_strategy_state()
     assert "2330" not in engine._mountain_state
+
+
+@pytest.mark.asyncio
+async def test_evaluate_updates_mountain_state_on_settled_candle():
+    """整合:逐 tick 跨分鐘結算 → _update_mountain 被呼叫 → mountain_state 更新。"""
+    engine = SignalEngine()
+    engine._active = []
+    engine._field_cache["2330"] = {}
+
+    ticks = (
+        [(100.0, 10, i) for i in range(5)]
+        + [(104.0, 2000, 5)]
+        + [(103.0, 10, 6), (102.0, 10, 7), (101.0, 10, 8)]
+        + [(100.0, 10, 9)]
+    )
+    with patch("services.signal_engine.get_broadcaster") as mock_bc, \
+         patch("services.signal_engine.get_signal_writer") as mock_sw:
+        mock_bc.return_value.broadcast = MagicMock()
+        mock_sw.return_value = MagicMock()
+        for price, size, minute in ticks:
+            ts = MORNING + minute * 60
+            with patch("services.signal_engine.time.time", return_value=ts):
+                await engine._evaluate("2330", Tick(price=price, size=size, time=ts))
+
+    st = engine._mountain_state.get("2330")
+    assert st is not None
+    assert st["phase"] == "confirmed"
+    assert st["peak_high"] == 104.0
