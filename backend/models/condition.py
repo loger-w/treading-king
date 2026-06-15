@@ -206,8 +206,20 @@ class BreakoutConfirmStrategy(BaseModel):
     min_volume_ratio: float | None = Field(default=None, ge=0.5, le=20.0)
 
 
+class PeakDivergenceStrategy(BaseModel):
+    """策略 5(v1 schema,engine 不讀 — 保留為向前相容,載入舊 config 不炸)。
+    v3 造山偵測改為引擎內建行為(_update_mountain),不經 strategy dispatch。"""
+
+    type: Literal["peak_divergence"]
+    pullback_pct: float = Field(default=1.0, gt=0, le=20)
+    not_exceed_tolerance_pct: float = Field(default=0.0, ge=0, le=5)
+    volume_shrink_ratio: float = Field(default=0.8, gt=0, le=1.0)
+    max_gap_minutes: int = Field(default=120, ge=1, le=240)
+    min_main_peak_volume_ratio: float | None = Field(default=None, ge=0.5, le=20.0)
+
+
 StrategyConfig = Annotated[
-    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy,
+    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy | PeakDivergenceStrategy,
     Field(discriminator="type"),
 ]
 
@@ -219,7 +231,7 @@ class ActiveFilter(Filter):
     ma_proximity / strategy 任一非空。
     """
 
-    schema_version: int = 6  # 5→6,加 cdp_breakout_confirm strategy
+    schema_version: int = 7  # 6→7,加 peak_divergence strategy
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
     ma_proximity:  MAProximityCondition  | None = None

@@ -28,8 +28,28 @@ def test_discriminator_picks_right_model_from_dict():
     assert f.strategy.surge_pct == 5.0
 
 
-def test_schema_version_bumped_to_6():
-    assert ActiveFilter(strategy=LimitUpOpenTouchStrategy(type="limit_up_open_touch")).schema_version == 6
+def test_schema_version_bumped_to_7():
+    assert ActiveFilter(strategy=LimitUpOpenTouchStrategy(type="limit_up_open_touch")).schema_version == 7
+
+
+def test_peak_divergence_strategy_defaults():
+    from models.condition import PeakDivergenceStrategy
+    f = ActiveFilter(strategy=PeakDivergenceStrategy(type="peak_divergence"))
+    assert f.strategy.pullback_pct == 1.0
+    assert f.strategy.not_exceed_tolerance_pct == 0.0
+    assert f.strategy.volume_shrink_ratio == 0.8
+    assert f.strategy.max_gap_minutes == 120
+    assert f.strategy.min_main_peak_volume_ratio is None
+    assert f.conditions == []                  # strategy-only 允許 conditions 空
+
+
+def test_peak_divergence_discriminator_from_dict():
+    from models.condition import PeakDivergenceStrategy
+    f = ActiveFilter.model_validate(
+        {"strategy": {"type": "peak_divergence", "pullback_pct": 1.5}}
+    )
+    assert isinstance(f.strategy, PeakDivergenceStrategy)
+    assert f.strategy.pullback_pct == 1.5
 
 
 def test_empty_filter_without_strategy_rejected():

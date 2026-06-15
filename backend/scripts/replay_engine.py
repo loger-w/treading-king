@@ -231,6 +231,22 @@ def breakout_rule(confirm_bars: int, margin_ticks: int, day: str):
     )
 
 
+def peak_rule(pullback_pct: float, volume_shrink_ratio: float, day: str):
+    """v1 雙峰規則(v3 engine 走 continue,fired 永遠 0)。
+    TODO: 策略 A/B 實作後改讀 _mountain_state 或移除。"""
+    from models.condition import ActiveFilter, ActiveSignalOut, PeakDivergenceStrategy
+    return ActiveSignalOut(
+        id="replay", name=f"造山pb={pullback_pct}vs={volume_shrink_ratio}",
+        filter_json=ActiveFilter(strategy=PeakDivergenceStrategy(
+            type="peak_divergence", pullback_pct=pullback_pct,
+            volume_shrink_ratio=volume_shrink_ratio,
+        )),
+        scope={"type": "watchlist"},
+        cooldown_seconds=1800, enabled=True, created_at=day,
+        notify_discord=False,
+    )
+
+
 CRASH_THRESHOLDS = [-1.5, -2.0, -2.5, -3.0]
 # per-symbol 明細的基線門檻 — 用 index() 取結果,改 CRASH_THRESHOLDS 時
 # 不在列表會直接 ValueError,而非默默配錯資料與標籤
@@ -351,11 +367,54 @@ async def run_breakout(days, day_syms, daily, minute, rearm: int):
         print(f"{s:<8}{base.get(s, 0):>6}{detail_fired.get(s, 0):>6}")
 
 
+PEAK_PULLBACKS = [0.5, 1.0, 1.5]
+PEAK_SHRINKS = [0.6, 0.8, 1.0]
+PEAK_DETAIL_PB = 1.0
+PEAK_DETAIL_VS = 0.8
+assert PEAK_DETAIL_PB in PEAK_PULLBACKS
+assert PEAK_DETAIL_VS in PEAK_SHRINKS
+
+
+async def run_peak(days, day_syms, daily, minute, rearm: int):
+    """雙峰造山門檻掃描:pullback_pct × volume_shrink_ratio 矩陣 + 碰 CDP baseline。"""
+    baseline = {}
+    for day in days:
+        baseline[day] = await replay_day(
+            day, day_syms[day], daily, minute, touch_rule(rearm, day))
+
+    detail_fired = {}
+
+    for vs in PEAK_SHRINKS:
+        cols = [f"pb={pb}" for pb in PEAK_PULLBACKS]
+        print(f"\n== volume_shrink_ratio={vs} ==")
+        print(f"{'day':<12}{'touch':>9}" + "".join(f"{c:>9}" for c in cols))
+        totals = [0] * (1 + len(PEAK_PULLBACKS))
+        for day in days:
+            base_count = sum(baseline[day].values())
+            row = [base_count]
+            for pb in PEAK_PULLBACKS:
+                f = await replay_day(day, day_syms[day], daily, minute,
+                                     peak_rule(pb, vs, day))
+                row.append(sum(f.values()))
+                if vs == PEAK_DETAIL_VS and pb == PEAK_DETAIL_PB and day == days[-1]:
+                    detail_fired = f
+            totals = [a + b for a, b in zip(totals, row)]
+            print(f"{day:<12}" + "".join(f"{c:>9}" for c in row))
+        print(f"{'total':<12}" + "".join(f"{c:>9}" for c in totals))
+
+    last = days[-1]
+    print(f"\n-- {last} per-symbol (pb={PEAK_DETAIL_PB} vs={PEAK_DETAIL_VS}) --")
+    base = baseline[last]
+    print(f"{'sym':<8}{'touch':>6}{'peak':>6}")
+    for s in sorted(day_syms[last]):
+        print(f"{s:<8}{base.get(s, 0):>6}{detail_fired.get(s, 0):>6}")
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=5)
     ap.add_argument("--rearm", type=int, default=5)
-    ap.add_argument("--preset", choices=["touch", "crash", "volume", "breakout"], default="touch")
+    ap.add_argument("--preset", choices=["touch", "crash", "volume", "breakout", "peak"], default="touch")
     args = ap.parse_args()
 
     day_syms = day_symbols_from_log(args.days)
@@ -374,6 +433,9 @@ async def main():
         return
     if args.preset == "breakout":
         await run_breakout(days, day_syms, daily, minute, args.rearm)
+        return
+    if args.preset == "peak":
+        await run_peak(days, day_syms, daily, minute, args.rearm)
         return
 
     print(f"\n{'day':<12}{'rearm=0':>9}{'rearm=' + str(args.rearm):>9}")

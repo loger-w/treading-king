@@ -92,6 +92,8 @@ class SignalEngine:
         self._minute_candle: dict[str, MinuteCandle] = {}
         self._breakout_confirm_count: dict[tuple[str, str, str], int] = {}
         self._breakout_confirmed: set[tuple[str, str, str]] = set()
+        # 造山積木:per symbol 當日造山狀態(daily reset 清)
+        self._mountain_state: dict[str, dict] = {}
 
     # ---------- 公開 API ----------
 
@@ -303,6 +305,9 @@ class SignalEngine:
         if not in_session:
             return
 
+        if settled is not None:
+            self._update_mountain(symbol, settled, now)
+
         if self._limit_up_active:
             self._update_limit_up_state(symbol, tick, now)
         if is_new_tick:
@@ -323,6 +328,8 @@ class SignalEngine:
                     cdp_touch = self._eval_breakout_confirm(strat, active, symbol, settled, now)
                     ma_touch = None
                     ok = cdp_touch is not None
+                elif stype == "peak_divergence":
+                    continue  # v3: 造山由 _update_mountain 自動處理,不走 strategy dispatch
                 elif strat is not None:
                     cdp_touch = self._eval_strategy(strat, active, symbol, tick, prev, now)
                     ma_touch = None
@@ -354,7 +361,7 @@ class SignalEngine:
 
                 # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
                 # 不計入碰線觸碰次數(避免 touch_index 混計)
-                if stype != "cdp_breakout_confirm":
+                if stype not in ("cdp_breakout_confirm", "peak_divergence"):
                     today = date.today()
                     if cdp_touch is not None:
                         count_key = (symbol, cdp_touch["level"], today)
@@ -547,6 +554,91 @@ class SignalEngine:
                     self._breakout_confirm_count[key] = 0
         return result
 
+    MOUNTAIN_SURGE_PCT = 3.0
+    MOUNTAIN_SURGE_WINDOW = 10
+    MOUNTAIN_SURGE_VR = 1.5
+    MOUNTAIN_CONFIRM_BARS = 3
+    _MOUNTAIN_STRAT = {"surge_pct": MOUNTAIN_SURGE_PCT,
+                       "surge_window_bars": MOUNTAIN_SURGE_WINDOW,
+                       "surge_volume_ratio": MOUNTAIN_SURGE_VR}
+
+    def _update_mountain(
+        self, symbol: str, candle: MinuteCandle, now: float,
+        confirm_bars: int | None = None,
+    ) -> None:
+        """造山積木:每根 settled candle 呼叫,維護 per-symbol 造山狀態。
+
+        phase: idle → surge_tracking → confirmed。
+        confirm_bars: 覆蓋 class 常數(回測掃描用)。
+        """
+        cb = max(1, confirm_bars) if confirm_bars is not None else self.MOUNTAIN_CONFIRM_BARS
+
+        st = self._mountain_state.get(symbol)
+        if st is None:
+            st = {"phase": "idle", "recent_closes": [],
+                  "peak_high": 0.0, "peak_vr": 0.0, "peak_minute": 0,
+                  "confirmed_minute": 0, "no_new_high_count": 0}
+            self._mountain_state[symbol] = st
+
+        rc = st["recent_closes"]
+        rc.append(candle.close)
+        del rc[:-(self.MOUNTAIN_SURGE_WINDOW + 1)]
+
+        vr = self._candle_volume_ratio(symbol, candle, now)
+        is_surge = self._detect_surge(symbol, candle, rc, now, self._MOUNTAIN_STRAT)
+
+        if st["phase"] == "idle":
+            if is_surge:
+                st["phase"] = "surge_tracking"
+                st["peak_high"] = candle.high
+                st["peak_vr"] = vr
+                st["peak_minute"] = candle.minute
+                st["no_new_high_count"] = 0
+            return
+
+        if st["phase"] == "surge_tracking":
+            if candle.high > st["peak_high"]:
+                st["peak_high"] = candle.high
+                st["peak_vr"] = max(st["peak_vr"], vr)
+                st["peak_minute"] = candle.minute
+                st["no_new_high_count"] = 0
+            else:
+                st["peak_vr"] = max(st["peak_vr"], vr)
+                st["no_new_high_count"] += 1
+                if st["no_new_high_count"] >= cb:
+                    st["phase"] = "confirmed"
+                    st["confirmed_minute"] = candle.minute
+            return
+
+        if st["phase"] == "confirmed":
+            if is_surge and candle.high > st["peak_high"]:
+                st["phase"] = "surge_tracking"
+                st["peak_high"] = candle.high
+                st["peak_vr"] = vr
+                st["peak_minute"] = candle.minute
+                st["no_new_high_count"] = 0
+
+    def _detect_surge(
+        self, symbol: str, candle: MinuteCandle, recent_closes: list[float],
+        now: float, strat: dict,
+    ) -> bool:
+        """急拉根判定(造山積木用):同時滿足陡升 + 出量才回 True。
+
+        陡升:close 相對 surge_window_bars 根前 close 漲幅 ≥ surge_pct%。
+        出量:_candle_volume_ratio(這根) ≥ surge_volume_ratio。
+        recent_closes 含當根(最後一個 = candle.close),需 ≥ surge_window_bars+1 根才有可比基準。
+        """
+        w = strat["surge_window_bars"]
+        if len(recent_closes) <= w:
+            return False
+        base = recent_closes[-(w + 1)]
+        if base <= 0:
+            return False
+        rise_pct = (recent_closes[-1] / base - 1) * 100
+        if rise_pct < strat["surge_pct"] - 1e-9:
+            return False
+        return self._candle_volume_ratio(symbol, candle, now) >= strat["surge_volume_ratio"]
+
     def _candle_volume_ratio(self, symbol: str, candle: MinuteCandle, now: float) -> float:
         """該 candle 的 volume / 當日每分鐘平均成交量。"""
         day_vol = self._day_volume.get(symbol, 0)
@@ -620,6 +712,7 @@ class SignalEngine:
         self._minute_candle.clear()
         self._breakout_confirm_count.clear()
         self._breakout_confirmed.clear()
+        self._mountain_state.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
 
