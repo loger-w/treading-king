@@ -279,7 +279,10 @@ class ConfigStore:
         for m in self._data["monitor_list"]:
             if m["symbol"] == symbol:
                 return m
-        m = {"symbol": symbol, "added_at": _now_iso()}
+        positions = [m["position"] for m in self._data["monitor_list"]
+                     if m.get("position") is not None]
+        m = {"symbol": symbol, "added_at": _now_iso(),
+             "position": (min(positions) - 1) if positions else 0}
         self._data["monitor_list"].append(m)
         self._persist()
         return m
@@ -293,6 +296,16 @@ class ConfigStore:
             self._persist()
             return True
         return False
+
+    def reorder_monitor(self, symbols: list[str]) -> bool:
+        items = self._data["monitor_list"]
+        if sorted(symbols) != sorted(m["symbol"] for m in items):
+            return False
+        pos = {s: i for i, s in enumerate(symbols)}
+        for m in items:
+            m["position"] = pos[m["symbol"]]
+        self._persist()
+        return True
 
     # ---- export / import ----
     def export_config(self) -> dict:

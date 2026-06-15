@@ -296,3 +296,36 @@ def test_reorder_groups_rewrites_sort_order(tmp_path):
     assert order == {g2["id"]: 0, g0["id"]: 1, g1["id"]: 2}
     # mismatch(缺一個 id)→ 拒絕
     assert cfg.reorder_groups([g2["id"], g0["id"]]) is False
+
+
+def test_add_monitor_assigns_position_new_on_top(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    a = cfg.add_monitor("2330")
+    b = cfg.add_monitor("2317")
+    assert a["position"] == 0
+    assert b["position"] == -1
+
+
+def test_reorder_monitor_rewrites_positions(tmp_path):
+    path = tmp_path / "config.json"
+    cfg = ConfigStore(path)
+    cfg.load()
+    cfg.add_monitor("2330")
+    cfg.add_monitor("2317")
+    cfg.add_monitor("2454")
+    assert cfg.reorder_monitor(["2454", "2330", "2317"]) is True
+    pos = {m["symbol"]: m["position"] for m in cfg.list_monitor()}
+    assert pos == {"2454": 0, "2330": 1, "2317": 2}
+    cfg2 = ConfigStore(path)
+    cfg2.load()
+    pos2 = {m["symbol"]: m["position"] for m in cfg2.list_monitor()}
+    assert pos2 == pos
+
+
+def test_reorder_monitor_rejects_symbol_mismatch(tmp_path):
+    cfg = ConfigStore(tmp_path / "config.json")
+    cfg.load()
+    cfg.add_monitor("2330")
+    assert cfg.reorder_monitor(["2330", "9999"]) is False
+    assert cfg.reorder_monitor([]) is False
