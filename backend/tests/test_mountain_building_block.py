@@ -57,6 +57,14 @@ def test_detect_surge_insufficient_history_false():
     assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is False
 
 
+def test_detect_surge_exact_threshold_passes():
+    engine = SignalEngine()
+    engine._day_volume["2330"] = 3000
+    candle = _candle(high=103, close=103, volume=200)
+    closes = [100] * 10 + [103]  # 恰好 3%,不應被 float 誤差擋掉
+    assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is True
+
+
 # ---- _update_mountain 造山狀態機 ----
 
 def _mountain_feed(engine, candles, confirm_bars=3):
@@ -155,6 +163,18 @@ def test_new_surge_lower_peak_keeps_old_mountain():
     assert st["peak_high"] == 104
 
 
+def test_equal_high_counts_as_no_new_high():
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,                                              # m10: peak=104
+        _candle(high=104, close=103, volume=10, minute=11),  # equal high (1)
+        _candle(high=104, close=103, volume=10, minute=12),  # equal high (2)
+        _candle(high=104, close=103, volume=10, minute=13),  # equal high (3) → confirmed
+    ])
+    assert st["phase"] == "confirmed"
+    assert st["peak_high"] == 104
+
+
 def test_confirm_bars_parameter_overrides_default():
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
@@ -198,3 +218,4 @@ async def test_evaluate_updates_mountain_state_on_settled_candle():
     assert st is not None
     assert st["phase"] == "confirmed"
     assert st["peak_high"] == 104.0
+    assert st["peak_vr"] > 1.5

@@ -92,8 +92,6 @@ class SignalEngine:
         self._minute_candle: dict[str, MinuteCandle] = {}
         self._breakout_confirm_count: dict[tuple[str, str, str], int] = {}
         self._breakout_confirmed: set[tuple[str, str, str]] = set()
-        # 策略5 雙峰造山:per (active.id, symbol) 當日狀態機(daily reset 清)
-        self._peak_state: dict[tuple[str, str], dict] = {}
         # 造山積木:per symbol 當日造山狀態(daily reset 清)
         self._mountain_state: dict[str, dict] = {}
 
@@ -560,6 +558,9 @@ class SignalEngine:
     MOUNTAIN_SURGE_WINDOW = 10
     MOUNTAIN_SURGE_VR = 1.5
     MOUNTAIN_CONFIRM_BARS = 3
+    _MOUNTAIN_STRAT = {"surge_pct": MOUNTAIN_SURGE_PCT,
+                       "surge_window_bars": MOUNTAIN_SURGE_WINDOW,
+                       "surge_volume_ratio": MOUNTAIN_SURGE_VR}
 
     def _update_mountain(
         self, symbol: str, candle: MinuteCandle, now: float,
@@ -570,7 +571,7 @@ class SignalEngine:
         phase: idle → surge_tracking → confirmed。
         confirm_bars: 覆蓋 class 常數(回測掃描用)。
         """
-        cb = confirm_bars if confirm_bars is not None else self.MOUNTAIN_CONFIRM_BARS
+        cb = max(1, confirm_bars) if confirm_bars is not None else self.MOUNTAIN_CONFIRM_BARS
 
         st = self._mountain_state.get(symbol)
         if st is None:
@@ -583,11 +584,8 @@ class SignalEngine:
         rc.append(candle.close)
         del rc[:-(self.MOUNTAIN_SURGE_WINDOW + 1)]
 
-        strat = {"surge_pct": self.MOUNTAIN_SURGE_PCT,
-                 "surge_window_bars": self.MOUNTAIN_SURGE_WINDOW,
-                 "surge_volume_ratio": self.MOUNTAIN_SURGE_VR}
         vr = self._candle_volume_ratio(symbol, candle, now)
-        is_surge = self._detect_surge(symbol, candle, rc, now, strat)
+        is_surge = self._detect_surge(symbol, candle, rc, now, self._MOUNTAIN_STRAT)
 
         if st["phase"] == "idle":
             if is_surge:
@@ -637,7 +635,7 @@ class SignalEngine:
         if base <= 0:
             return False
         rise_pct = (recent_closes[-1] / base - 1) * 100
-        if rise_pct < strat["surge_pct"]:
+        if rise_pct < strat["surge_pct"] - 1e-9:
             return False
         return self._candle_volume_ratio(symbol, candle, now) >= strat["surge_volume_ratio"]
 
@@ -714,7 +712,6 @@ class SignalEngine:
         self._minute_candle.clear()
         self._breakout_confirm_count.clear()
         self._breakout_confirmed.clear()
-        self._peak_state.clear()
         self._mountain_state.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0

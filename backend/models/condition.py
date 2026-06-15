@@ -207,7 +207,8 @@ class BreakoutConfirmStrategy(BaseModel):
 
 
 class PeakDivergenceStrategy(BaseModel):
-    """策略 5:雙峰量價背離造山 — 主峰創當日新高 → 收盤回落確認 → 次峰量縮且不過前高 → 滾頭。"""
+    """策略 5(v1 schema,engine 不讀 — 保留為向前相容,載入舊 config 不炸)。
+    v3 造山偵測改為引擎內建行為(_update_mountain),不經 strategy dispatch。"""
 
     type: Literal["peak_divergence"]
     pullback_pct: float = Field(default=1.0, gt=0, le=20)

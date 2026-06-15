@@ -232,7 +232,8 @@ def breakout_rule(confirm_bars: int, margin_ticks: int, day: str):
 
 
 def peak_rule(pullback_pct: float, volume_shrink_ratio: float, day: str):
-    """雙峰量價背離造山規則 — peak preset 用。"""
+    """v1 雙峰規則(v3 engine 走 continue,fired 永遠 0)。
+    TODO: 策略 A/B 實作後改讀 _mountain_state 或移除。"""
     from models.condition import ActiveFilter, ActiveSignalOut, PeakDivergenceStrategy
     return ActiveSignalOut(
         id="replay", name=f"造山pb={pullback_pct}vs={volume_shrink_ratio}",
