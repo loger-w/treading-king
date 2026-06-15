@@ -7,7 +7,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type ActiveSignal, type BookmarkGroup, type BookmarkItem, type MonitorListItem } from "../lib/api";
-import { applyDragToOrder, partitionByHits } from "../lib/reorder";
+import { applyDragToOrder } from "../lib/reorder";
 import { useBookmarks } from "../hooks/useBookmarks";
 import { useAllBookmarkItems, useBookmarkItems } from "../hooks/useBookmarkItems";
 import { useMonitorList } from "../hooks/useMonitorList";
@@ -59,16 +59,11 @@ interface Props {
   onItemsChanged: (allSymbols: string[], names: Record<string, string | null>) => void;  // 給 Monitor 同步 watchlistSymbols + symbolNames
 }
 
-function totalHitsForSymbol(symbol: string, hitCounts: HitCounts): number {
-  const m = hitCounts[symbol] ?? {};
-  return Object.values(m).reduce((a, b) => a + b, 0);
-}
-
 export function BookmarksPanel({
   rules, hitCounts, refreshToken = 0, selectedSymbol, onSelectSymbol, onItemsChanged,
 }: Props) {
   const { groups, loading: groupsLoading, error: groupsError, refresh: refreshGroups, create, remove: removeGroup, rename, reorderGroups } = useBookmarks();
-  const { items: monitorItems, remove: removeFromMonitor } = useMonitorList();
+  const { items: monitorItems, remove: removeFromMonitor, reorder: reorderMonitor } = useMonitorList();
   const [selectedGroupId, setSelectedGroupId] = useState<string>(ALL_VIEW);
   const [newDialogOpen, setNewDialogOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -255,6 +250,7 @@ export function BookmarksPanel({
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
               onRemove={removeFromMonitor}
+              onReorder={reorderMonitor}
             />
           ) : selectedGroupId === ALL_VIEW ? (
             <AllView
@@ -275,6 +271,7 @@ export function BookmarksPanel({
               quotes={quotes}
               onExit={() => setEditMode(false)}
               onChanged={refreshAfterMutation}
+              onReorder={reorderItemsEverywhere}
             />
           ) : (
             <SingleListView
@@ -285,7 +282,6 @@ export function BookmarksPanel({
               selectedSymbol={selectedSymbol}
               onSelect={onSelectSymbol}
               onRemove={removeItemEverywhere}
-              onReorder={reorderItemsEverywhere}
               canEdit={!!canEdit}
               onStartEdit={() => setEditMode(true)}
               isEmpty={singleItems.length === 0}
@@ -423,7 +419,7 @@ function AllView({ groups, byGroup, bySymbolFirst, quotes, rules, hitCounts, sel
 // ---------------------------------------------------------------------------
 
 function SingleListView({
-  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove, onReorder,
+  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove,
   canEdit, onStartEdit, isEmpty, emptyHint, isSystem,
 }: {
   items: BookmarkItem[];
@@ -433,34 +429,12 @@ function SingleListView({
   selectedSymbol: string | null;
   onSelect: (s: string) => void;
   onRemove: (s: string) => void;
-  onReorder: (symbols: string[]) => void;
   canEdit: boolean;
   onStartEdit: () => void;
   isEmpty: boolean;
   emptyHint: string;
   isSystem: boolean;
 }) {
-  // 訊號命中置頂(不可拖)、其餘照後端 position 順序(可拖)
-  const live = useMemo(
-    () => partitionByHits(items, (s) => totalHitsForSymbol(s, hitCounts)),
-    [items, hitCounts],
-  );
-  // 拖拉進行中凍結分群:盤中訊號第一次命中會把列提升置頂、從 sortable 區
-  // unmount,讓 drop 目標位移或拖拉中斷 — 凍結到放開/取消為止
-  const [frozen, setFrozen] = useState<typeof live | null>(null);
-  const { pinned, rest } = frozen ?? live;
-  const restIds = useMemo(() => rest.map((it) => it.symbol), [rest]);
-  const sensors = useDragSensors();
-
-  function handleDragEnd(e: DragEndEvent) {
-    setFrozen(null);
-    const { active, over } = e;
-    if (!over || active.id === over.id) return;
-    // 拖拉結果套回「完整順序」(含置頂項目的 slot)送後端
-    onReorder(applyDragToOrder(
-      items.map((it) => it.symbol), String(active.id), String(over.id)));
-  }
-
   if (isEmpty) {
     return <EmptyState text={emptyHint} />;
   }
@@ -479,7 +453,7 @@ function SingleListView({
         </div>
       )}
       <ul>
-        {pinned.map((it) => (
+        {items.map((it) => (
           <ItemRow
             key={it.symbol}
             item={it}
@@ -492,44 +466,6 @@ function SingleListView({
             showRemove={!isSystem}
           />
         ))}
-        {isSystem ? (
-          rest.map((it) => (
-            <ItemRow
-              key={it.symbol}
-              item={it}
-              quote={quotes[it.symbol]}
-              rules={rules}
-              hitCounts={hitCounts}
-              selectedSymbol={selectedSymbol}
-              onSelect={onSelect}
-              showRemove={false}
-            />
-          ))
-        ) : (
-          <DndContext
-            sensors={sensors}
-            onDragStart={() => setFrozen(live)}
-            onDragCancel={() => setFrozen(null)}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={restIds}
-              strategy={verticalListSortingStrategy}>
-              {rest.map((it) => (
-                <SortableItemRow
-                  key={it.symbol}
-                  item={it}
-                  quote={quotes[it.symbol]}
-                  rules={rules}
-                  hitCounts={hitCounts}
-                  selectedSymbol={selectedSymbol}
-                  onSelect={onSelect}
-                  onRemove={onRemove}
-                  showRemove
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
-        )}
       </ul>
     </div>
   );
@@ -555,8 +491,6 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
 }) {
   const symRules = rules;
   const isSel = item.symbol === selectedSymbol;
-  const totalHits = totalHitsForSymbol(item.symbol, hitCounts);
-  const hasHit = totalHits > 0;
 
   const price = quote?.price;
   const pct = resolveDisplayChangePct(quote, item);
@@ -564,7 +498,6 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
     : pct > 0 ? "text-bull"
     : pct < 0 ? "text-bear" : "text-ink-dim";
   const isDown = pct != null && pct < 0;
-  const markerBg = isDown ? "bg-bear" : "bg-accent";
   const markerBorder = isDown ? "border-l-bear" : "border-l-accent";
 
   return (
@@ -578,10 +511,6 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
       ].join(" ")}
       onClick={() => onSelect(item.symbol)}
     >
-      {hasHit && !isSel && (
-        <span className={`absolute left-0 top-4 w-[3px] h-[22px] ${markerBg}`} aria-hidden />
-      )}
-
       <div className="flex items-baseline gap-2 min-w-0 mb-2.5 pr-7">
         <span className="text-[19px] font-medium shrink-0 text-ink">{item.symbol}</span>
         <span className="text-sm text-ink-muted truncate">
@@ -638,7 +567,7 @@ function EmptyState({ text }: { text: string }) {
 // ---------------------------------------------------------------------------
 
 function MonitorListView({
-  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove,
+  items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove, onReorder,
 }: {
   items: MonitorListItem[];
   quotes: Record<string, WatchlistQuote>;
@@ -647,26 +576,85 @@ function MonitorListView({
   selectedSymbol: string | null;
   onSelect: (s: string) => void;
   onRemove: (s: string) => void;
+  onReorder: (symbols: string[]) => void;
 }) {
+  const [editMode, setEditMode] = useState(false);
+  const itemIds = useMemo(() => items.map((it) => it.symbol), [items]);
+  const sensors = useDragSensors();
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    onReorder(applyDragToOrder(itemIds, String(active.id), String(over.id)));
+  }
+
   if (items.length === 0) {
     return <EmptyState text="監聽清單還是空的 — 上方搜尋或從書籤加入" />;
   }
+
+  if (editMode) {
+    return (
+      <div>
+        <div className="px-3.5 py-2 border-b border-line flex justify-end">
+          <button
+            type="button"
+            onClick={() => setEditMode(false)}
+            className="text-xs text-ink-dim hover:text-accent"
+          >
+            ✕ 結束編輯
+          </button>
+        </div>
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+            <ul>
+              {items.map((it) => (
+                <SortableItemRow
+                  key={it.symbol}
+                  item={{ symbol: it.symbol, name: it.name }}
+                  quote={quotes[it.symbol]}
+                  rules={rules}
+                  hitCounts={hitCounts}
+                  selectedSymbol={selectedSymbol}
+                  onSelect={onSelect}
+                  onRemove={onRemove}
+                  showRemove
+                  removeLabel={`從監聽清單移除 ${it.symbol}`}
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
+      </div>
+    );
+  }
+
   return (
-    <ul>
-      {items.map((it) => (
-        <ItemRow
-          key={it.symbol}
-          item={{ symbol: it.symbol, name: it.name }}
-          quote={quotes[it.symbol]}
-          rules={rules}
-          hitCounts={hitCounts}
-          selectedSymbol={selectedSymbol}
-          onSelect={onSelect}
-          onRemove={onRemove}
-          showRemove
-          removeLabel={`從監聽清單移除 ${it.symbol}`}
-        />
-      ))}
-    </ul>
+    <div>
+      <div className="px-3.5 py-2 border-b border-line flex justify-end">
+        <button
+          type="button"
+          onClick={() => setEditMode(true)}
+          className="text-xs text-ink-dim hover:text-accent"
+        >
+          ✎ 編輯
+        </button>
+      </div>
+      <ul>
+        {items.map((it) => (
+          <ItemRow
+            key={it.symbol}
+            item={{ symbol: it.symbol, name: it.name }}
+            quote={quotes[it.symbol]}
+            rules={rules}
+            hitCounts={hitCounts}
+            selectedSymbol={selectedSymbol}
+            onSelect={onSelect}
+            onRemove={onRemove}
+            showRemove
+            removeLabel={`從監聽清單移除 ${it.symbol}`}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }

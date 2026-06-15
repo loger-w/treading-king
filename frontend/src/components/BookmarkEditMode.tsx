@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { api, type BookmarkGroup, type BookmarkItem, type SymbolSearchRow } from "../lib/api";
 import { type WatchlistQuote } from "../hooks/useWatchlistQuotes";
+import { applyDragToOrder } from "../lib/reorder";
 import { MoveCopyDialog } from "./MoveCopyDialog";
 
 /**
@@ -19,15 +27,25 @@ interface Props {
   quotes: Record<string, WatchlistQuote>;
   onExit: () => void;
   onChanged: () => Promise<void>;
+  onReorder: (symbols: string[]) => void;
 }
 
-export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChanged }: Props) {
+export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChanged, onReorder }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SymbolSearchRow[]>([]);
   const [recentlyAdded, setRecentlyAdded] = useState<Set<string>>(new Set());
   const [moveOp, setMoveOp] = useState<"move" | "copy" | null>(null);
+
+  const itemIds = useMemo(() => items.map((it) => it.symbol), [items]);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    onReorder(applyDragToOrder(itemIds, String(active.id), String(over.id)));
+  }
 
   // 搜尋(debounce 200ms)。cancelled 擋已發出的舊請求:
   // 晚到的舊回應不可蓋掉新結果、也不可在清空輸入後把結果回填
@@ -170,49 +188,24 @@ export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChang
         </div>
       )}
 
-      {/* 列表 (每 row 有 checkbox) */}
-      <ul>
-        {items.map((it) => {
-          const isChecked = selected.has(it.symbol);
-          const isJustAdded = recentlyAdded.has(it.symbol);
-          const q = quotes[it.symbol];
-          const pct = q?.changePct ?? null;
-          const priceCls = pct == null ? "text-ink-dim"
-            : pct > 0 ? "text-bull"
-            : pct < 0 ? "text-bear" : "text-ink-dim";
-
-          return (
-            <li
-              key={it.symbol}
-              onClick={() => toggle(it.symbol)}
-              className={[
-                "relative pl-10 pr-3.5 py-3 border-b border-line cursor-pointer transition-colors",
-                isChecked ? "bg-bg-card" : "hover:bg-bg-card/40",
-                isJustAdded ? "animate-bm-highlight" : "",
-              ].join(" ")}
-            >
-              <span className={[
-                "absolute left-3.5 top-4 w-3.5 h-3.5 border flex items-center justify-center text-bg text-2xs font-bold",
-                isChecked ? "bg-accent border-accent" : "border-line-strong",
-              ].join(" ")}>
-                {isChecked && "✓"}
-              </span>
-              <div className="flex items-baseline gap-2">
-                <span className="text-[17px] font-medium text-ink shrink-0">{it.symbol}</span>
-                <span className="text-sm text-ink-muted truncate flex-1">{it.name ?? "(無名稱)"}</span>
-                <span className={`text-sm tabular-nums shrink-0 ${priceCls}`}>
-                  {q?.price != null ? q.price.toFixed(2) : "—"}
-                  {pct != null && (
-                    <span className="ml-1 text-xs">
-                      {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
-                    </span>
-                  )}
-                </span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      {/* 列表 (每 row 有 checkbox + 可拖拉排序) */}
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+          <ul>
+            {items.map((it) => (
+              <SortableEditRow
+                key={it.symbol}
+                id={it.symbol}
+                item={it}
+                isChecked={selected.has(it.symbol)}
+                isJustAdded={recentlyAdded.has(it.symbol)}
+                quote={quotes[it.symbol]}
+                onToggle={toggle}
+              />
+            ))}
+          </ul>
+        </SortableContext>
+      </DndContext>
 
       {/* Toolbar */}
       <div className="sticky bottom-0 bg-bg-card border-t border-line-strong px-3.5 py-2.5 flex items-center gap-2">
@@ -257,5 +250,57 @@ export function BookmarkEditMode({ group, items, groups, quotes, onExit, onChang
         />
       )}
     </>
+  );
+}
+
+function SortableEditRow({ id, item, isChecked, isJustAdded, quote, onToggle }: {
+  id: string;
+  item: BookmarkItem;
+  isChecked: boolean;
+  isJustAdded: boolean;
+  quote: WatchlistQuote | undefined;
+  onToggle: (symbol: string) => void;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const pct = quote?.changePct ?? null;
+  const priceCls = pct == null ? "text-ink-dim"
+    : pct > 0 ? "text-bull"
+    : pct < 0 ? "text-bear" : "text-ink-dim";
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : undefined,
+      }}
+      {...listeners}
+      onClick={() => onToggle(item.symbol)}
+      className={[
+        "relative pl-10 pr-3.5 py-3 border-b border-line cursor-pointer transition-colors",
+        isChecked ? "bg-bg-card" : "hover:bg-bg-card/40",
+        isJustAdded ? "animate-bm-highlight" : "",
+      ].join(" ")}
+    >
+      <span className={[
+        "absolute left-3.5 top-4 w-3.5 h-3.5 border flex items-center justify-center text-bg text-2xs font-bold",
+        isChecked ? "bg-accent border-accent" : "border-line-strong",
+      ].join(" ")}>
+        {isChecked && "✓"}
+      </span>
+      <div className="flex items-baseline gap-2">
+        <span className="text-[17px] font-medium text-ink shrink-0">{item.symbol}</span>
+        <span className="text-sm text-ink-muted truncate flex-1">{item.name ?? "(無名稱)"}</span>
+        <span className={`text-sm tabular-nums shrink-0 ${priceCls}`}>
+          {quote?.price != null ? quote.price.toFixed(2) : "—"}
+          {pct != null && (
+            <span className="ml-1 text-xs">
+              {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+            </span>
+          )}
+        </span>
+      </div>
+    </li>
   );
 }

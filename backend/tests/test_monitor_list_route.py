@@ -142,3 +142,37 @@ def test_add_triggers_cdp_backfill(local_store_tmp, monkeypatch):
 
     assert r.status_code == 201
     assert enqueued == ["2330"]
+
+
+def test_reorder_monitor_list(local_store_tmp):
+    """PATCH reorder → 200,GET 回傳新順序。"""
+    store = get_local_store()
+    store.config.add_monitor("2330")
+    store.config.add_monitor("2317")
+    store.config.add_monitor("2454")
+
+    r = client.patch("/api/monitor_list/reorder", json={"symbols": ["2454", "2330", "2317"]})
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+    syms = [it["symbol"] for it in client.get("/api/monitor_list").json()["items"]]
+    assert syms == ["2454", "2330", "2317"]
+
+
+def test_reorder_monitor_list_mismatch_returns_400(local_store_tmp):
+    """symbols 與現況不符 → 400。"""
+    get_local_store().config.add_monitor("2330")
+    r = client.patch("/api/monitor_list/reorder", json={"symbols": ["2330", "9999"]})
+    assert r.status_code == 400
+
+
+def test_list_monitor_respects_position_order(local_store_tmp):
+    """有 position 的 items 照 position 排序,而非 added_at。"""
+    store = get_local_store()
+    store.config.add_monitor("2330")
+    store.config.add_monitor("2317")
+    store.config.add_monitor("2454")
+    store.config.reorder_monitor(["2317", "2454", "2330"])
+
+    syms = [it["symbol"] for it in client.get("/api/monitor_list").json()["items"]]
+    assert syms == ["2317", "2454", "2330"]

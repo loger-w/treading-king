@@ -28,11 +28,17 @@ class MonitorListAdd(BaseModel):
     symbol: str = Field(min_length=1, max_length=20)
 
 
+class MonitorListReorder(BaseModel):
+    symbols: list[str] = Field(min_length=1)
+
+
 @router.get("/api/monitor_list")
 async def list_monitor() -> dict:
     store = get_local_store()
-    # 最新加入的排在前面
-    items = sorted(store.config.list_monitor(), key=lambda m: m["added_at"], reverse=True)
+    raw = store.config.list_monitor()
+    # 有 position 的照 position 升冪；無 position 的(舊資料)排在後面、照 added_at 降冪(新的在前)
+    raw.sort(key=lambda m: m["added_at"], reverse=True)
+    items = sorted(raw, key=lambda m: m["position"] if m.get("position") is not None else float("inf"))
     out = [enrich_item(m, store.market) for m in items]
     return {"items": out, "count": len(out)}
 
@@ -65,6 +71,13 @@ async def add_monitor(payload: MonitorListAdd) -> dict:
         logger.warning("monitor_list add: refresh signal_engine failed: %s", e)
 
     return {"symbol": payload.symbol, "status": "added"}
+
+
+@router.patch("/api/monitor_list/reorder")
+async def reorder_monitor(payload: MonitorListReorder) -> dict:
+    if not get_local_store().config.reorder_monitor(payload.symbols):
+        raise HTTPException(400, detail={"error": "symbols_mismatch"})
+    return {"status": "ok"}
 
 
 @router.delete("/api/monitor_list/{symbol}", status_code=204)
