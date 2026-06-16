@@ -90,7 +90,7 @@ def test_active_signal_out_loads_row_with_high_tolerance():
 def test_active_filter_schema_bumps_to_7():
     from models.condition import ActiveFilter
     f = ActiveFilter(conditions=[Condition(field="close", operator="gt", value=100)])
-    assert f.schema_version == 8  # 7→8:加 mountain_bounce strategy
+    assert f.schema_version == 9  # 8→9:加 mountain_drift_break strategy
     assert f.ma_proximity is None
 
 
