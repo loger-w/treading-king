@@ -21,9 +21,10 @@ def test_list_bookmarks_shape(local_store_tmp):
     assert r.status_code == 200
     body = r.json()
     assert "groups" in body and "count" in body
-    assert any(g["is_system"] and g["source_type"] == "top_gainers" for g in body["groups"])
-    g = body["groups"][0]
-    assert set(g) == {"id", "name", "sort_order", "is_system", "source_type", "count"}
+    assert all(not g["is_system"] for g in body["groups"])
+    if body["groups"]:
+        g = body["groups"][0]
+        assert set(g) == {"id", "name", "sort_order", "is_system", "count"}
 
 
 def test_add_item_subscribes_and_enriches_name(local_store_tmp, monkeypatch):
@@ -33,7 +34,7 @@ def test_add_item_subscribes_and_enriches_name(local_store_tmp, monkeypatch):
                         lambda: AsyncMock())
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    gid = client.get("/api/bookmarks").json()["groups"][0]["id"]
     # 真實 contract:批次 symbols
     r = client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
     assert r.status_code in (200, 201)
@@ -48,22 +49,11 @@ def test_add_unknown_symbol_returns_404(local_store_tmp, monkeypatch):
     monkeypatch.setattr("routes.bookmarks.get_ws_pool", lambda: fake_pool)
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    gid = client.get("/api/bookmarks").json()["groups"][0]["id"]
     r = client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["9999"]})
     assert r.status_code == 404
     fake_pool.subscribe.assert_not_awaited()
 
-
-def test_system_group_items_empty_until_scheduler(local_store_tmp):
-    sid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if g["is_system"])
-    items = client.get(f"/api/bookmarks/{sid}/items").json()
-    assert items == {"items": [], "count": 0}
-
-
-def test_system_group_rejects_write(local_store_tmp):
-    sid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if g["is_system"])
-    r = client.post(f"/api/bookmarks/{sid}/items", json={"symbols": ["2330"]})
-    assert r.status_code == 403
 
 
 def test_delete_item_unsubscribes(local_store_tmp, monkeypatch):
@@ -72,7 +62,7 @@ def test_delete_item_unsubscribes(local_store_tmp, monkeypatch):
     monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    gid = client.get("/api/bookmarks").json()["groups"][0]["id"]
     client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
     r = client.delete(f"/api/bookmarks/{gid}/items/2330")
     assert r.status_code == 204
@@ -91,7 +81,7 @@ def test_add_item_subscribe_failure_rolls_back(local_store_tmp, monkeypatch):
     monkeypatch.setattr("routes.bookmarks.get_cdp_service", lambda: AsyncMock())
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    gid = client.get("/api/bookmarks").json()["groups"][0]["id"]
     r = client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
     assert r.status_code == 201
     body = r.json()
@@ -184,11 +174,8 @@ def test_reorder_groups_changes_list_order(local_store_tmp):
               if g["name"] == "自選")
     r = client.patch("/api/bookmarks/reorder", json={"ids": [g2, g1, g0]})
     assert r.status_code == 200
-    user_ids = [g["id"] for g in client.get("/api/bookmarks").json()["groups"]
-                if not g["is_system"]]
-    assert user_ids == [g2, g1, g0]
-    # 系統書籤(大漲股)永遠在最後、不受影響
-    assert client.get("/api/bookmarks").json()["groups"][-1]["is_system"] is True
+    all_ids = [g["id"] for g in client.get("/api/bookmarks").json()["groups"]]
+    assert all_ids == [g2, g1, g0]
 
 
 def test_batch_add_preserves_input_order(local_store_tmp, monkeypatch):
@@ -241,7 +228,7 @@ def test_delete_item_does_not_refresh_signal_engine(local_store_tmp, monkeypatch
     monkeypatch.setattr("services.signal_engine.get_signal_engine", lambda: fake_engine)
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    gid = client.get("/api/bookmarks").json()["groups"][0]["id"]
     client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
     fake_engine.reset_mock()  # 清掉 add 階段的呼叫,只看 delete
     r = client.delete(f"/api/bookmarks/{gid}/items/2330")
@@ -258,7 +245,7 @@ def test_add_item_does_not_refresh_signal_engine(local_store_tmp, monkeypatch):
     monkeypatch.setattr("services.signal_engine.get_signal_engine", lambda: fake_engine)
     get_local_store().market.replace_symbols(
         [{"symbol": "2330", "name": "台積電", "market": "TWSE", "is_etf": False, "is_active": True}])
-    gid = next(g["id"] for g in client.get("/api/bookmarks").json()["groups"] if not g["is_system"])
+    gid = client.get("/api/bookmarks").json()["groups"][0]["id"]
     client.post(f"/api/bookmarks/{gid}/items", json={"symbols": ["2330"]})
     fake_engine.refresh_active_signals.assert_not_awaited()
 

@@ -1,18 +1,12 @@
 """GET/POST/PATCH/DELETE /api/bookmarks — 書籤群組 + 內含股票 CRUD。
 
 書籤架構(本機 JSON 儲存,ConfigStore):
-  - bookmark_groups:user 自訂書籤(系統書籤「大漲股」由 route 動態合成,不入檔)
+  - bookmark_groups:user 書籤
   - watchlist_items:書籤 → 股票 (group_id, symbol)
-  - top_gainers:系統書籤「大漲股」的動態內容(記憶體快取,由排程更新)
 
 WS subscribe 用 owner_id = f"bookmark:{group_id}":
   fubon_ws 的 refcount 是 set-of-owner_id,同檔股票在多書籤時、
   pool 自動處理 — 刪一邊不會 unsubscribe(只要還有其他 group_id 的 owner)。
-
-系統書籤(is_system=true):
-  - id 固定為 SYSTEM_TOP_GAINERS_ID,內容來自 top_gainers 快取(不在 watchlist_items)
-  - PATCH/DELETE/POST items/DELETE items 一律拒絕(403)
-  - item 的 name/market/is_etf 由 MarketCache.get_symbol 即時補回
 """
 from __future__ import annotations
 
@@ -30,12 +24,6 @@ from services.local_store import get_local_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# 系統書籤「大漲股」的固定 id — 不入檔,由 route 動態合成。
-SYSTEM_TOP_GAINERS_ID = "system-top-gainers"
-SYSTEM_TOP_GAINERS_NAME = "大漲股"
-SYSTEM_TOP_GAINERS_SORT_ORDER = 100
-
 
 # ---------- helpers ----------
 
@@ -81,9 +69,7 @@ async def _backfill_worker_loop(queue: asyncio.Queue[str]) -> None:
 
 
 def _require_user_group(group_id: str) -> dict:
-    """取 user 書籤 + 擋系統書籤。系統 id → 403;不存在 → 404。"""
-    if group_id == SYSTEM_TOP_GAINERS_ID:
-        raise HTTPException(403, detail={"error": "system_bookmark_readonly"})
+    """取 user 書籤;不存在 → 404。"""
     g = next((x for x in get_local_store().config.list_groups() if x["id"] == group_id), None)
     if g is None:
         raise HTTPException(404, detail={"error": "bookmark_not_found"})
@@ -103,33 +89,24 @@ class BookmarkPatch(BaseModel):
 
 @router.get("/api/bookmarks")
 async def list_bookmarks() -> dict:
-    """列出 user 的書籤(含系統書籤),含每個書籤的股票數。"""
+    """列出 user 的書籤,含每個書籤的股票數。"""
     store = get_local_store()
     groups = store.config.list_groups()
     counts = store.config.item_counts()
 
-    # user 書籤依 sort_order 排序(對齊舊行為:is_system 先、再 sort_order)
-    user_sorted = sorted(groups, key=lambda g: g.get("sort_order", 0))
-    out = []
-    for g in user_sorted:
-        out.append({
-            "id": g["id"],
-            "name": g["name"],
-            "sort_order": g.get("sort_order", 0),
-            "is_system": False,
-            "source_type": g.get("source_type"),
-            "count": counts.get(g["id"], 0),
-        })
-
-    # 系統書籤「大漲股」放最後(對齊舊 order by is_system)
-    out.append({
-        "id": SYSTEM_TOP_GAINERS_ID,
-        "name": SYSTEM_TOP_GAINERS_NAME,
-        "sort_order": SYSTEM_TOP_GAINERS_SORT_ORDER,
-        "is_system": True,
-        "source_type": "top_gainers",
-        "count": store.market.top_gainers_count(),
-    })
+    out = sorted(
+        [
+            {
+                "id": g["id"],
+                "name": g["name"],
+                "sort_order": g.get("sort_order", 0),
+                "is_system": False,
+                "count": counts.get(g["id"], 0),
+            }
+            for g in groups
+        ],
+        key=lambda g: g["sort_order"],
+    )
     return {"groups": out, "count": len(out)}
 
 
@@ -162,7 +139,7 @@ async def reorder_bookmarks(payload: GroupsReorder) -> dict:
 @router.patch("/api/bookmarks/{bid}")
 async def update_bookmark(bid: str, payload: BookmarkPatch) -> dict:
     store = get_local_store()
-    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    _require_user_group(bid)
 
     if payload.name is None and payload.sort_order is None:
         raise HTTPException(400, detail={"error": "nothing_to_update"})
@@ -181,7 +158,7 @@ async def update_bookmark(bid: str, payload: BookmarkPatch) -> dict:
 @router.delete("/api/bookmarks/{bid}", status_code=204)
 async def delete_bookmark(bid: str) -> None:
     store = get_local_store()
-    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    _require_user_group(bid)
 
     # 先 unsubscribe 自己的 owner_id(refcount 機制會處理多書籤共有)
     owner = _owner_id(bid)
@@ -216,24 +193,9 @@ class ItemsMove(BaseModel):
 async def list_items(bid: str) -> dict:
     store = get_local_store()
 
-    if bid == SYSTEM_TOP_GAINERS_ID:
-        # 從 top_gainers 快取補 symbols metadata;market 仍用大漲股 row 的值(來源較新)
-        out = []
-        for r in store.market.get_top_gainers():
-            out.append({
-                **enrich_item({"symbol": r["symbol"]}, store.market),
-                "market": r.get("market"),
-                "change_pct": r.get("change_pct"),
-                "volume_lots": r.get("volume_lots"),
-                "captured_at": r.get("captured_at"),
-                "added_at": None,
-                "note": None,
-            })
-        return {"items": out, "count": len(out)}
+    g = _require_user_group(bid)  # noqa: F841
 
-    g = _require_user_group(bid)  # noqa: F841 — 存在性檢查(系統 id 不會到這)
-
-    # User 書籤 — 有 position 的照 position 升冪在前(自訂順序);
+    # 有 position 的照 position 升冪在前(自訂順序);
     # 舊資料沒有 position(不遷移),fallback added_at 新→舊接在後面
     items = store.config.list_items(bid)
     with_pos = sorted((it for it in items if it.get("position") is not None),
@@ -255,7 +217,7 @@ async def list_items(bid: str) -> dict:
 async def add_items(bid: str, payload: ItemsAdd) -> dict:
     """批次加股票。已加入的 symbol 略過(不視為錯誤)。"""
     store = get_local_store()
-    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    _require_user_group(bid)
 
     # 驗 symbols 存在(cache 已載入才驗;未載入則放行,best-effort)
     if store.market.symbols_loaded():
@@ -299,7 +261,7 @@ async def add_items(bid: str, payload: ItemsAdd) -> dict:
 @router.delete("/api/bookmarks/{bid}/items/{symbol}", status_code=204)
 async def remove_item(bid: str, symbol: str) -> None:
     store = get_local_store()
-    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    _require_user_group(bid)
 
     store.config.remove_item(bid, symbol)
 
@@ -327,7 +289,7 @@ class ItemsReorder(BaseModel):
 @router.patch("/api/bookmarks/{bid}/items/reorder")
 async def reorder_bookmark_items(bid: str, payload: ItemsReorder) -> dict:
     """以 symbols 的順序重排書籤內股票。集合與現況不符回 400(過期請求不蓋資料)。"""
-    _require_user_group(bid)  # 系統書籤擋 + 存在性
+    _require_user_group(bid)
     if not get_local_store().config.reorder_items(bid, payload.symbols):
         raise HTTPException(400, detail={"error": "items_mismatch"})
     return {"status": "ok"}
@@ -338,7 +300,7 @@ async def move_items(payload: ItemsMove) -> dict:
     """批次跨書籤搬移 / 複製。"""
     store = get_local_store()
 
-    # 驗 from + to 都不是系統書籤 + 存在
+    # 驗 from + to 存在
     _require_user_group(payload.from_group_id)
     for to_id in payload.to_group_ids:
         _require_user_group(to_id)
@@ -384,12 +346,3 @@ async def move_items(payload: ItemsMove) -> dict:
             "from_group_id": payload.from_group_id, "to_group_ids": payload.to_group_ids,
             "failed": failed}
 
-
-# ---------- 大漲股(系統書籤)refresh 端點 ----------
-
-@router.post("/api/bookmarks/top-gainers/refresh")
-async def trigger_top_gainers_refresh() -> dict:
-    """手動觸發大漲股 refresh,給除錯與測試用。"""
-    from jobs.top_gainers_scheduler import refresh_top_gainers
-    result = await refresh_top_gainers()
-    return result
