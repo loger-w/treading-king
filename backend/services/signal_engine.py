@@ -94,6 +94,8 @@ class SignalEngine:
         self._breakout_confirmed: set[tuple[str, str, str]] = set()
         # 造山積木:per symbol 當日造山狀態(daily reset 清)
         self._mountain_state: dict[str, dict] = {}
+        # 自動監聽:scheduler 動態加入、收盤清、不持久化
+        self._auto_monitor_symbols: set[str] = set()
 
     # ---------- 公開 API ----------
 
@@ -154,6 +156,43 @@ class SignalEngine:
             "invalid_rules": self._invalid_rules,
         }
 
+    async def add_auto_symbols(self, symbols: set[str]) -> None:
+        """由 auto_monitor_scheduler 呼叫。增量加入 auto 股票 + 載入 field_cache。"""
+        new = symbols - self._auto_monitor_symbols
+        if not new:
+            return
+        self._auto_monitor_symbols |= new
+        cdp = get_cdp_service()
+        for sym in new:
+            self._field_cache.setdefault(sym, {})
+            levels = await cdp.get(sym)
+            if levels:
+                d = self._field_cache[sym]
+                d["cdp_ah"] = levels["ah"]
+                d["cdp_nh"] = levels["nh"]
+                d["cdp"] = levels["cdp"]
+                d["cdp_nl"] = levels["nl"]
+                d["cdp_al"] = levels["al"]
+                d["prev_close"] = levels["prev_close"]
+            sma_5, sma_20 = await ma_service.fetch_sma_5_20(sym)
+            if sma_5 is not None:
+                self._field_cache[sym]["sma_5"] = sma_5
+            if sma_20 is not None:
+                self._field_cache[sym]["sma_20"] = sma_20
+        logger.info("auto_monitor: added %d symbols (total=%d)",
+                    len(new), len(self._auto_monitor_symbols))
+
+    async def clear_auto_symbols(self) -> None:
+        """收盤後呼叫。清 auto set + 逐出 field_cache 中 auto-only 的 entry。"""
+        manual = self._load_config_monitor_symbols()
+        auto_only = self._auto_monitor_symbols - manual
+        for sym in auto_only:
+            self._field_cache.pop(sym, None)
+        count = len(self._auto_monitor_symbols)
+        self._auto_monitor_symbols.clear()
+        if count:
+            logger.info("auto_monitor: cleared %d symbols", count)
+
     # ---------- internal ----------
 
     def _row_to_active(self, r: dict) -> ActiveSignalOut:
@@ -167,7 +206,11 @@ class SignalEngine:
         )
 
     async def _load_monitor_symbols(self) -> set[str]:
-        """從本機 monitor_list 拉所有監聽 symbol。"""
+        """config monitor_list ∪ auto_monitor — 兩來源合併為引擎評估範圍。"""
+        return self._load_config_monitor_symbols() | self._auto_monitor_symbols
+
+    def _load_config_monitor_symbols(self) -> set[str]:
+        """只讀 config.json 的手動 monitor_list。"""
         return {m["symbol"] for m in get_local_store().config.list_monitor()}
 
     async def _refill_field_cache(self) -> None:
@@ -704,7 +747,7 @@ class SignalEngine:
         self._prox_suppressed.clear()
         self._day_volume.clear()
         # 昨日收盤 tick 不該當隔日第一筆的方向參考;順手擋 24/7 長駐下
-        # 換股訂閱(top_gainers / preview)造成的慢速累積
+        # 換股訂閱(auto_monitor / preview)造成的慢速累積
         self._prev_tick.clear()
         # cooldown 上限 86400s — 更舊的 key 不可能再擋觸發,留著只會累積
         cutoff = time.time() - 86400
@@ -713,6 +756,7 @@ class SignalEngine:
         self._breakout_confirm_count.clear()
         self._breakout_confirmed.clear()
         self._mountain_state.clear()
+        self._auto_monitor_symbols.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
 
