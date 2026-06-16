@@ -15,12 +15,13 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from middleware.auth import APIKeyMiddleware  # noqa: E402
 from routes import (
-    active_signals, bookmarks, camarilla, candles, capital, cdp as cdp_route,
+    active_signals, auto_monitor as auto_monitor_route, bookmarks, camarilla,
+    candles, capital, cdp as cdp_route,
     config_io, ma, monitor_list as monitor_list_route, mxf,
     preview, quote, signals_history, symbols, ws,
 )  # noqa: E402
 from routes.symbols import bootstrap_symbols_if_missing  # noqa: E402
-from jobs.top_gainers_scheduler import top_gainers_loop  # noqa: E402
+from jobs.auto_monitor_scheduler import auto_monitor_loop  # noqa: E402
 from services.fubon_client import get_fubon  # noqa: E402
 from services.fubon_futures import resolve_active_symbol  # noqa: E402
 from services.fubon_futures_ws import get_futures_ws_pool, session_reconcile_loop  # noqa: E402
@@ -74,15 +75,15 @@ async def lifespan(app: FastAPI):
     logger.info("MXF session reconcile loop started")
 
     # 依 config 訂閱書籤/監聽清單並刷新訊號引擎
-    # 系統書籤(大漲股)由 top_gainers_scheduler 在每次 refresh 時自行 sync 訂閱
+    # 系統自動監聽由 auto_monitor_scheduler 在每次 refresh 時自行 sync 訂閱
     await resync_from_config()
 
     # 啟動 overnight 8:25 cron — 每個 instance 自己重 login + 重訂閱 ws
     bg_tasks.append(asyncio.create_task(overnight_loop()))
     logger.info("overnight loop started")
 
-    # 大漲股排程 — 盤中每 1 分鐘更新 top_gainers 記憶體快取
-    bg_tasks.append(asyncio.create_task(top_gainers_loop()))
+    # 自動監聽排程 — 盤中每 1 分鐘篩選熱門股 → WS 訂閱 → signal engine
+    bg_tasks.append(asyncio.create_task(auto_monitor_loop()))
 
     # 群益下單(可選,未設定或失敗都不影響富邦)
     try:
@@ -152,3 +153,4 @@ app.include_router(mxf.router)
 app.include_router(config_io.router)
 app.include_router(ws.router)
 app.include_router(capital.router)
+app.include_router(auto_monitor_route.router)
