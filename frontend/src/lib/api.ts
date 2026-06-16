@@ -186,7 +186,6 @@ export interface BookmarkGroup {
   name: string;
   sort_order: number;
   is_system: boolean;
-  source_type: string | null;   // 'top_gainers' for 大漲股
   count: number;
 }
 
@@ -195,11 +194,23 @@ export interface BookmarksResponse {
   count: number;
 }
 
-export interface BookmarkItem extends WatchlistRow {
-  // 系統書籤(大漲股)的額外欄位
-  change_pct?: number | null;
-  volume_lots?: number | null;
-  captured_at?: string | null;
+export interface BookmarkItem extends WatchlistRow {}
+
+export interface AutoMonitorItem {
+  symbol: string;
+  name: string | null;
+  market: string | null;
+  is_etf: boolean;
+  change_pct: number | null;
+  amplitude_pct: number | null;
+  volume_lots: number | null;
+  rank: number | null;
+  captured_at: string | null;
+}
+
+export interface AutoMonitorResponse {
+  items: AutoMonitorItem[];
+  count: number;
 }
 
 export interface BookmarkItemsResponse {
@@ -433,6 +444,10 @@ export const api = {
       fetchJSON<{ status: string }>("/api/bookmarks/reorder", {
         method: "PATCH", body: JSON.stringify({ ids }),
       }),
+  },
+
+  autoMonitor: {
+    list: () => fetchJSON<AutoMonitorResponse>("/api/auto_monitor"),
   },
 
   activeSignals: {
