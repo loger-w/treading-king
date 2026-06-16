@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent,
 } from "@dnd-kit/core";
@@ -6,7 +6,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { type ActiveSignal, type BookmarkGroup, type BookmarkItem, type MonitorListItem } from "../lib/api";
+import { api, type ActiveSignal, type AutoMonitorItem, type BookmarkGroup, type BookmarkItem, type MonitorListItem } from "../lib/api";
 import { applyDragToOrder } from "../lib/reorder";
 import { useBookmarks } from "../hooks/useBookmarks";
 import { useAllBookmarkItems, useBookmarkItems } from "../hooks/useBookmarkItems";
@@ -27,6 +27,8 @@ import { SignalChip } from "./SignalChip";
 
 const ALL_VIEW = "__all__";
 const MONITOR_VIEW = "__monitor__";
+const AUTO_MONITOR_VIEW = "__auto_monitor__";
+const AUTO_MONITOR_POLL_MS = 30_000;
 
 // click 與 drag 的分界:6px 內是點擊(選股/切書籤),超過才啟動拖拉
 function useDragSensors() {
@@ -63,7 +65,22 @@ export function BookmarksPanel({
 }: Props) {
   const { groups, loading: groupsLoading, error: groupsError, refresh: refreshGroups, create, remove: removeGroup, rename, reorderGroups } = useBookmarks();
   const { items: monitorItems, remove: removeFromMonitor, reorder: reorderMonitor } = useMonitorList();
+  const [autoMonitorItems, setAutoMonitorItems] = useState<AutoMonitorItem[]>([]);
+  const refreshAutoMonitor = useCallback(async () => {
+    try {
+      const r = await api.autoMonitor.list();
+      setAutoMonitorItems(r.items);
+    } catch { /* 靜默 — 後端離線不影響書籤面板 */ }
+  }, []);
+  useEffect(() => { refreshAutoMonitor(); }, [refreshAutoMonitor]);
+
   const [selectedGroupId, setSelectedGroupId] = useState<string>(ALL_VIEW);
+
+  useEffect(() => {
+    if (selectedGroupId !== AUTO_MONITOR_VIEW) return;
+    const id = setInterval(refreshAutoMonitor, AUTO_MONITOR_POLL_MS);
+    return () => clearInterval(id);
+  }, [selectedGroupId, refreshAutoMonitor]);
   const [newDialogOpen, setNewDialogOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -84,8 +101,12 @@ export function BookmarksPanel({
   // 即時報價在本面板訂(唯一消費者):每個 tick 的 setState 半徑侷限在書籤欄,
   // 不再打到頁根讓四欄(含下單面板)全量重繪
   const allWatchSymbols = useMemo(
-    () => Array.from(new Set([...bySymbolFirst.keys(), ...monitorItems.map((m) => m.symbol)])),
-    [bySymbolFirst, monitorItems],
+    () => Array.from(new Set([
+      ...bySymbolFirst.keys(),
+      ...monitorItems.map((m) => m.symbol),
+      ...autoMonitorItems.map((m) => m.symbol),
+    ])),
+    [bySymbolFirst, monitorItems, autoMonitorItems],
   );
   const quotes = useWatchlistQuotes(allWatchSymbols);
 
@@ -102,7 +123,7 @@ export function BookmarksPanel({
   // 在管理 dialog 刪掉目前選中的書籤後,選擇會懸空:畫面停在已刪 group 的
   // stale items、× 按鈕還會對已刪 group 打 404 — groups 更新後檢查並退回「全部」
   useEffect(() => {
-    if (selectedGroupId === ALL_VIEW || selectedGroupId === MONITOR_VIEW) return;
+    if (selectedGroupId === ALL_VIEW || selectedGroupId === MONITOR_VIEW || selectedGroupId === AUTO_MONITOR_VIEW) return;
     if (groups.length > 0 && !groups.some((g) => g.id === selectedGroupId)) {
       setSelectedGroupId(ALL_VIEW);
     }
@@ -191,6 +212,13 @@ export function BookmarksPanel({
             onClick={() => pickGroup(MONITOR_VIEW)}
           />
           <SidebarItem
+            label="自動監聽"
+            count={autoMonitorItems.length}
+            selected={selectedGroupId === AUTO_MONITOR_VIEW}
+            system={true}
+            onClick={() => pickGroup(AUTO_MONITOR_VIEW)}
+          />
+          <SidebarItem
             label="全部"
             count={bySymbolFirst.size}
             selected={selectedGroupId === ALL_VIEW}
@@ -230,6 +258,13 @@ export function BookmarksPanel({
               <button type="button" onClick={() => refreshGroups()}
                 className="text-xs text-ink-dim border border-line px-3 py-1 hover:text-accent hover:border-accent">重試</button>
             </div>
+          ) : selectedGroupId === AUTO_MONITOR_VIEW ? (
+            <AutoMonitorView
+              items={autoMonitorItems}
+              quotes={quotes}
+              selectedSymbol={selectedSymbol}
+              onSelect={onSelectSymbol}
+            />
           ) : selectedGroupId === MONITOR_VIEW ? (
             <MonitorListView
               items={monitorItems}
@@ -638,5 +673,62 @@ function MonitorListView({
         ))}
       </ul>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 自動監聽 view
+// ---------------------------------------------------------------------------
+
+function AutoMonitorView({ items, quotes, selectedSymbol, onSelect }: {
+  items: AutoMonitorItem[];
+  quotes: Record<string, WatchlistQuote>;
+  selectedSymbol: string | null;
+  onSelect: (s: string) => void;
+}) {
+  if (items.length === 0) {
+    return <EmptyState text="尚無符合條件的股票（盤中自動篩選）" />;
+  }
+
+  return (
+    <ul>
+      {items.map((item) => {
+        const q = quotes[item.symbol];
+        const price = q?.price ?? null;
+        const pct = q?.changePct ?? item.change_pct;
+        const isSel = item.symbol === selectedSymbol;
+        const color = pct != null && pct > 0 ? "text-bull"
+          : pct != null && pct < 0 ? "text-bear" : "text-ink-dim";
+        const markerBorder = pct != null && pct < 0 ? "border-l-bear" : "border-l-accent";
+
+        return (
+          <li
+            key={item.symbol}
+            className={[
+              "relative px-3.5 py-4 border-b border-line cursor-pointer transition-colors duration-200",
+              isSel ? `bg-bg-card border-l-2 ${markerBorder} pl-3` : "hover:bg-bg-card/40",
+            ].join(" ")}
+            onClick={() => onSelect(item.symbol)}
+          >
+            <div className="flex items-baseline gap-2 min-w-0 mb-1 pr-7">
+              <span className="text-[19px] font-medium shrink-0 text-ink">{item.symbol}</span>
+              <span className="text-sm text-ink-muted truncate">{item.name ?? "—"}</span>
+              <span className={`shrink-0 text-sm tabular-nums ${color}`}>
+                {price != null ? price.toFixed(2) : "—"}
+                {pct != null && (
+                  <span className="ml-1 text-xs">
+                    {pct > 0 ? "+" : ""}{pct.toFixed(2)}%
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className="flex gap-3 text-xs text-ink-dim">
+              {item.amplitude_pct != null && <span>振幅 {item.amplitude_pct.toFixed(1)}%</span>}
+              {item.volume_lots != null && <span>量 {item.volume_lots.toLocaleString()} 張</span>}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
