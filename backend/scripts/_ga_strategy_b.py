@@ -129,7 +129,6 @@ def eval_chromosome(params, stocks_list, alpha):
             # Break confirm state: per-level
             break_counts = {}
             fired = set()
-            last_fired_bar = {}
 
             n = len(candles) - 1
             for i in range(n):

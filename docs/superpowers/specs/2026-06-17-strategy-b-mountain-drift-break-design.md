@@ -181,7 +181,7 @@ if stype not in ("cdp_breakout_confirm", "peak_divergence", "mountain_bounce", "
 
 新增 `_ga_strategy_b.py`，基於 `_ga_strategy_a.py` 改寫。
 
-染色體 7 基因：
+染色體 6 基因：
 
 | 基因 | 範圍 | 步長 | 值數 |
 |------|------|------|------|

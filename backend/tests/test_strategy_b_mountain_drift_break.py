@@ -272,3 +272,30 @@ def test_can_retrigger_same_level():
     # 繼續跌 → 第二次觸發
     r2 = engine._eval_mountain_drift_break(strat, active, "2330", _candle(93.5, minute=4), 240)
     assert r2 is not None
+
+
+def test_resurge_clears_drift_state():
+    """re-surge 時 drift_state 應清除，避免再次 confirmed 後用 stale 資料。"""
+    engine = _engine()
+    _set_mountain_confirmed(engine)
+    active = _active(drift_bars=3, drift_ratio=0.5, break_confirm_bars=1)
+    strat = engine._strategy_of(active)
+    # 建立 drift 窗口
+    closes = [99, 98, 97, 96]
+    for i, c in enumerate(closes):
+        engine._eval_mountain_drift_break(strat, active, "2330", _candle(c, minute=i), i * 60)
+    key = (active.id, "2330")
+    assert key in engine._mountain_drift_state
+    assert len(engine._mountain_drift_state[key]["drift_window"]) == 3
+
+    # 模擬 re-surge: phase → surge_tracking
+    engine._mountain_state["2330"]["phase"] = "surge_tracking"
+    engine._eval_mountain_drift_break(strat, active, "2330", _candle(105, minute=5), 300)
+    # drift_state 應已清除
+    assert key not in engine._mountain_drift_state
+
+    # 再次 confirmed
+    engine._mountain_state["2330"]["phase"] = "confirmed"
+    # 新的 drift 窗口從零開始,不受 stale 資料影響
+    r = engine._eval_mountain_drift_break(strat, active, "2330", _candle(94, minute=10), 600)
+    assert r is None  # 窗口不足（需要 4 根: 1 設 prev_close + 3 比較）

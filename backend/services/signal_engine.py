@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -161,6 +162,7 @@ class SignalEngine:
                 invalid += 1
                 rid = r.get("id", "?") if isinstance(r, dict) else "?"
                 logger.warning("active_signal row skipped (invalid): id=%s", rid, exc_info=True)
+        active.sort(key=lambda a: 0 if self._strategy_of(a) else 1)
         self._active = active
         self._invalid_rules = invalid
         self._limit_up_active = any(
@@ -386,6 +388,9 @@ class SignalEngine:
             self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
         prev = self._prev_tick.get(symbol)
+        # 策略規則已排在前面(refresh_active_signals sort);追蹤它們觸發的 CDP level,
+        # 後續 non-strategy 碰線規則遇到同 level 就跳過,避免重複通知
+        strategy_cdp_levels: set[str] = set()
         try:
             for active in self._active:
                 if not self._scope_includes(active, symbol):
@@ -420,6 +425,8 @@ class SignalEngine:
                     ok = cdp_touch is not None
                 else:
                     cdp_touch, ma_touch = self._eval_with_touch_meta(active, symbol, tick, prev)
+                    if cdp_touch is not None and cdp_touch["level"] in strategy_cdp_levels:
+                        cdp_touch = None
                     non_prox_ok = self._eval_non_proximity(active, symbol, tick)
                     ok = self._combine_results(active, cdp_touch, ma_touch, non_prox_ok)
                 if not ok:
@@ -442,6 +449,9 @@ class SignalEngine:
                 if now - last_ts < active.cooldown_seconds:
                     continue
                 self._cooldown[key] = now
+
+                if strat is not None and cdp_touch is not None:
+                    strategy_cdp_levels.add(cdp_touch["level"])
 
                 # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
                 # 不計入碰線觸碰次數(避免 touch_index 混計)
@@ -695,24 +705,27 @@ class SignalEngine:
 
         return result
 
+    _CDP_FIELD_MAP = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+
     def _eval_mountain_drift_break(
         self, strat: dict, active: ActiveSignalOut, symbol: str,
         candle: MinuteCandle, now: float,
     ) -> dict | None:
         """策略 B：造山確認 + drift 弱勢 + 跌破 CDP 支撐線 → 做空訊號。"""
-        import math
-
         st = self._mountain_state.get(symbol)
         if st is None or st["phase"] != "confirmed":
+            # re-surge 時清除 drift 狀態，避免再次 confirmed 後用 stale 資料
+            key = (active.id, symbol)
+            if key in self._mountain_drift_state:
+                del self._mountain_drift_state[key]
             return None
 
         cache = self._field_cache.get(symbol, {})
-        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
         drift_bars = strat["drift_bars"]
-        drift_ratio = strat["drift_ratio"]
         break_n = strat["break_confirm_bars"]
         tol_pct = strat.get("tolerance_pct", 0.0)
         require_vwap = strat.get("require_below_vwap", False)
+        drift_threshold = math.ceil(drift_bars * strat["drift_ratio"])
 
         key = (active.id, symbol)
         ds = self._mountain_drift_state.get(key)
@@ -725,7 +738,8 @@ class SignalEngine:
 
         if prev_c is not None:
             dw.append(candle.close < prev_c)
-            del dw[:-drift_bars]
+            if len(dw) > drift_bars:
+                del dw[:-drift_bars]
 
         ds["prev_close"] = candle.close
 
@@ -733,18 +747,16 @@ class SignalEngine:
             return None
 
         drift_down_count = sum(dw)
-        drift_threshold = math.ceil(drift_bars * drift_ratio)
         drift_ok = drift_down_count >= drift_threshold
 
+        vwap = cache.get("vwap")
         if require_vwap:
-            vwap = cache.get("vwap")
             if vwap is None or candle.close >= vwap:
                 drift_ok = False
 
-        vwap_val = cache.get("vwap")
         result = None
         for level in strat["levels"]:
-            v = cache.get(field_map.get(level, level))
+            v = cache.get(self._CDP_FIELD_MAP.get(level, level))
             if v is None:
                 continue
             threshold = v * (1 - tol_pct / 100)
@@ -768,7 +780,7 @@ class SignalEngine:
                             "drift_down_count": drift_down_count,
                             "break_confirm": cnt,
                             "peak_high": st["peak_high"],
-                            "below_vwap": vwap_val is not None and candle.close < vwap_val,
+                            "below_vwap": vwap is not None and candle.close < vwap,
                         }
             else:
                 self._mountain_drift_break_count[bk] = 0
