@@ -55,9 +55,9 @@ def test_get_symbol_returns_metadata_or_none(tmp_path):
     assert mc.get_symbol("9999") is None
 
 
-def test_top_gainers_in_memory(tmp_path):
+def test_auto_monitor_in_memory(tmp_path):
     mc = MarketCache(tmp_path / "symbols.json", tmp_path / "daily_ohlc.json")
     mc.load()
-    mc.replace_top_gainers([{"symbol": "2330", "change_pct": 5.0, "rank": 1}])
-    assert mc.top_gainers_count() == 1
-    assert mc.get_top_gainers()[0]["symbol"] == "2330"
+    mc.replace_auto_monitor([{"symbol": "2330", "change_pct": 5.0, "rank": 1}])
+    assert mc.auto_monitor_count() == 1
+    assert mc.get_auto_monitor()[0]["symbol"] == "2330"

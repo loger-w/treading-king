@@ -1,9 +1,9 @@
-"""市場資料本機快取:symbols(寫檔)/ daily_ohlc(寫檔)/ top_gainers(記憶體)。
+"""市場資料本機快取:symbols(寫檔)/ daily_ohlc(寫檔)/ auto_monitor(記憶體)。
 
 symbols 和 daily_ohlc 持久化到 JSON 檔案,因為這些資料來自公開來源 / Fubon,
 重建有成本但不是即時資料,值得跨程序保存。
 
-top_gainers 是純記憶體快取:每分鐘重算,重啟後立即重填,不需要持久化。
+auto_monitor 是純記憶體快取:每分鐘更新,重啟後立即重填,不需要持久化。
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class MarketCache:
         self._symbol_set: set[str] = set()
         self._symbol_index: dict[str, dict] = {}   # symbol -> row(O(1) 查單筆 metadata)
         self._daily_ohlc: dict[str, dict] = {}   # symbol -> 最新一筆
-        self._top_gainers: list[dict] = []
+        self._auto_monitor: list[dict] = []
 
     def load(self) -> None:
         self._symbols = read_json(self._symbols_path, []) or []
@@ -89,13 +89,13 @@ class MarketCache:
         if changed:
             atomic_write_json(self._daily_ohlc_path, self._daily_ohlc)
 
-    # ---- top_gainers(記憶體,每分鐘重算) ----
+    # ---- auto_monitor(記憶體,每分鐘更新) ----
 
-    def get_top_gainers(self) -> list[dict]:
-        return list(self._top_gainers)
+    def get_auto_monitor(self) -> list[dict]:
+        return list(self._auto_monitor)
 
-    def replace_top_gainers(self, rows: list[dict]) -> None:
-        self._top_gainers = list(rows)
+    def replace_auto_monitor(self, rows: list[dict]) -> None:
+        self._auto_monitor = list(rows)
 
-    def top_gainers_count(self) -> int:
-        return len(self._top_gainers)
+    def auto_monitor_count(self) -> int:
+        return len(self._auto_monitor)
