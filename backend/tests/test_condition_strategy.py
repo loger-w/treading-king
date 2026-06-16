@@ -29,7 +29,7 @@ def test_discriminator_picks_right_model_from_dict():
 
 
 def test_schema_version_bumped_to_8():
-    assert ActiveFilter(strategy=LimitUpOpenTouchStrategy(type="limit_up_open_touch")).schema_version == 8
+    assert ActiveFilter(strategy=LimitUpOpenTouchStrategy(type="limit_up_open_touch")).schema_version == 9
 
 
 def test_peak_divergence_strategy_defaults():

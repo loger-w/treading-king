@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -119,6 +120,9 @@ class SignalEngine:
         self._mountain_state: dict[str, dict] = {}
         self._vwap_state: dict[str, dict[str, float]] = {}
         self._mountain_bounce_armed: dict[tuple[str, str, str], dict] = {}
+        # 策略 B:drift 弱勢 + 跌破支撐
+        self._mountain_drift_state: dict[tuple[str, str], dict] = {}
+        self._mountain_drift_break_count: dict[tuple[str, str, str], int] = {}
         # 自動監聽:scheduler 動態加入、收盤清、不持久化
         self._auto_monitor_symbols: set[str] = set()
 
@@ -158,6 +162,7 @@ class SignalEngine:
                 invalid += 1
                 rid = r.get("id", "?") if isinstance(r, dict) else "?"
                 logger.warning("active_signal row skipped (invalid): id=%s", rid, exc_info=True)
+        active.sort(key=lambda a: 0 if self._strategy_of(a) else 1)
         self._active = active
         self._invalid_rules = invalid
         self._limit_up_active = any(
@@ -383,6 +388,9 @@ class SignalEngine:
             self._day_volume[symbol] = self._day_volume.get(symbol, 0) + max(0, tick.size)
 
         prev = self._prev_tick.get(symbol)
+        # 策略規則已排在前面(refresh_active_signals sort);追蹤它們觸發的 CDP level,
+        # 後續 non-strategy 碰線規則遇到同 level 就跳過,避免重複通知
+        strategy_cdp_levels: set[str] = set()
         try:
             for active in self._active:
                 if not self._scope_includes(active, symbol):
@@ -403,6 +411,12 @@ class SignalEngine:
                     cdp_touch = self._eval_mountain_bounce(strat, active, symbol, settled, now)
                     ma_touch = None
                     ok = cdp_touch is not None
+                elif stype == "mountain_drift_break":
+                    if settled is None:
+                        continue
+                    cdp_touch = self._eval_mountain_drift_break(strat, active, symbol, settled, now)
+                    ma_touch = None
+                    ok = cdp_touch is not None
                 elif stype == "peak_divergence":
                     continue  # v3: 造山由 _update_mountain 自動處理,不走 strategy dispatch
                 elif strat is not None:
@@ -411,6 +425,8 @@ class SignalEngine:
                     ok = cdp_touch is not None
                 else:
                     cdp_touch, ma_touch = self._eval_with_touch_meta(active, symbol, tick, prev)
+                    if cdp_touch is not None and cdp_touch["level"] in strategy_cdp_levels:
+                        cdp_touch = None
                     non_prox_ok = self._eval_non_proximity(active, symbol, tick)
                     ok = self._combine_results(active, cdp_touch, ma_touch, non_prox_ok)
                 if not ok:
@@ -424,7 +440,7 @@ class SignalEngine:
                 # 不該吞掉碰 CDP);其他 strategy 維持 per 股票
                 if stype is None:
                     touch_level = (cdp_touch or ma_touch or {}).get("level", "")
-                elif stype in ("cdp_breakout_confirm", "mountain_bounce"):
+                elif stype in ("cdp_breakout_confirm", "mountain_bounce", "mountain_drift_break"):
                     touch_level = (cdp_touch or {}).get("level", "")
                 else:
                     touch_level = ""
@@ -434,9 +450,12 @@ class SignalEngine:
                     continue
                 self._cooldown[key] = now
 
+                if strat is not None and cdp_touch is not None:
+                    strategy_cdp_levels.add(cdp_touch["level"])
+
                 # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
                 # 不計入碰線觸碰次數(避免 touch_index 混計)
-                if stype not in ("cdp_breakout_confirm", "peak_divergence", "mountain_bounce"):
+                if stype not in ("cdp_breakout_confirm", "peak_divergence", "mountain_bounce", "mountain_drift_break"):
                     today = date.today()
                     if cdp_touch is not None:
                         count_key = (symbol, cdp_touch["level"], today)
@@ -686,6 +705,88 @@ class SignalEngine:
 
         return result
 
+    _CDP_FIELD_MAP = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+
+    def _eval_mountain_drift_break(
+        self, strat: dict, active: ActiveSignalOut, symbol: str,
+        candle: MinuteCandle, now: float,
+    ) -> dict | None:
+        """策略 B：造山確認 + drift 弱勢 + 跌破 CDP 支撐線 → 做空訊號。"""
+        st = self._mountain_state.get(symbol)
+        if st is None or st["phase"] != "confirmed":
+            # re-surge 時清除 drift 狀態，避免再次 confirmed 後用 stale 資料
+            key = (active.id, symbol)
+            if key in self._mountain_drift_state:
+                del self._mountain_drift_state[key]
+            return None
+
+        cache = self._field_cache.get(symbol, {})
+        drift_bars = strat["drift_bars"]
+        break_n = strat["break_confirm_bars"]
+        tol_pct = strat.get("tolerance_pct", 0.0)
+        require_vwap = strat.get("require_below_vwap", False)
+        drift_threshold = math.ceil(drift_bars * strat["drift_ratio"])
+
+        key = (active.id, symbol)
+        ds = self._mountain_drift_state.get(key)
+        if ds is None:
+            ds = {"prev_close": None, "drift_window": []}
+            self._mountain_drift_state[key] = ds
+
+        prev_c = ds["prev_close"]
+        dw = ds["drift_window"]
+
+        if prev_c is not None:
+            dw.append(candle.close < prev_c)
+            if len(dw) > drift_bars:
+                del dw[:-drift_bars]
+
+        ds["prev_close"] = candle.close
+
+        if len(dw) < drift_bars:
+            return None
+
+        drift_down_count = sum(dw)
+        drift_ok = drift_down_count >= drift_threshold
+
+        vwap = cache.get("vwap")
+        if require_vwap:
+            if vwap is None or candle.close >= vwap:
+                drift_ok = False
+
+        result = None
+        for level in strat["levels"]:
+            v = cache.get(self._CDP_FIELD_MAP.get(level, level))
+            if v is None:
+                continue
+            threshold = v * (1 - tol_pct / 100)
+            bk = (active.id, symbol, level)
+
+            if not drift_ok:
+                self._mountain_drift_break_count[bk] = 0
+                continue
+
+            if candle.close < threshold:
+                cnt = self._mountain_drift_break_count.get(bk, 0) + 1
+                self._mountain_drift_break_count[bk] = cnt
+                if cnt >= break_n:
+                    self._mountain_drift_break_count[bk] = 0
+                    if result is None:
+                        result = {
+                            "level": level,
+                            "direction": "from_above",
+                            "role": "mountain_drift_break",
+                            "drift_bars_used": drift_bars,
+                            "drift_down_count": drift_down_count,
+                            "break_confirm": cnt,
+                            "peak_high": st["peak_high"],
+                            "below_vwap": vwap is not None and candle.close < vwap,
+                        }
+            else:
+                self._mountain_drift_break_count[bk] = 0
+
+        return result
+
     def _update_vwap(self, symbol: str, candle: MinuteCandle) -> None:
         """累積 VWAP = Σ(typical_price × volume) / Σ(volume)。"""
         if candle.volume <= 0:
@@ -869,6 +970,8 @@ class SignalEngine:
         self._mountain_state.clear()
         self._vwap_state.clear()
         self._mountain_bounce_armed.clear()
+        self._mountain_drift_state.clear()
+        self._mountain_drift_break_count.clear()
         self._auto_monitor_symbols.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0

@@ -230,8 +230,22 @@ class MountainBounceStrategy(BaseModel):
     require_below_vwap: bool = True
 
 
+class MountainDriftBreakStrategy(BaseModel):
+    """策略 B：造山確認 + drift 弱勢 + 跌破 CDP 支撐線 → 做空訊號。"""
+
+    type: Literal["mountain_drift_break"]
+    levels: list[CdpLevel] = Field(
+        default_factory=lambda: ["nl", "al", "cdp"], min_length=1,
+    )
+    drift_bars: int = Field(default=8, ge=3, le=20)
+    drift_ratio: float = Field(default=0.6, ge=0.4, le=0.9)
+    break_confirm_bars: int = Field(default=2, ge=1, le=5)
+    tolerance_pct: float = Field(default=0.0, ge=0.0, le=1.0)
+    require_below_vwap: bool = False
+
+
 StrategyConfig = Annotated[
-    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy | PeakDivergenceStrategy | MountainBounceStrategy,
+    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy | PeakDivergenceStrategy | MountainBounceStrategy | MountainDriftBreakStrategy,
     Field(discriminator="type"),
 ]
 
@@ -243,7 +257,7 @@ class ActiveFilter(Filter):
     ma_proximity / strategy 任一非空。
     """
 
-    schema_version: int = 8  # 7→8,加 mountain_bounce strategy
+    schema_version: int = 9  # 8→9,加 mountain_drift_break strategy
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
     ma_proximity:  MAProximityCondition  | None = None

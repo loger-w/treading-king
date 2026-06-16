@@ -23,7 +23,7 @@ def test_mountain_bounce_custom():
 def test_mountain_bounce_in_active_filter():
     f = ActiveFilter(strategy=MountainBounceStrategy(type="mountain_bounce"))
     assert f.strategy.type == "mountain_bounce"
-    assert f.schema_version == 8
+    assert f.schema_version == 9
 
 
 def test_mountain_bounce_roundtrip_json():
