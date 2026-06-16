@@ -28,8 +28,8 @@ def test_discriminator_picks_right_model_from_dict():
     assert f.strategy.surge_pct == 5.0
 
 
-def test_schema_version_bumped_to_7():
-    assert ActiveFilter(strategy=LimitUpOpenTouchStrategy(type="limit_up_open_touch")).schema_version == 7
+def test_schema_version_bumped_to_8():
+    assert ActiveFilter(strategy=LimitUpOpenTouchStrategy(type="limit_up_open_touch")).schema_version == 8
 
 
 def test_peak_divergence_strategy_defaults():

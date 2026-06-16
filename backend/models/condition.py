@@ -218,8 +218,20 @@ class PeakDivergenceStrategy(BaseModel):
     min_main_peak_volume_ratio: float | None = Field(default=None, ge=0.5, le=20.0)
 
 
+class MountainBounceStrategy(BaseModel):
+    """策略 A：造山確認 + 碰 CDP 線 + 連續 N 根 close 在線下 → 做空訊號。"""
+
+    type: Literal["mountain_bounce"]
+    levels: list[CdpLevel] = Field(
+        default_factory=lambda: ["ah", "nh", "cdp"], min_length=1,
+    )
+    confirm_bars: int = Field(default=2, ge=1, le=5)
+    tolerance_pct: float = Field(default=0.0, ge=0.0, le=1.0)
+    require_below_vwap: bool = True
+
+
 StrategyConfig = Annotated[
-    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy | PeakDivergenceStrategy,
+    LimitUpOpenTouchStrategy | BreakoutRetestStrategy | BreakoutConfirmStrategy | PeakDivergenceStrategy | MountainBounceStrategy,
     Field(discriminator="type"),
 ]
 
@@ -231,7 +243,7 @@ class ActiveFilter(Filter):
     ma_proximity / strategy 任一非空。
     """
 
-    schema_version: int = 7  # 6→7,加 peak_divergence strategy
+    schema_version: int = 8  # 7→8,加 mountain_bounce strategy
     window_conditions: list[WindowCondition] = Field(default_factory=list)
     cdp_proximity: CdpProximityCondition | None = None
     ma_proximity:  MAProximityCondition  | None = None

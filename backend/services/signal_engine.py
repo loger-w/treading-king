@@ -117,6 +117,8 @@ class SignalEngine:
         self._breakout_confirmed: set[tuple[str, str, str]] = set()
         # 造山積木:per symbol 當日造山狀態(daily reset 清)
         self._mountain_state: dict[str, dict] = {}
+        self._vwap_state: dict[str, dict[str, float]] = {}
+        self._mountain_bounce_armed: dict[tuple[str, str, str], dict] = {}
         # 自動監聽:scheduler 動態加入、收盤清、不持久化
         self._auto_monitor_symbols: set[str] = set()
 
@@ -373,6 +375,7 @@ class SignalEngine:
 
         if settled is not None:
             self._update_mountain(symbol, settled, now)
+            self._update_vwap(symbol, settled)
 
         if self._limit_up_active:
             self._update_limit_up_state(symbol, tick, now)
@@ -392,6 +395,12 @@ class SignalEngine:
                     if settled is None:
                         continue
                     cdp_touch = self._eval_breakout_confirm(strat, active, symbol, settled, now)
+                    ma_touch = None
+                    ok = cdp_touch is not None
+                elif stype == "mountain_bounce":
+                    if settled is None:
+                        continue
+                    cdp_touch = self._eval_mountain_bounce(strat, active, symbol, settled, now)
                     ma_touch = None
                     ok = cdp_touch is not None
                 elif stype == "peak_divergence":
@@ -415,7 +424,7 @@ class SignalEngine:
                 # 不該吞掉碰 CDP);其他 strategy 維持 per 股票
                 if stype is None:
                     touch_level = (cdp_touch or ma_touch or {}).get("level", "")
-                elif stype == "cdp_breakout_confirm":
+                elif stype in ("cdp_breakout_confirm", "mountain_bounce"):
                     touch_level = (cdp_touch or {}).get("level", "")
                 else:
                     touch_level = ""
@@ -427,7 +436,7 @@ class SignalEngine:
 
                 # touch_count — breakout_confirm 有自己的 confirm_bars 語意,
                 # 不計入碰線觸碰次數(避免 touch_index 混計)
-                if stype not in ("cdp_breakout_confirm", "peak_divergence"):
+                if stype not in ("cdp_breakout_confirm", "peak_divergence", "mountain_bounce"):
                     today = date.today()
                     if cdp_touch is not None:
                         count_key = (symbol, cdp_touch["level"], today)
@@ -620,6 +629,76 @@ class SignalEngine:
                     self._breakout_confirm_count[key] = 0
         return result
 
+    def _eval_mountain_bounce(
+        self, strat: dict, active: ActiveSignalOut, symbol: str,
+        candle: MinuteCandle, now: float,
+    ) -> dict | None:
+        """策略 A：造山確認 + 碰 CDP + N 根 close 在線下 → 做空訊號。"""
+        st = self._mountain_state.get(symbol)
+        if st is None or st["phase"] != "confirmed":
+            return None
+
+        cache = self._field_cache.get(symbol, {})
+        field_map = {"ah": "cdp_ah", "nh": "cdp_nh", "cdp": "cdp", "nl": "cdp_nl", "al": "cdp_al"}
+        confirm_n = strat["confirm_bars"]
+        tol_pct = strat.get("tolerance_pct", 0.0)
+        require_vwap = strat.get("require_below_vwap", False)
+        vwap = cache.get("vwap")
+        vwap_blocked = require_vwap and (vwap is None or candle.close >= vwap)
+
+        result = None
+        for level in strat["levels"]:
+            v = cache.get(field_map.get(level, level))
+            if v is None:
+                continue
+            threshold = v * (1 - tol_pct / 100)
+            key = (active.id, symbol, level)
+            armed = self._mountain_bounce_armed.get(key)
+
+            if not vwap_blocked and candle.high >= threshold:
+                if armed is None:
+                    armed = {"confirm_count": 0, "cdp_val": v}
+                    self._mountain_bounce_armed[key] = armed
+
+            if armed is None:
+                continue
+
+            if candle.close >= armed["cdp_val"]:
+                del self._mountain_bounce_armed[key]
+                continue
+
+            if vwap_blocked:
+                continue
+
+            armed["confirm_count"] += 1
+            if armed["confirm_count"] >= confirm_n:
+                count = armed["confirm_count"]
+                self._mountain_bounce_armed[key] = {"confirm_count": 0, "cdp_val": armed["cdp_val"]}
+                if result is None:
+                    result = {
+                        "level": level,
+                        "direction": "from_below",
+                        "role": "mountain_bounce",
+                        "confirm_bars": count,
+                        "peak_high": st["peak_high"],
+                        "below_vwap": vwap is not None and candle.close < vwap,
+                    }
+
+        return result
+
+    def _update_vwap(self, symbol: str, candle: MinuteCandle) -> None:
+        """累積 VWAP = Σ(typical_price × volume) / Σ(volume)。"""
+        if candle.volume <= 0:
+            return
+        st = self._vwap_state.get(symbol)
+        if st is None:
+            st = {"cum_tp_vol": 0.0, "cum_vol": 0}
+            self._vwap_state[symbol] = st
+        tp = (candle.high + candle.low + candle.close) / 3
+        st["cum_tp_vol"] += tp * candle.volume
+        st["cum_vol"] += candle.volume
+        self._field_cache.setdefault(symbol, {})["vwap"] = st["cum_tp_vol"] / st["cum_vol"]
+
     MOUNTAIN_SURGE_PCT = 3.0
     MOUNTAIN_SURGE_WINDOW = 10
     MOUNTAIN_SURGE_VR = 1.5
@@ -788,6 +867,8 @@ class SignalEngine:
         self._breakout_confirm_count.clear()
         self._breakout_confirmed.clear()
         self._mountain_state.clear()
+        self._vwap_state.clear()
+        self._mountain_bounce_armed.clear()
         self._auto_monitor_symbols.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
