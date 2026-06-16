@@ -51,20 +51,25 @@ class MinuteCandle:
     volume: int
 
 
+_SURGE_BASE_NOISE_PCT = 0.5
+
+
 def _find_surge_base(closes: list[float]) -> float:
     """從 closes 找當前上升波段的起漲谷底(近期相對低點)。
 
-    從最末根往回掃,追蹤最低值;碰到比最低值高的根 = 下降結束、谷底找到。
+    從最末根往回掃,追蹤最低值;碰到比最低值高 >0.5% 的根 = 下降結束、谷底找到。
+    0.5% 門檻過濾 1 分 K 的微幅抖動(例如 82.7→82.6→82.7 是雜訊不是反轉)。
     """
     if not closes:
         return 0.0
     if len(closes) <= 1:
         return closes[0]
+    noise = 1 + _SURGE_BASE_NOISE_PCT / 100
     running_min = closes[-1]
     for i in range(len(closes) - 2, -1, -1):
-        if closes[i] < running_min:
+        if closes[i] <= running_min:
             running_min = closes[i]
-        elif closes[i] > running_min:
+        elif closes[i] > running_min * noise:
             break
     return running_min
 

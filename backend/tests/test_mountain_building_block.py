@@ -25,8 +25,15 @@ def _strat(surge_pct=3.0, surge_window_bars=10, surge_volume_ratio=1.5):
 # ---- _find_surge_base 單測 ----
 
 def test_find_surge_base_simple_trough():
+    # 97→96 回落 1.03% > 0.5% noise → 停在 96
     closes = [100, 98, 95, 93, 94, 95, 96, 97, 96, 98]
     assert _find_surge_base(closes) == 96
+
+
+def test_find_surge_base_skips_minor_noise():
+    # 82.7→82.6 只有 0.12% < 0.5% noise → 跳過,繼續往回找到 81.3
+    closes = [82.0, 81.8, 81.5, 81.3, 82.0, 82.7, 82.6]
+    assert _find_surge_base(closes) == 81.3
 
 
 def test_find_surge_base_monotonic_rise():
