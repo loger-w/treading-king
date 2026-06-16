@@ -630,12 +630,13 @@ class SignalEngine:
         self, symbol: str, candle: MinuteCandle, now: float,
         confirm_bars: int | None = None,
     ) -> None:
-        """造山積木:每根 settled candle 呼叫,維護 per-symbol 造山狀態。
+        """造山積木 v4:每根 settled candle 呼叫,維護 per-symbol 造山狀態。
 
         phase: idle → surge_tracking → confirmed。
-        confirm_bars: 覆蓋 class 常數(回測掃描用)。
+        confirm_bars: 覆蓋時走舊路徑(純計數,不分級) — 回測掃描用。
         """
-        cb = max(1, confirm_bars) if confirm_bars is not None else self.MOUNTAIN_CONFIRM_BARS
+        use_graded = confirm_bars is None
+        cb = 2 if use_graded else max(1, confirm_bars)
 
         st = self._mountain_state.get(symbol)
         if st is None:
@@ -668,14 +669,20 @@ class SignalEngine:
                 st["no_new_high_count"] = 0
             else:
                 st["peak_vr"] = max(st["peak_vr"], vr)
-                st["no_new_high_count"] += 1
-                if st["no_new_high_count"] >= cb:
+                is_black = candle.close < candle.open
+                if use_graded and is_black and vr >= self.MOUNTAIN_CONFIRM_VR:
                     st["phase"] = "confirmed"
                     st["confirmed_minute"] = candle.minute
+                else:
+                    st["no_new_high_count"] += 1
+                    if st["no_new_high_count"] >= cb:
+                        st["phase"] = "confirmed"
+                        st["confirmed_minute"] = candle.minute
             return
 
         if st["phase"] == "confirmed":
-            if is_surge and candle.high > st["peak_high"]:
+            margin = 1 + self.MOUNTAIN_RE_SURGE_MARGIN / 100
+            if candle.high > st["peak_high"] * margin:
                 st["phase"] = "surge_tracking"
                 st["peak_high"] = candle.high
                 st["peak_vr"] = vr

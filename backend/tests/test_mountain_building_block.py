@@ -132,7 +132,7 @@ def test_detect_surge_exact_threshold():
 
 # ---- _update_mountain 造山狀態機 ----
 
-def _mountain_feed(engine, candles, confirm_bars=3):
+def _mountain_feed(engine, candles, confirm_bars=None):
     """逐根餵 candle 到 _update_mountain,回最後的 mountain state for '2330'。"""
     engine._day_volume["2330"] = 3000
     for c in candles:
@@ -172,57 +172,50 @@ def test_no_surge_stays_idle():
     assert st["peak_high"] == 0.0
 
 
-def test_confirm_after_n_bars_no_new_high():
+def test_confirm_after_2_bars_no_new_high():
+    """v4: 綠 K 需連續 2 根沒創新高才 confirmed。"""
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
         _SURGE,                                              # m10: peak=104
-        _candle(high=103, close=103, volume=10, minute=11),  # no new high (1)
-        _candle(high=102, close=102, volume=10, minute=12),  # no new high (2)
-        _candle(high=101, close=101, volume=10, minute=13),  # no new high (3) → confirmed
+        _candle(high=103, close=103, volume=10, minute=11, open_=102),  # 綠K (1)
+        _candle(high=102, close=102, volume=10, minute=12, open_=101),  # 綠K (2) → confirmed
     ])
     assert st["phase"] == "confirmed"
     assert st["peak_high"] == 104
-    assert st["confirmed_minute"] == 13
+    assert st["confirmed_minute"] == 12
 
 
 def test_new_high_resets_confirm_counter():
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
         _SURGE,                                              # m10: peak=104
-        _candle(high=103, close=103, volume=10, minute=11),  # no new high (1)
-        _candle(high=102, close=102, volume=10, minute=12),  # no new high (2)
-        _candle(high=105, close=105, volume=10, minute=13),  # NEW HIGH → reset, peak=105
-        _candle(high=104, close=104, volume=10, minute=14),  # no new high (1)
-        _candle(high=103, close=103, volume=10, minute=15),  # no new high (2)
+        _candle(high=103, close=103, volume=10, minute=11, open_=102),  # 綠K (1)
+        _candle(high=105, close=105, volume=10, minute=12),  # NEW HIGH → reset, peak=105
+        _candle(high=104, close=104, volume=10, minute=13, open_=103),  # 綠K (1)
     ])
-    assert st["phase"] == "surge_tracking"                   # 只 2 根,還沒到 3
+    assert st["phase"] == "surge_tracking"                   # 只 1 根,還沒到 2
     assert st["peak_high"] == 105
 
 
-def test_new_surge_after_confirmed_upgrades_mountain():
+def test_new_high_after_confirmed_upgrades_mountain():
+    """v4: confirmed 後 high 超過 margin → 重回 surge_tracking(不需 is_surge)。"""
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
         _SURGE,                                              # m10: peak=104
-        _candle(high=103, close=103, volume=10, minute=11),
-        _candle(high=102, close=102, volume=10, minute=12),
-        _candle(high=101, close=101, volume=10, minute=13),  # confirmed: peak=104
-        # 暖機湊 10 根 recent_closes 讓新急拉可偵測
-        *[_candle(high=100, close=100, volume=10, minute=14+i) for i in range(10)],
-        _candle(high=108, close=108, volume=2000, minute=24), # 新急拉 high=108>104
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),  # 黑K confirmed
+        _candle(high=108, close=108, volume=10, minute=12),  # 108 > 104×1.003 → re-surge
     ])
     assert st["phase"] == "surge_tracking"
     assert st["peak_high"] == 108
 
 
-def test_new_surge_lower_peak_keeps_old_mountain():
+def test_lower_peak_after_confirmed_keeps_mountain():
+    """confirmed 後 high 未超過 peak×(1+margin) → 保留。"""
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
         _SURGE,                                              # m10: peak=104
-        _candle(high=103, close=103, volume=10, minute=11),
-        _candle(high=102, close=102, volume=10, minute=12),
-        _candle(high=101, close=101, volume=10, minute=13),  # confirmed: peak=104
-        *[_candle(high=97, close=97, volume=10, minute=14+i) for i in range(10)],
-        _candle(high=103, close=103, volume=2000, minute=24), # 急拉 high=103<104 → 保留舊山
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),  # 黑K confirmed
+        _candle(high=104.1, close=104, volume=10, minute=12),  # 104.1 < 104×1.003=104.312
     ])
     assert st["phase"] == "confirmed"
     assert st["peak_high"] == 104
@@ -232,23 +225,109 @@ def test_equal_high_counts_as_no_new_high():
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
         _SURGE,                                              # m10: peak=104
-        _candle(high=104, close=103, volume=10, minute=11),  # equal high (1)
-        _candle(high=104, close=103, volume=10, minute=12),  # equal high (2)
-        _candle(high=104, close=103, volume=10, minute=13),  # equal high (3) → confirmed
+        _candle(high=104, close=103, volume=10, minute=11, open_=102),  # 綠K equal high (1)
+        _candle(high=104, close=103, volume=10, minute=12, open_=102),  # 綠K equal high (2) → confirmed
     ])
     assert st["phase"] == "confirmed"
     assert st["peak_high"] == 104
 
 
 def test_confirm_bars_parameter_overrides_default():
+    """confirm_bars=N → 走舊路徑(純計數,不分級)。"""
     engine = SignalEngine()
     st = _mountain_feed(engine, _WARMUP + [
         _SURGE,                                              # m10: peak=104
-        _candle(high=103, close=103, volume=10, minute=11),  # no new high (1) → confirm_bars=1 觸發
+        _candle(high=103, close=103, volume=10, minute=11, open_=102),  # 綠K (1) → confirm_bars=1
     ], confirm_bars=1)
     assert st["phase"] == "confirmed"
     assert st["peak_high"] == 104
 
+
+# ---- v4 分級確認 ----
+
+def test_black_k_with_volume_confirms_in_1_bar():
+    """黑 K(close<open) + vr>=0.5x + 沒創新高 → 1 根確認。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),
+    ])
+    assert st["phase"] == "confirmed"
+    assert st["confirmed_minute"] == 11
+
+
+def test_black_k_without_volume_does_not_confirm():
+    """黑 K 但 vr<0.5x → 不立即確認,走一般計數。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=101, volume=1, minute=11, open_=103),
+    ])
+    assert st["phase"] == "surge_tracking"
+    assert st["no_new_high_count"] == 1
+
+
+def test_non_black_k_1_bar_not_enough():
+    """綠 K 只 1 根沒創新高 → 還不確認。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=103, volume=10, minute=11, open_=102),
+    ])
+    assert st["phase"] == "surge_tracking"
+    assert st["no_new_high_count"] == 1
+
+
+# ---- v4 re-surge margin ----
+
+def test_re_surge_within_margin_stays_confirmed():
+    """confirmed 後 high 超過山頂 0.2%(< margin 0.3%) → 不重置。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),  # 黑K confirmed
+        _candle(high=104.2, close=104, volume=10, minute=12),  # 104.2/104=0.19% < 0.3%
+    ])
+    assert st["phase"] == "confirmed"
+    assert st["peak_high"] == 104
+
+
+def test_re_surge_beyond_margin_resets():
+    """confirmed 後 high 超過山頂 0.4%(> margin 0.3%) → 重回 surge_tracking。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),  # 黑K confirmed
+        _candle(high=104.5, close=104.5, volume=10, minute=12),  # 104.5/104=0.48% > 0.3%
+    ])
+    assert st["phase"] == "surge_tracking"
+    assert st["peak_high"] == 104.5
+
+
+def test_re_surge_no_is_surge_required():
+    """v4: re-surge 不需要 is_surge,只要 high > peak×(1+margin)。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),  # 黑K confirmed
+        _candle(high=105, close=105, volume=5, minute=12),  # vr≈0.05 但 105/104>1.003
+    ])
+    assert st["phase"] == "surge_tracking"
+    assert st["peak_high"] == 105
+
+
+def test_confirm_bars_override_uses_pure_count():
+    """傳 confirm_bars=3 → 走舊路徑,黑K也只計 1。"""
+    engine = SignalEngine()
+    st = _mountain_feed(engine, _WARMUP + [
+        _SURGE,
+        _candle(high=103, close=101, volume=50, minute=11, open_=103),  # 黑K
+    ], confirm_bars=3)
+    assert st["phase"] == "surge_tracking"
+    assert st["no_new_high_count"] == 1
+
+
+# ---- 基礎行為(不變) ----
 
 def test_daily_reset_clears_mountain_state():
     engine = SignalEngine()
@@ -267,8 +346,8 @@ async def test_evaluate_updates_mountain_state_on_settled_candle():
     ticks = (
         [(100.0, 10, i) for i in range(10)]
         + [(104.0, 2000, 10)]
-        + [(103.0, 10, 11), (102.0, 10, 12), (101.0, 10, 13)]
-        + [(100.0, 10, 14)]
+        + [(103.0, 10, 11), (102.0, 10, 12)]
+        + [(100.0, 10, 13)]
     )
     with patch("services.signal_engine.get_broadcaster") as mock_bc, \
          patch("services.signal_engine.get_signal_writer") as mock_sw:
