@@ -39,9 +39,11 @@ closes = [100, 98, 95, 93, 94, 95, 96, 97, 96, 98, 99]
 _find_surge_base(closes[:-1]) → 掃到 96 時碰到 97 > 96 → 回傳 96
 ```
 
-**`recent_closes` 仍存 close**（是基準來源），不存 high。
+**`recent_closes` 仍存 close**（是基準來源），不存 high。`_find_surge_base` 的輸入是 `recent_closes[:-1]`（排除當根 — 因為 `recent_closes` 最後一個已是 `candle.close`，不該拿當根 close 當自己的基準）。
 
-**最少根數**：`len(closes) >= min_bars`（預設 3）才啟動偵測，防開盤 price discovery 雜訊。
+**`surge_window` 間接限制回看範圍**：`recent_closes` 由 `del rc[:-(surge_window+1)]` 控制長度上限。`_find_surge_base` 掃描整個輸入陣列，所以回看距離自然被 `surge_window` 限制，不需要額外 cap。
+
+**最少根數**：v3 的 `len(recent_closes) <= surge_window` early return **移除**，改為 `len(recent_closes) < min_bars + 1`（+1 因為含當根）。預設 `min_bars = 3` — 至少需要 3 根歷史 close 才啟動偵測，防開盤 price discovery 雜訊。
 
 ### 2. 分級確認
 
