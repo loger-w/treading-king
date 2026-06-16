@@ -618,10 +618,13 @@ class SignalEngine:
     MOUNTAIN_SURGE_PCT = 3.0
     MOUNTAIN_SURGE_WINDOW = 10
     MOUNTAIN_SURGE_VR = 1.5
-    MOUNTAIN_CONFIRM_BARS = 3
+    MOUNTAIN_MIN_BARS = 3
+    MOUNTAIN_CONFIRM_VR = 0.5
+    MOUNTAIN_RE_SURGE_MARGIN = 0.3
     _MOUNTAIN_STRAT = {"surge_pct": MOUNTAIN_SURGE_PCT,
                        "surge_window_bars": MOUNTAIN_SURGE_WINDOW,
-                       "surge_volume_ratio": MOUNTAIN_SURGE_VR}
+                       "surge_volume_ratio": MOUNTAIN_SURGE_VR,
+                       "min_bars": MOUNTAIN_MIN_BARS}
 
     def _update_mountain(
         self, symbol: str, candle: MinuteCandle, now: float,
@@ -683,19 +686,18 @@ class SignalEngine:
         self, symbol: str, candle: MinuteCandle, recent_closes: list[float],
         now: float, strat: dict,
     ) -> bool:
-        """急拉根判定(造山積木用):同時滿足陡升 + 出量才回 True。
+        """急拉根判定 v4:high vs 近期相對低點漲幅 ≥ surge_pct% + 出量。
 
-        陡升:close 相對 surge_window_bars 根前 close 漲幅 ≥ surge_pct%。
-        出量:_candle_volume_ratio(這根) ≥ surge_volume_ratio。
-        recent_closes 含當根(最後一個 = candle.close),需 ≥ surge_window_bars+1 根才有可比基準。
+        recent_closes 含當根(最後一個 = candle.close)。
+        base = _find_surge_base(recent_closes[:-1]) — 排除當根找近期相對低點。
         """
-        w = strat["surge_window_bars"]
-        if len(recent_closes) <= w:
+        min_bars = strat.get("min_bars", self.MOUNTAIN_MIN_BARS)
+        if len(recent_closes) < min_bars + 1:
             return False
-        base = recent_closes[-(w + 1)]
+        base = _find_surge_base(recent_closes[:-1])
         if base <= 0:
             return False
-        rise_pct = (recent_closes[-1] / base - 1) * 100
+        rise_pct = (candle.high / base - 1) * 100
         if rise_pct < strat["surge_pct"] - 1e-9:
             return False
         return self._candle_volume_ratio(symbol, candle, now) >= strat["surge_volume_ratio"]

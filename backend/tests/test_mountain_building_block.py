@@ -57,46 +57,76 @@ def test_find_surge_base_ignores_early_global_low():
     assert _find_surge_base(closes) == 96
 
 
-# ---- _detect_surge 積木單測 ----
+# ---- _detect_surge v4 單測 ----
 
-def test_detect_surge_steep_and_high_volume_true():
+def test_detect_surge_high_reaches_threshold_true():
+    """v4: high(非 close)達 3% 就觸發。"""
     engine = SignalEngine()
-    engine._day_volume["2330"] = 3000  # 均量 100/min @09:30
-    # 10 根前 close=100, 當根 close=104(漲 4% ≥ 3%), vol=200 → vr=2.0 ≥ 1.5
-    candle = _candle(high=104, close=104, volume=200)
-    closes = [100] * 10 + [104]  # 11 個(10+1)
+    engine._day_volume["2330"] = 3000
+    candle = _candle(high=103, close=101, volume=200)
+    closes = [100] * 10 + [101]
     assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is True
 
 
-def test_detect_surge_steep_but_low_volume_false():
+def test_detect_surge_close_below_threshold_but_high_above():
+    """v4 關鍵:close 未達 3% 但 high 達 3% → 仍觸發。"""
     engine = SignalEngine()
     engine._day_volume["2330"] = 3000
-    candle = _candle(high=104, close=104, volume=50)  # vr=0.5 < 1.5
+    candle = _candle(high=104, close=101.5, volume=200)
+    closes = [100] * 10 + [101.5]
+    assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is True
+
+
+def test_detect_surge_low_volume_false():
+    engine = SignalEngine()
+    engine._day_volume["2330"] = 3000
+    candle = _candle(high=104, close=104, volume=50)
     closes = [100] * 10 + [104]
     assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is False
 
 
-def test_detect_surge_high_volume_but_not_steep_false():
+def test_detect_surge_high_not_steep_false():
     engine = SignalEngine()
     engine._day_volume["2330"] = 3000
-    candle = _candle(high=101, close=101, volume=200)  # 漲 1% < 3%
+    candle = _candle(high=101, close=101, volume=200)
     closes = [100] * 10 + [101]
     assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is False
 
 
-def test_detect_surge_insufficient_history_false():
+def test_detect_surge_min_bars_insufficient():
+    """v4: min_bars=3 → 需要 4 個 recent_closes。"""
     engine = SignalEngine()
     engine._day_volume["2330"] = 3000
     candle = _candle(high=104, close=104, volume=200)
-    closes = [100, 104]  # 只有 2 個 ≤ window=10
+    closes = [100, 100, 104]
     assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is False
 
 
-def test_detect_surge_exact_threshold_passes():
+def test_detect_surge_min_bars_just_enough():
+    """4 個 recent_closes 剛好夠。"""
     engine = SignalEngine()
     engine._day_volume["2330"] = 3000
-    candle = _candle(high=103, close=103, volume=200)
-    closes = [100] * 10 + [103]  # 恰好 3%,不應被 float 誤差擋掉
+    candle = _candle(high=104, close=104, volume=200)
+    closes = [100, 100, 100, 104]
+    assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is True
+
+
+def test_detect_surge_uses_swing_low_not_global_min():
+    """v4 關鍵:近期相對低點,不是全域最低。"""
+    engine = SignalEngine()
+    engine._day_volume["2330"] = 3000
+    # closes[:-1] = [100, 90, 91, 95, 98, 97, 96, 97, 98, 99]
+    # swing low = 96, high=99 → (99-96)/96 = 3.125% ≥ 3%
+    candle = _candle(high=99, close=99, volume=200)
+    closes = [100, 90, 91, 95, 98, 97, 96, 97, 98, 99, 99]
+    assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is True
+
+
+def test_detect_surge_exact_threshold():
+    engine = SignalEngine()
+    engine._day_volume["2330"] = 3000
+    candle = _candle(high=103, close=100, volume=200)
+    closes = [100] * 10 + [100]
     assert engine._detect_surge("2330", candle, closes, MORNING, _strat()) is True
 
 
