@@ -20,7 +20,6 @@ async def list_auto_monitor() -> dict:
             "change_pct": r.get("change_pct"),
             "amplitude_pct": r.get("amplitude_pct"),
             "volume_lots": r.get("volume_lots"),
-            "market": r.get("market"),
             "rank": r.get("rank"),
             "captured_at": r.get("captured_at"),
         })

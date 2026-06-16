@@ -36,3 +36,4 @@ def test_get_auto_monitor_with_data(client, local_store_tmp):
     assert item["name"] == "台積電"
     assert item["change_pct"] == 5.0
     assert item["amplitude_pct"] == 4.2
+    assert item["market"] == "TWSE"  # enrich_item 用 MarketCache 的正規值,不是 Fubon API 的 "TSE"

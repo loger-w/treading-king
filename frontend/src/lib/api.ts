@@ -200,7 +200,7 @@ export interface AutoMonitorItem {
   symbol: string;
   name: string | null;
   market: string | null;
-  is_etf: boolean;
+  is_etf: boolean | null;
   change_pct: number | null;
   amplitude_pct: number | null;
   volume_lots: number | null;
