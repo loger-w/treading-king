@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Sidebar, type Page } from './components/Sidebar';
+import { AutoMonitor } from './pages/AutoMonitor';
 import { Monitor } from './pages/Monitor';
 import { MXFBacktest } from './pages/MXFBacktest';
 import { IndexBoard } from './pages/IndexBoard';
@@ -19,6 +20,9 @@ export default function App() {
             active 讓隱藏頁暫停打富邦的 REST 輪詢——背景圖表白耗 rate limit */}
         <div hidden={page !== 'monitor'} className="h-full">
           <Monitor active={page === 'monitor'} />
+        </div>
+        <div hidden={page !== 'auto_monitor'} className="h-full">
+          <AutoMonitor active={page === 'auto_monitor'} />
         </div>
         <div hidden={page !== 'mxf_backtest'} className="h-full">
           <MXFBacktest active={page === 'mxf_backtest'} />

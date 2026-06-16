@@ -17,7 +17,6 @@ import { BookmarkNewDialog } from "./BookmarkNewDialog";
 import { BookmarkManageDialog } from "./BookmarkManageDialog";
 import { BookmarkEditMode } from "./BookmarkEditMode";
 import { SignalChip } from "./SignalChip";
-import { resolveDisplayChangePct } from "../lib/quote-display";
 
 /**
  * 書籤面板。
@@ -116,7 +115,7 @@ export function BookmarksPanel({
   }
 
   // Sidebar user 群組拖拉(系統書籤固定殿後、不參與)
-  const userGroups = useMemo(() => groups.filter((g) => !g.is_system), [groups]);
+  const userGroups = useMemo(() => groups, [groups]);
   // id 陣列 reference 要穩定:本面板每個行情 tick 重繪,新陣列會打穿
   // dnd-kit SortableContext 的 items memo、迫使全部 sortable 列重算
   const userGroupIds = useMemo(() => userGroups.map((g) => g.id), [userGroups]);
@@ -136,7 +135,7 @@ export function BookmarksPanel({
 
   // 目前選中書籤(物件)
   const selectedGroup = groups.find((g) => g.id === selectedGroupId) ?? null;
-  const canEdit = selectedGroup && !selectedGroup.is_system;
+  const canEdit = !!selectedGroup;
 
   // 合併 refresh helper(items 改動後叫他)
   async function refreshAfterMutation() {
@@ -212,16 +211,6 @@ export function BookmarksPanel({
               ))}
             </SortableContext>
           </DndContext>
-          {groups.filter((g) => g.is_system).map((g) => (
-            <SidebarItem
-              key={g.id}
-              label={g.name}
-              count={g.count}
-              selected={selectedGroupId === g.id}
-              system
-              onClick={() => pickGroup(g.id)}
-            />
-          ))}
           <button
             type="button"
             onClick={() => setNewDialogOpen(true)}
@@ -285,12 +274,7 @@ export function BookmarksPanel({
               canEdit={!!canEdit}
               onStartEdit={() => setEditMode(true)}
               isEmpty={singleItems.length === 0}
-              isSystem={!!selectedGroup?.is_system}
-              emptyHint={
-                selectedGroup?.is_system
-                  ? "等待排程更新中…"
-                  : "這個書籤還沒有股票 — 上方搜尋加入第一檔"
-              }
+              emptyHint="這個書籤還沒有股票 — 上方搜尋加入第一檔"
             />
           )}
         </div>
@@ -389,7 +373,6 @@ function AllView({ groups, byGroup, bySymbolFirst, quotes, rules, hitCounts, sel
         return (
           <div key={g.id}>
             <div className="px-3.5 pt-3 pb-2 flex items-center gap-2 font-serif italic text-sm text-ink-muted">
-              {g.is_system && <span className="text-accent">☆</span>}
               <span>{g.name}</span>
               <span className="flex-1 h-px bg-line"></span>
             </div>
@@ -420,7 +403,7 @@ function AllView({ groups, byGroup, bySymbolFirst, quotes, rules, hitCounts, sel
 
 function SingleListView({
   items, quotes, rules, hitCounts, selectedSymbol, onSelect, onRemove,
-  canEdit, onStartEdit, isEmpty, emptyHint, isSystem,
+  canEdit, onStartEdit, isEmpty, emptyHint,
 }: {
   items: BookmarkItem[];
   quotes: Record<string, WatchlistQuote>;
@@ -433,7 +416,6 @@ function SingleListView({
   onStartEdit: () => void;
   isEmpty: boolean;
   emptyHint: string;
-  isSystem: boolean;
 }) {
   if (isEmpty) {
     return <EmptyState text={emptyHint} />;
@@ -462,8 +444,8 @@ function SingleListView({
             hitCounts={hitCounts}
             selectedSymbol={selectedSymbol}
             onSelect={onSelect}
-            onRemove={!isSystem ? onRemove : undefined}
-            showRemove={!isSystem}
+            onRemove={onRemove}
+            showRemove
           />
         ))}
       </ul>
@@ -493,7 +475,7 @@ function ItemRow({ item, quote, rules, hitCounts, selectedSymbol, onSelect, onRe
   const isSel = item.symbol === selectedSymbol;
 
   const price = quote?.price;
-  const pct = resolveDisplayChangePct(quote, item);
+  const pct = quote?.changePct ?? null;
   const priceCls = pct == null ? "text-ink-dim"
     : pct > 0 ? "text-bull"
     : pct < 0 ? "text-bear" : "text-ink-dim";

@@ -51,6 +51,29 @@ class MinuteCandle:
     volume: int
 
 
+_SURGE_BASE_NOISE_PCT = 0.5
+
+
+def _find_surge_base(closes: list[float]) -> float:
+    """從 closes 找當前上升波段的起漲谷底(近期相對低點)。
+
+    從最末根往回掃,追蹤最低值;碰到比最低值高 >0.5% 的根 = 下降結束、谷底找到。
+    0.5% 門檻過濾 1 分 K 的微幅抖動(例如 82.7→82.6→82.7 是雜訊不是反轉)。
+    """
+    if not closes:
+        return 0.0
+    if len(closes) <= 1:
+        return closes[0]
+    noise = 1 + _SURGE_BASE_NOISE_PCT / 100
+    running_min = closes[-1]
+    for i in range(len(closes) - 2, -1, -1):
+        if closes[i] <= running_min:
+            running_min = closes[i]
+        elif closes[i] > running_min * noise:
+            break
+    return running_min
+
+
 class SignalEngine:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[tuple[str, Tick]] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
@@ -94,6 +117,8 @@ class SignalEngine:
         self._breakout_confirmed: set[tuple[str, str, str]] = set()
         # 造山積木:per symbol 當日造山狀態(daily reset 清)
         self._mountain_state: dict[str, dict] = {}
+        # 自動監聽:scheduler 動態加入、收盤清、不持久化
+        self._auto_monitor_symbols: set[str] = set()
 
     # ---------- 公開 API ----------
 
@@ -154,6 +179,43 @@ class SignalEngine:
             "invalid_rules": self._invalid_rules,
         }
 
+    async def add_auto_symbols(self, symbols: set[str]) -> None:
+        """由 auto_monitor_scheduler 呼叫。增量加入 auto 股票 + 載入 field_cache。"""
+        new = symbols - self._auto_monitor_symbols
+        if not new:
+            return
+        self._auto_monitor_symbols |= new
+        cdp = get_cdp_service()
+        for sym in new:
+            self._field_cache.setdefault(sym, {})
+            levels = await cdp.get(sym)
+            if levels:
+                d = self._field_cache[sym]
+                d["cdp_ah"] = levels["ah"]
+                d["cdp_nh"] = levels["nh"]
+                d["cdp"] = levels["cdp"]
+                d["cdp_nl"] = levels["nl"]
+                d["cdp_al"] = levels["al"]
+                d["prev_close"] = levels["prev_close"]
+            sma_5, sma_20 = await ma_service.fetch_sma_5_20(sym)
+            if sma_5 is not None:
+                self._field_cache[sym]["sma_5"] = sma_5
+            if sma_20 is not None:
+                self._field_cache[sym]["sma_20"] = sma_20
+        logger.info("auto_monitor: added %d symbols (total=%d)",
+                    len(new), len(self._auto_monitor_symbols))
+
+    async def clear_auto_symbols(self) -> None:
+        """收盤後呼叫。清 auto set + 逐出 field_cache 中 auto-only 的 entry。"""
+        manual = self._load_config_monitor_symbols()
+        auto_only = self._auto_monitor_symbols - manual
+        for sym in auto_only:
+            self._field_cache.pop(sym, None)
+        count = len(self._auto_monitor_symbols)
+        self._auto_monitor_symbols.clear()
+        if count:
+            logger.info("auto_monitor: cleared %d symbols", count)
+
     # ---------- internal ----------
 
     def _row_to_active(self, r: dict) -> ActiveSignalOut:
@@ -167,7 +229,11 @@ class SignalEngine:
         )
 
     async def _load_monitor_symbols(self) -> set[str]:
-        """從本機 monitor_list 拉所有監聽 symbol。"""
+        """config monitor_list ∪ auto_monitor — 兩來源合併為引擎評估範圍。"""
+        return self._load_config_monitor_symbols() | self._auto_monitor_symbols
+
+    def _load_config_monitor_symbols(self) -> set[str]:
+        """只讀 config.json 的手動 monitor_list。"""
         return {m["symbol"] for m in get_local_store().config.list_monitor()}
 
     async def _refill_field_cache(self) -> None:
@@ -557,21 +623,25 @@ class SignalEngine:
     MOUNTAIN_SURGE_PCT = 3.0
     MOUNTAIN_SURGE_WINDOW = 10
     MOUNTAIN_SURGE_VR = 1.5
-    MOUNTAIN_CONFIRM_BARS = 3
+    MOUNTAIN_MIN_BARS = 3
+    MOUNTAIN_CONFIRM_VR = 0.5
+    MOUNTAIN_RE_SURGE_MARGIN = 0.3
     _MOUNTAIN_STRAT = {"surge_pct": MOUNTAIN_SURGE_PCT,
                        "surge_window_bars": MOUNTAIN_SURGE_WINDOW,
-                       "surge_volume_ratio": MOUNTAIN_SURGE_VR}
+                       "surge_volume_ratio": MOUNTAIN_SURGE_VR,
+                       "min_bars": MOUNTAIN_MIN_BARS}
 
     def _update_mountain(
         self, symbol: str, candle: MinuteCandle, now: float,
         confirm_bars: int | None = None,
     ) -> None:
-        """造山積木:每根 settled candle 呼叫,維護 per-symbol 造山狀態。
+        """造山積木 v4:每根 settled candle 呼叫,維護 per-symbol 造山狀態。
 
         phase: idle → surge_tracking → confirmed。
-        confirm_bars: 覆蓋 class 常數(回測掃描用)。
+        confirm_bars: 覆蓋時走舊路徑(純計數,不分級) — 回測掃描用。
         """
-        cb = max(1, confirm_bars) if confirm_bars is not None else self.MOUNTAIN_CONFIRM_BARS
+        use_graded = confirm_bars is None
+        cb = 2 if use_graded else max(1, confirm_bars)
 
         st = self._mountain_state.get(symbol)
         if st is None:
@@ -604,14 +674,20 @@ class SignalEngine:
                 st["no_new_high_count"] = 0
             else:
                 st["peak_vr"] = max(st["peak_vr"], vr)
-                st["no_new_high_count"] += 1
-                if st["no_new_high_count"] >= cb:
+                is_black = candle.close < candle.open
+                if use_graded and is_black and vr >= self.MOUNTAIN_CONFIRM_VR:
                     st["phase"] = "confirmed"
                     st["confirmed_minute"] = candle.minute
+                else:
+                    st["no_new_high_count"] += 1
+                    if st["no_new_high_count"] >= cb:
+                        st["phase"] = "confirmed"
+                        st["confirmed_minute"] = candle.minute
             return
 
         if st["phase"] == "confirmed":
-            if is_surge and candle.high > st["peak_high"]:
+            margin = 1 + self.MOUNTAIN_RE_SURGE_MARGIN / 100
+            if candle.high > st["peak_high"] * margin:
                 st["phase"] = "surge_tracking"
                 st["peak_high"] = candle.high
                 st["peak_vr"] = vr
@@ -622,19 +698,18 @@ class SignalEngine:
         self, symbol: str, candle: MinuteCandle, recent_closes: list[float],
         now: float, strat: dict,
     ) -> bool:
-        """急拉根判定(造山積木用):同時滿足陡升 + 出量才回 True。
+        """急拉根判定 v4:high vs 近期相對低點漲幅 ≥ surge_pct% + 出量。
 
-        陡升:close 相對 surge_window_bars 根前 close 漲幅 ≥ surge_pct%。
-        出量:_candle_volume_ratio(這根) ≥ surge_volume_ratio。
-        recent_closes 含當根(最後一個 = candle.close),需 ≥ surge_window_bars+1 根才有可比基準。
+        recent_closes 含當根(最後一個 = candle.close)。
+        base = _find_surge_base(recent_closes[:-1]) — 排除當根找近期相對低點。
         """
-        w = strat["surge_window_bars"]
-        if len(recent_closes) <= w:
+        min_bars = strat.get("min_bars", self.MOUNTAIN_MIN_BARS)
+        if len(recent_closes) < min_bars + 1:
             return False
-        base = recent_closes[-(w + 1)]
+        base = _find_surge_base(recent_closes[:-1])
         if base <= 0:
             return False
-        rise_pct = (recent_closes[-1] / base - 1) * 100
+        rise_pct = (candle.high / base - 1) * 100
         if rise_pct < strat["surge_pct"] - 1e-9:
             return False
         return self._candle_volume_ratio(symbol, candle, now) >= strat["surge_volume_ratio"]
@@ -704,7 +779,7 @@ class SignalEngine:
         self._prox_suppressed.clear()
         self._day_volume.clear()
         # 昨日收盤 tick 不該當隔日第一筆的方向參考;順手擋 24/7 長駐下
-        # 換股訂閱(top_gainers / preview)造成的慢速累積
+        # 換股訂閱(auto_monitor / preview)造成的慢速累積
         self._prev_tick.clear()
         # cooldown 上限 86400s — 更舊的 key 不可能再擋觸發,留著只會累積
         cutoff = time.time() - 86400
@@ -713,6 +788,7 @@ class SignalEngine:
         self._breakout_confirm_count.clear()
         self._breakout_confirmed.clear()
         self._mountain_state.clear()
+        self._auto_monitor_symbols.clear()
         # 名為當日計數,跨午夜歸零才能判斷「今天」是否仍在掉 tick
         self._dropped_today = 0
 
