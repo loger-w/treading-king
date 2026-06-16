@@ -1,11 +1,11 @@
-"""驗造山積木:急拉偵測 + 山頂追蹤 + N 根沒創新高確認。"""
+"""驗造山積木 v4:high+swing low surge、分級確認、re-surge margin。"""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from services.ring_buffer import Tick
-from services.signal_engine import MinuteCandle, SignalEngine
+from services.signal_engine import MinuteCandle, SignalEngine, _find_surge_base
 
 TZ = timezone(timedelta(hours=8))
 MORNING = datetime(2026, 6, 15, 9, 30, tzinfo=TZ).timestamp()
@@ -20,6 +20,41 @@ def _candle(high, close, volume=100, minute=0, low=None, open_=None):
 def _strat(surge_pct=3.0, surge_window_bars=10, surge_volume_ratio=1.5):
     return {"surge_pct": surge_pct, "surge_window_bars": surge_window_bars,
             "surge_volume_ratio": surge_volume_ratio}
+
+
+# ---- _find_surge_base 單測 ----
+
+def test_find_surge_base_simple_trough():
+    closes = [100, 98, 95, 93, 94, 95, 96, 97, 96, 98]
+    assert _find_surge_base(closes) == 96
+
+
+def test_find_surge_base_monotonic_rise():
+    closes = [90, 91, 92, 93, 94]
+    assert _find_surge_base(closes) == 90
+
+
+def test_find_surge_base_monotonic_decline():
+    closes = [95, 94, 93, 92]
+    assert _find_surge_base(closes) == 92
+
+
+def test_find_surge_base_single_element():
+    assert _find_surge_base([100]) == 100
+
+
+def test_find_surge_base_empty():
+    assert _find_surge_base([]) == 0.0
+
+
+def test_find_surge_base_v_shape():
+    closes = [100, 97, 95, 97, 99]
+    assert _find_surge_base(closes) == 95
+
+
+def test_find_surge_base_ignores_early_global_low():
+    closes = [90, 91, 95, 98, 97, 96, 97, 98]
+    assert _find_surge_base(closes) == 96
 
 
 # ---- _detect_surge 積木單測 ----

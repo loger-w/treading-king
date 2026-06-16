@@ -51,6 +51,24 @@ class MinuteCandle:
     volume: int
 
 
+def _find_surge_base(closes: list[float]) -> float:
+    """從 closes 找當前上升波段的起漲谷底(近期相對低點)。
+
+    從最末根往回掃,追蹤最低值;碰到比最低值高的根 = 下降結束、谷底找到。
+    """
+    if not closes:
+        return 0.0
+    if len(closes) <= 1:
+        return closes[0]
+    running_min = closes[-1]
+    for i in range(len(closes) - 2, -1, -1):
+        if closes[i] < running_min:
+            running_min = closes[i]
+        elif closes[i] > running_min:
+            break
+    return running_min
+
+
 class SignalEngine:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[tuple[str, Tick]] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
