@@ -36,7 +36,8 @@ SCHEDULE_INTERVAL_S = 60.0
 
 AUTO_MONITOR_OWNER = "auto_monitor"
 
-_auto_set: set[str] = set()
+# per-symbol metadata,跨輪次保留;key=symbol
+_auto_rows: dict[str, dict] = {}
 
 
 def _in_market_hours(now: datetime | None = None) -> bool:
@@ -94,13 +95,8 @@ def _fetch_market_movers(market: str) -> list[dict[str, Any]] | None:
         return None
 
 
-async def refresh_auto_monitor() -> dict:
-    """執行一次 refresh — 拉漲跌幅榜 + 篩選 + 增量訂閱。"""
-    global _auto_set
-
-    if len(_auto_set) >= AUTO_MONITOR_CAP:
-        return {"status": "ok", "count": len(_auto_set), "new": 0, "reason": "cap_reached"}
-
+async def _fetch_and_screen() -> tuple[list[tuple[str, float, float, int, str]], int]:
+    """Fetch movers + client-side screen。回 (raw, ok_markets)。"""
     raw: list[tuple[str, float, float, int, str]] = []
     ok_markets = 0
     for market in ("TSE", "OTC"):
@@ -119,29 +115,60 @@ async def refresh_auto_monitor() -> dict:
                 int(it["tradeVolume"]),
                 market,
             ))
-
-    if ok_markets == 0:
-        logger.warning("auto_monitor: all movers fetches failed, keep previous set")
-        return {"status": "error", "count": len(_auto_set), "new": 0}
-
     store = get_local_store()
     if store.market.symbols_loaded():
         raw = [r for r in raw if store.market.has_symbol(r[0])]
-
     raw.sort(key=lambda r: -r[1])
+    return raw, ok_markets
+
+
+def _rebuild_snapshot() -> None:
+    """從 _auto_rows 重建 snapshot 寫入 market_cache。"""
+    sorted_rows = sorted(_auto_rows.values(), key=lambda r: -r.get("change_pct", 0))
+    for i, r in enumerate(sorted_rows):
+        r["rank"] = i + 1
+    get_local_store().market.replace_auto_monitor(sorted_rows)
+
+
+def _update_existing_from_raw(raw: list[tuple[str, float, float, int, str]]) -> None:
+    """用本輪 movers 資料更新 _auto_rows 中已有成員的顯示欄位。"""
+    captured_at = datetime.now(timezone.utc).isoformat()
+    seen = {s for s, *_ in raw}
+    for symbol, pct, amp, vol, mkt in raw:
+        if symbol in _auto_rows:
+            _auto_rows[symbol].update({
+                "change_pct": pct, "amplitude_pct": amp,
+                "volume_lots": vol, "market": mkt,
+                "captured_at": captured_at,
+            })
+
+
+async def refresh_auto_monitor() -> dict:
+    """執行一次 refresh — 拉漲跌幅榜 + 篩選 + 增量訂閱。"""
+    raw, ok_markets = await _fetch_and_screen()
+
+    if ok_markets == 0:
+        logger.warning("auto_monitor: all movers fetches failed, keep previous set")
+        return {"status": "error", "count": len(_auto_rows), "new": 0}
+
+    _update_existing_from_raw(raw)
+
+    if len(_auto_rows) >= AUTO_MONITOR_CAP:
+        _rebuild_snapshot()
+        return {"status": "ok", "count": len(_auto_rows), "new": 0, "reason": "cap_reached"}
 
     new_symbols: set[str] = set()
-    remaining_cap = AUTO_MONITOR_CAP - len(_auto_set)
+    remaining_cap = AUTO_MONITOR_CAP - len(_auto_rows)
     for symbol, pct, amp, vol, mkt in raw:
-        if symbol in _auto_set:
+        if symbol in _auto_rows:
             continue
         if len(new_symbols) >= remaining_cap:
             break
         new_symbols.add(symbol)
 
     if not new_symbols:
-        _update_snapshot(raw)
-        return {"status": "ok", "count": len(_auto_set), "new": 0}
+        _rebuild_snapshot()
+        return {"status": "ok", "count": len(_auto_rows), "new": 0}
 
     pool = get_ws_pool()
     failed: set[str] = set()
@@ -160,44 +187,27 @@ async def refresh_auto_monitor() -> dict:
         except Exception as e:
             logger.warning("auto_monitor: add_auto_symbols failed: %s", e)
 
-    _auto_set |= subscribed
-
     captured_at = datetime.now(timezone.utc).isoformat()
-    rows = [
-        {
+    raw_lookup = {s: (pct, amp, vol, mkt) for s, pct, amp, vol, mkt in raw}
+    for s in subscribed:
+        pct, amp, vol, mkt = raw_lookup[s]
+        _auto_rows[s] = {
             "symbol": s, "change_pct": pct, "amplitude_pct": amp,
-            "volume_lots": vol, "market": mkt, "rank": i + 1,
-            "captured_at": captured_at,
+            "volume_lots": vol, "market": mkt, "captured_at": captured_at,
         }
-        for i, (s, pct, amp, vol, mkt) in enumerate(raw)
-        if s in _auto_set
-    ]
-    store.market.replace_auto_monitor(rows)
+
+    _rebuild_snapshot()
 
     logger.info("auto_monitor: +%d new (total=%d, failed=%d)",
-                len(subscribed), len(_auto_set), len(failed))
-    return {"status": "ok", "count": len(_auto_set), "new": len(subscribed)}
-
-
-def _update_snapshot(raw: list[tuple[str, float, float, int, str]]) -> None:
-    captured_at = datetime.now(timezone.utc).isoformat()
-    rows = [
-        {
-            "symbol": s, "change_pct": pct, "amplitude_pct": amp,
-            "volume_lots": vol, "market": mkt, "rank": i + 1,
-            "captured_at": captured_at,
-        }
-        for i, (s, pct, amp, vol, mkt) in enumerate(raw)
-        if s in _auto_set
-    ]
-    get_local_store().market.replace_auto_monitor(rows)
+                len(subscribed), len(_auto_rows), len(failed))
+    return {"status": "ok", "count": len(_auto_rows), "new": len(subscribed)}
 
 
 async def _cleanup_after_market() -> None:
     """收盤後退訂 WS + 清 signal engine auto set。snapshot 保留供盤後瀏覽。"""
-    global _auto_set
+    global _auto_rows
     pool = get_ws_pool()
-    for s in list(_auto_set):
+    for s in list(_auto_rows):
         try:
             await pool.unsubscribe(s, owner_id=AUTO_MONITOR_OWNER)
         except Exception as e:
@@ -207,8 +217,8 @@ async def _cleanup_after_market() -> None:
         await get_signal_engine().clear_auto_symbols()
     except Exception as e:
         logger.warning("auto_monitor: clear_auto_symbols failed: %s", e)
-    count = len(_auto_set)
-    _auto_set = set()
+    count = len(_auto_rows)
+    _auto_rows = {}
     if count:
         logger.info("auto_monitor: after-market cleanup, unsubscribed %d", count)
 
